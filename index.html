@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shop — Group Order</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar__inner">
+    <a class="brand" href="index.html">grp<span>order</span></a>
+    <ul class="nav">
+      <li><a href="index.html">Shop</a></li>
+      <li><a href="orders.html">My orders</a></li>
+      <li><a href="shipping.html">Shipping</a></li>
+    </ul>
+  </div>
+</div>
+
+<div class="shell">
+  <div class="page-head">
+    <h1>Open items</h1>
+    <p>Claims are first come, first served. Sets are only guaranteed once every member but one has been claimed — until then your claim shows as "requested" and won't be added to your balance.</p>
+  </div>
+
+  <div id="message" class="message" hidden></div>
+  <div id="groups"></div>
+</div>
+
+<dialog id="claimDialog">
+  <form id="claimForm" method="dialog" style="padding: 4px 2px; min-width: 260px;">
+    <h2 id="claimItemName" style="margin-bottom: 14px;"></h2>
+    <div class="field">
+      <label for="claimIg">Instagram ID</label>
+      <input id="claimIg" required placeholder="@yourhandle">
+    </div>
+    <div class="field">
+      <label for="claimPin">PIN</label>
+      <input id="claimPin" required type="password" inputmode="numeric" minlength="4" maxlength="6" placeholder="4–6 digits">
+      <div class="helptext">First time claiming? This sets your PIN — you'll use the same one to check your orders later. Don't share it.</div>
+    </div>
+    <div id="claimMessage" class="message" hidden></div>
+    <div style="display:flex; gap: 8px;">
+      <button type="button" class="btn btn--outline" id="claimCancel">Cancel</button>
+      <button type="submit" class="btn btn--accent" id="claimSubmit">Claim item</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="app.js"></script>
+<script>
+const groupsEl = document.getElementById('groups');
+const messageEl = document.getElementById('message');
+const dialog = document.getElementById('claimDialog');
+const claimForm = document.getElementById('claimForm');
+const claimMessage = document.getElementById('claimMessage');
+let pendingItemId = null;
+
+function statusPill(item) {
+  if (item.Status === 'sold_out' || Number(item.Qty) <= 0) return '<span class="pill pill--sold">Claimed</span>';
+  return '';
+}
+
+function renderItems(items) {
+  const groups = {};
+  items.forEach(item => {
+    const key = item.Group || 'Other';
+    (groups[key] = groups[key] || []).push(item);
+  });
+
+  if (Object.keys(groups).length === 0) {
+    groupsEl.innerHTML = '<div class="empty-state">Nothing listed for order right now — check back soon.</div>';
+    return;
+  }
+
+  groupsEl.innerHTML = Object.entries(groups).map(([groupName, groupItems]) => `
+    <div class="group-block">
+      <div class="group-block__title">
+        <h2>${escapeHtml(groupName)}</h2>
+        <span class="group-block__count">${groupItems.length} item${groupItems.length === 1 ? '' : 's'}</span>
+      </div>
+      <div class="item-grid">
+        ${groupItems.map(itemCard).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+function itemCard(item) {
+  const soldOut = item.Status === 'sold_out' || Number(item.Qty) <= 0;
+  return `
+    <div class="item-card">
+      ${item.ImageURL ? `<img class="item-card__image" src="${escapeAttr(item.ImageURL)}" alt="${escapeAttr(item.Name)}" loading="lazy">` : '<div class="item-card__image"></div>'}
+      <div class="item-card__body">
+        ${item.Member ? `<div class="item-card__member">${escapeHtml(item.Member)}</div>` : ''}
+        <div class="item-card__name">${escapeHtml(item.Name)}</div>
+        <div class="item-card__price">${money(item.Price)}</div>
+        ${statusPill(item)}
+        <div class="item-card__action">
+          ${soldOut
+            ? `<button class="btn" disabled>Claimed</button>`
+            : `<button class="btn btn--accent" data-item-id="${escapeAttr(item.ItemID)}" data-item-name="${escapeAttr(item.Name)}">Claim</button>`}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeAttr(s) { return escapeHtml(s); }
+
+function loadItems() {
+  apiGet('items')
+    .then(res => renderItems(res.items))
+    .catch(err => showMessage(messageEl, err.message));
+}
+
+groupsEl.addEventListener('click', e => {
+  const btn = e.target.closest('button[data-item-id]');
+  if (!btn) return;
+  pendingItemId = btn.dataset.itemId;
+  document.getElementById('claimItemName').textContent = btn.dataset.itemName;
+  hideMessage(claimMessage);
+  const session = getSession();
+  if (session) {
+    document.getElementById('claimIg').value = session.igId;
+    document.getElementById('claimPin').value = session.pin;
+  }
+  dialog.showModal();
+});
+
+document.getElementById('claimCancel').addEventListener('click', () => dialog.close());
+
+claimForm.addEventListener('submit', e => {
+  e.preventDefault();
+  const igId = document.getElementById('claimIg').value.trim();
+  const pin = document.getElementById('claimPin').value.trim();
+  if (!igId || pin.length < 4) {
+    showMessage(claimMessage, 'Enter your Instagram ID and a 4–6 digit PIN.');
+    return;
+  }
+  const submitBtn = document.getElementById('claimSubmit');
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Claiming…';
+
+  apiPost('claim', { igId, pin, itemId: pendingItemId })
+    .then(() => {
+      saveSession(igId, pin);
+      dialog.close();
+      loadItems();
+    })
+    .catch(err => showMessage(claimMessage, err.message))
+    .finally(() => {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Claim item';
+    });
+});
+
+loadItems();
+</script>
+</body>
+</html>
