@@ -1,6 +1,6 @@
 // ---- CONFIGURE THIS ----
 // Paste your deployed Apps Script Web App URL here (ends in /exec).
-const API_URL = 'PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE';
+const API_URL = 'https://script.google.com/macros/s/AKfycbxHmIZjP5GxTRJ5erXzxQQT-CLu1SOVmvqVCD1xLXy9W2GMRDoguwXn9gY2C84XGw1sTw/exec';
 // -------------------------
 
 const CATEGORIES = ['Initials', 'EMS', 'Customs', 'Doms'];
