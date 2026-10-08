@@ -5,7 +5,7 @@ import { createMailer } from './mail.js';
 import { migrate } from './migrate.js';
 import { createApp } from './app.js';
 import { cleanupExpired } from './auth.js';
-import { adminCount } from './lib/admins.js';
+import { adminCount, bootstrapAdmin } from './lib/admins.js';
 import { catalogRoutes } from './routes/catalog.js';
 import { claimRoutes } from './routes/claims.js';
 import { meRoutes } from './routes/me.js';
@@ -37,8 +37,9 @@ async function migrateOrPing() { if (cfg.autoMigrate) await migrate(cfg); else a
 
 const pool = createPool(cfg);
 await waitForDb();
+await bootstrapAdmin(pool, cfg.initialAdmin);
 if ((await adminCount(pool)) === 0) {
-  console.warn('\nNO ADMIN ACCOUNT YET. Create yours with:\n   docker compose run --rm app node src/admin-cli.js create\n');
+  console.warn('\nNO ADMIN ACCOUNT YET. Either set INITIAL_ADMIN_USERNAME and INITIAL_ADMIN_PASSWORD in your settings and restart, or create one with:\n   docker exec -it <the app container> node src/admin-cli.js create\n   (or, with the clone install:  docker compose run --rm app node src/admin-cli.js create)\n');
 }
 const mailer = createMailer(cfg);
 const app = createApp({ cfg, pool, mailer, extraRoutes: [catalogRoutes, claimRoutes, meRoutes, adminRoutes, setRoutes, fixedRoutes, boxRoutes, proxyRoutes, shopRoutes, imageRoutes, importRoutes, inviteRoutes, cancelRequestRoutes] });

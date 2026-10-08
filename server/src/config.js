@@ -8,6 +8,8 @@ export function loadConfig(overrides = {}) {
   return {
     prod,
     port: Number(e.PORT || 3000),
+    // Optional: creates the FIRST admin automatically on start-up (only if there is no admin yet). Lets a fresh install work from the settings file alone.
+    initialAdmin: { username: (e.INITIAL_ADMIN_USERNAME || '').trim(), email: (e.INITIAL_ADMIN_EMAIL || '').trim(), password: e.INITIAL_ADMIN_PASSWORD || '' },
     // The address people use in their browser. Sign-in links are built from it.
     publicUrl: (e.PUBLIC_URL || 'http://localhost:3000').replace(/\/$/, ''),
     db: {

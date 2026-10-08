@@ -43,3 +43,21 @@ export async function setAdminPassword(pool, username, password) {
   await pool.query('DELETE FROM sessions WHERE account_id = ?', [a.id]);
   return { username };
 }
+
+// Creates the very first admin from settings (INITIAL_ADMIN_USERNAME / _PASSWORD / optional _EMAIL) — ONLY when there is no admin at all, and never touches an existing one.
+// So a brand-new install needs no terminal: fill in the settings, start it, sign in. Never throws and never logs the password; the result says what happened.
+export async function bootstrapAdmin(pool, { username = '', email = '', password = '' } = {}, log = console) {
+  if (!username && !password) return { created: false, reason: 'not_set' };
+  if (!username || !password) { log.warn('INITIAL_ADMIN_USERNAME and INITIAL_ADMIN_PASSWORD must be set together — no admin was created.'); return { created: false, reason: 'incomplete' }; }
+  if ((await adminCount(pool)) > 0) { log.log('INITIAL_ADMIN_* is set but an admin already exists, so it was ignored. You can remove it from your settings.'); return { created: false, reason: 'exists' }; }
+  const who = String(username).trim().toLowerCase();
+  try {
+    await createAdmin(pool, { username: who, email: email || `${who}@admin.local`, password });
+  } catch (e) {
+    if (!(e instanceof AdminError)) throw e;
+    log.error(`Couldn't create the first admin from INITIAL_ADMIN_*: ${e.message}`);
+    return { created: false, reason: 'invalid', error: e.message };
+  }
+  log.log(`Created the first admin "${who}". You can sign in now — and remove INITIAL_ADMIN_PASSWORD from your settings.`);
+  return { created: true, username: who };
+}
