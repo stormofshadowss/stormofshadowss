@@ -1,0 +1,140 @@
+# StormOfShadowss — a COMPLETE, STAND-ALONE stack for Unraid's "Docker Compose Manager".
+#
+# It needs no files on the server: paste this into the stack's compose box and stack.env.example (filled in) into its env box. It builds the app straight from your
+# GitHub repository (REPO_URL), so pressing "Compose Up" again later picks up the newest version (pull_policy: build rebuilds; unchanged code rebuilds instantly from cache).
+#
+# Everything is named and stored separately (sos-*, its own network, its own images, its own data folder, port 2999) so it can't clash with any other install.
+# See SETUP.md, "Fresh install on Unraid with Docker Compose Manager".
+name: sos
+
+services:
+  # Runs once at start: makes the pictures folder writable by the app (which runs as user 1000, not root).
+  init:
+    image: busybox:1.36
+    container_name: sos-init
+    restart: "no"
+    command: ["sh", "-c", "mkdir -p /uploads && chown -R 1000:1000 /uploads"]
+    volumes:
+      - ${DATA_DIR:-/mnt/user/appdata/sos}/uploads:/uploads
+
+  db:
+    image: mariadb:10.11
+    container_name: sos-db
+    restart: unless-stopped
+    environment:
+      # The database's own "root" password is generated randomly and never needed: the app and backups use their own user (DB_USER / DB_PASSWORD).
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+      MARIADB_DATABASE: ${DB_NAME:-sos}
+      MARIADB_USER: ${DB_USER:-sos}
+      MARIADB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in the env file}
+      MARIADB_AUTO_UPGRADE: "1"
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - ${DATA_DIR:-/mnt/user/appdata/sos}/mariadb:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [sos-net]
+
+  app:
+    build:
+      context: ${REPO_URL:?Set REPO_URL in the env file (your GitHub repository address)}
+    image: sos-app:latest
+    pull_policy: build
+    container_name: sos-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PORT: "2999"
+      PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL in the env file (the address people will type, e.g. http://192.168.1.50:2999)}
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_NAME: ${DB_NAME:-sos}
+      DB_USER: ${DB_USER:-sos}
+      DB_PASSWORD: ${DB_PASSWORD}
+      # The first GOM login, created automatically if there is no admin yet. Ignored once one exists — then you can delete the password from the env file.
+      INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:-}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-}
+      ADMIN_SESSION_HOURS: ${ADMIN_SESSION_HOURS:-12}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-StormOfShadowss <no-reply@localhost>}
+      REMINDERS_ENABLED: ${REMINDERS_ENABLED:-true}
+      REMINDER_EVERY_MINUTES: ${REMINDER_EVERY_MINUTES:-60}
+      INVITE_DAYS: ${INVITE_DAYS:-7}
+      UPLOADS_DIR: /app/uploads
+    volumes:
+      # uploaded pictures live outside the container, so they survive rebuilds and updates
+      - ${DATA_DIR:-/mnt/user/appdata/sos}/uploads:/app/uploads
+    ports:
+      # the app listens on 2999 inside the container; reachable from other devices on your network at  http://<unraid-ip>:2999
+      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-2999}:2999"
+    networks: [sos-net]
+
+  # Backs up the database AND the uploaded pictures every BACKUP_EVERY_HOURS and keeps BACKUP_KEEP_DAYS of them (in DATA_DIR/backups).
+  backup:
+    build:
+      context: ${REPO_URL}
+      dockerfile: deploy/backup.Dockerfile
+    image: sos-backup:latest
+    pull_policy: build
+    container_name: sos-backup
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_NAME: ${DB_NAME:-sos}
+      DB_USER: ${DB_USER:-sos}
+      DB_PASSWORD: ${DB_PASSWORD}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_EVERY_HOURS: ${BACKUP_EVERY_HOURS:-24}
+    volumes:
+      - ${DATA_DIR:-/mnt/user/appdata/sos}/backups:/backups
+      - ${DATA_DIR:-/mnt/user/appdata/sos}/uploads:/uploads:ro
+    networks: [sos-net]
+
+  # OPTIONAL — public HTTPS without opening router ports (turn on with COMPOSE_PROFILES=tunnel in the env file).
+  # In the Cloudflare dashboard, point the tunnel's public hostname at  http://app:2999  and put its token in the env file.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: sos-tunnel
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in the env file}
+    depends_on: [app]
+    networks: [sos-net]
+
+  # OPTIONAL — a web view of the database for emergencies (COMPOSE_PROFILES=tools). Only reachable from the Unraid machine itself.
+  # Sign in with server "db", username = DB_USER, password = DB_PASSWORD.
+  adminer:
+    image: adminer:latest
+    container_name: sos-adminer
+    profiles: ["tools"]
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    ports:
+      - "127.0.0.1:8081:8080"
+    depends_on: [db]
+    networks: [sos-net]
+
+networks:
+  sos-net: {}
