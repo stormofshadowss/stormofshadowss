@@ -1,0 +1,3 @@
+# Keep shell scripts with Unix line endings even when committed from Windows — otherwise they fail on the server.
+*.sh text eol=lf
+* text=auto

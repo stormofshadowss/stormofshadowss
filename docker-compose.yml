@@ -1,0 +1,114 @@
+# StormOfShadowss — app + MariaDB + nightly backups (+ optional HTTPS tunnel and DB viewer).
+#
+#   cp .env.example .env     # fill it in
+#   docker compose up -d --build
+#
+# Optional extras (profiles):
+#   docker compose --profile tunnel up -d     # public HTTPS through Cloudflare, no open ports
+#   docker compose --profile tools  up -d     # Adminer database viewer on 127.0.0.1:8081
+name: stormofshadowss
+
+services:
+  db:
+    image: mariadb:10.11
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Set DB_ROOT_PASSWORD in .env}
+      MARIADB_DATABASE: ${DB_NAME:-sos}
+      MARIADB_USER: ${DB_USER:-sos}
+      MARIADB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      MARIADB_AUTO_UPGRADE: "1"
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - ${DATA_DIR:-./data}/mariadb:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [internal]
+
+  app:
+    build: .
+    image: stormofshadowss:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL in .env}
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_NAME: ${DB_NAME:-sos}
+      DB_USER: ${DB_USER:-sos}
+      DB_PASSWORD: ${DB_PASSWORD}
+      ADMIN_SESSION_HOURS: ${ADMIN_SESSION_HOURS:-12}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      TRUST_PROXY: "1"
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-StormOfShadowss <no-reply@localhost>}
+      REMINDERS_ENABLED: ${REMINDERS_ENABLED:-true}
+      REMINDER_EVERY_MINUTES: ${REMINDER_EVERY_MINUTES:-60}
+      INVITE_DAYS: ${INVITE_DAYS:-7}
+      UPLOADS_DIR: /app/uploads
+    volumes:
+      # uploaded pictures live outside the container, so they survive rebuilds and updates
+      - ${DATA_DIR:-./data}/uploads:/app/uploads
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-3000}:3000"
+    networks: [internal]
+
+  # Backs up the database AND the uploaded pictures every BACKUP_EVERY_HOURS and keeps BACKUP_KEEP_DAYS of them.
+  backup:
+    image: mariadb:10.11
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/backup.sh"]
+    environment:
+      DB_HOST: ${DB_HOST:-db}
+      DB_NAME: ${DB_NAME:-sos}
+      DB_USER: ${DB_USER:-sos}
+      DB_PASSWORD: ${DB_PASSWORD}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_EVERY_HOURS: ${BACKUP_EVERY_HOURS:-24}
+    volumes:
+      - ./deploy/backup.sh:/backup.sh:ro
+      - ${DATA_DIR:-./data}/backups:/backups
+      - ${DATA_DIR:-./data}/uploads:/uploads:ro
+    networks: [internal]
+
+  # Public HTTPS without opening any router ports. Create the tunnel in the Cloudflare dashboard,
+  # point its public hostname at  http://app:3000  and put the token in .env.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in .env}
+    depends_on: [app]
+    networks: [internal]
+
+  # A web view of the database for emergencies. Only reachable from the Unraid machine itself.
+  adminer:
+    image: adminer:latest
+    profiles: ["tools"]
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    ports:
+      - "127.0.0.1:8081:8080"
+    depends_on: [db]
+    networks: [internal]
+
+networks:
+  internal: {}
