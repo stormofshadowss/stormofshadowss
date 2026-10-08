@@ -213,3 +213,31 @@ Put the code on GitHub once, and from then on updating the server is one command
 - Your `.env` and your data are never touched by an update.
 - When the token expires, make a new one and run `git remote set-url origin https://NEWTOKEN@github.com/YOUR_USERNAME/stormofshadowss.git` in the server folder.
 - Updates are deliberately **manual**. The database changes itself when the new version starts, so you choose when to do it (and a backup is taken first), rather than having it happen unattended.
+
+### Fresh install on Unraid with Docker Compose Manager (one YAML + one env box)
+The simplest way to run it: no cloning, no terminal. The stack builds the app straight from your GitHub repository, and creates your first admin login from the settings. It uses its own names, folder (`/mnt/user/appdata/sos`), network and port (**2999**), so it won't clash with any other install — you can run it beside an older one and stop the old one when you're happy.
+
+**You need:** Unraid's **Docker Compose Manager** plugin (Community Applications), and this version of the project on GitHub (the build downloads it from there).
+
+1. **Decide how the build reaches GitHub.** *Public repository:* nothing to do. *Private repository:* put a read-only token in the address (step 4).
+2. **Docker tab → Compose → Add New Stack.** Name it `sos`.
+3. **Compose file:** paste the whole of `deploy/unraid/docker-compose.yml` (open it on GitHub and copy).
+4. **Env file:** paste `deploy/unraid/stack.env.example` and fill in the first section:
+   - `REPO_URL` — your repository, e.g. `https://github.com/YOUR_USERNAME/stormofshadowss.git#main`. Private: `https://YOUR_TOKEN@github.com/YOUR_USERNAME/stormofshadowss.git#main`.
+   - `DB_PASSWORD` — a long random value (in the terminal: `openssl rand -base64 24`).
+   - `PUBLIC_URL` — `http://YOUR_UNRAID_IP:2999`.
+   - `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` — your GOM login. The password needs 12+ characters and must not contain the username. (Left as `CHANGE-ME`, no admin is made and the app's log says so.)
+   (The labels in the plugin may differ slightly between versions.)
+5. **Compose Up.** The first build takes a few minutes. When the `sos-app` container is running, open `http://YOUR_UNRAID_IP:2999/admin.html` and sign in.
+6. **Then, in the admin:** add your artists/groups, payment methods, proxies and group orders (or use the Import tab for the Notion masterlist). Once you've signed in, delete the `INITIAL_ADMIN_PASSWORD` line from the env box — it's ignored once an admin exists anyway.
+
+**Updating:** after new files are on GitHub, press **Compose Up** again. It rebuilds from the newest code (instantly from cache if nothing changed) and restarts the app; the database changes itself on start. Nightly backups run automatically; for an extra one just before an update, in the Unraid terminal: `docker exec -e ONCE=1 sos-backup /bin/sh /backup.sh`.
+
+**Where things are:** database, pictures and backups are all under `/mnt/user/appdata/sos`. Containers are `sos-app`, `sos-db`, `sos-backup`. Optional extras, switched on with `COMPOSE_PROFILES` in the env box: `tunnel` (Cloudflare — set `APP_BIND=127.0.0.1`, `COOKIE_SECURE=true`, `TRUST_PROXY=1`, point the tunnel at `http://app:2999`) and `tools` (a database viewer on port 8081, this machine only).
+
+**If something's wrong**
+- *Build fails with "repository not found":* `REPO_URL` has a typo, or the repository is private and has no token in the address.
+- *You can sign in but it signs you straight out:* `COOKIE_SECURE` must be `false` while you use plain `http://`.
+- *Page won't load:* check `sos-app` is running, that nothing else uses port 2999, and the log (`docker logs sos-app`) — it prints `Created the first admin …` or says why not.
+- *Forgot the admin password:* in the terminal, `docker exec -it sos-app node src/admin-cli.js set-password gom`.
+- Port 2999 on `0.0.0.0` means anyone on your home network can reach the login page over plain http. That's normal for a home server — just don't forward the port on your router; use the Cloudflare tunnel for outside access.
