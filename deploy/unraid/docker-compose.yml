@@ -76,6 +76,7 @@ services:
       REMINDERS_ENABLED: ${REMINDERS_ENABLED:-true}
       REMINDER_EVERY_MINUTES: ${REMINDER_EVERY_MINUTES:-60}
       INVITE_DAYS: ${INVITE_DAYS:-7}
+      CONTACT_EMAIL: ${CONTACT_EMAIL:-}
       UPLOADS_DIR: /app/uploads
     volumes:
       # uploaded pictures live outside the container, so they survive rebuilds and updates

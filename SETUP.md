@@ -255,4 +255,15 @@ On their **My orders** page joiners now have a **My settings** card. It holds:
 - **If they have no financial record** (no confirmed order, confirmed payment or credit movement): everything about them is erased, including the handle.
 - **If they do:** the orders, amounts, payments and dates stay, but their login, email, delivery details, bias/Lomo names, parcel notes, payer names and their handle in your activity log are removed, and they appear to you as **deleted-123**. (A payment's *reference* is kept as the financial identifier; their handle and names are replaced if they typed them into it, but it can't catch anything else typed there.)
 - **Their handle is kept instead** if they hold **credit** (so you can settle it — they then appear on the People tab's flagged list) or are **blocked** (so deleting can't shed a block).
-- UK data-protection rules expect a short **privacy notice** saying what you keep and why (for example "payment records are kept for accounting"). It doesn't have to appear on the delete screen, but it's worth having a line on the site.
+- What is kept after deletion is explained in the site's **privacy notice** (below) — deliberately there, not on the delete screen.
+
+### The privacy notice
+Every page people order on (the shop, My orders, claim-your-orders) has a **Privacy notice** link at the bottom, and My settings links to it too. The notice is the page `public/privacy.html`: plain-English sections on who runs the site, what is kept and why, cookies, who else sees it, the legal reasons, **how long it's kept** (including what survives when someone deletes their account), people's rights, and the Information Commissioner's Office.
+
+**Please read it once and make it yours.** It's a sensible draft written from what the site actually does — it isn't legal advice. Check especially:
+- **Contact:** set `CONTACT_EMAIL` in your env box to an address people can write to (it appears as a link in "Who we are"). Without it the notice says to get in touch the way people normally order.
+- **"Who else sees it":** it says delivery details go to postal/courier services only to deliver parcels, and that the site runs on a server you control. Change those lines if that stops being true (for example if a proxy or a friend handles posting).
+- **"How long we keep it":** it says financial records are kept "for as long as accounting, tax and dispute rules require". If you know the period that applies to you, put it in.
+- Change the **"Last updated"** date whenever you edit it.
+
+The tests that guard it fail if the site starts setting a new cookie, loads something from another company's server, or changes who can delete their account — so the notice can't quietly stop being true.

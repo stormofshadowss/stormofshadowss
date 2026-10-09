@@ -8,6 +8,9 @@ import { resolveJoiner } from '../lib/joiner.js';
 // A joiner's own settings: changing their sign-in email, and their saved shipping defaults (bias / Lomo name).
 // (Handles, deleting the account and the per-kind email choices live with the routes they extend: handles.js and me.js.)
 export function settingsRoutes(app, { pool, cfg, mailer }) {
+  // Public, tiny: what the privacy notice needs from the server.
+  app.get('/api/site-info', (req, res) => res.json({ contactEmail: cfg.contactEmail || null }));
+
   const limiter = rateLimit({
     windowMs: 3_600_000, limit: cfg.rateLimits.requestLinkPerHourPerIp, standardHeaders: 'draft-7', legacyHeaders: false,
     message: { error: 'Too many requests from here — please try again later.' },

@@ -47,7 +47,8 @@
         ${w.credit > 0 ? `<p class="sub" data-warn="credit">You have ${money(w.credit)} credit with the GOM. Deleting your account doesn't pay it back — message the GOM first if you'd like it refunded.</p>` : ''}
         ${w.inFlight > 0 && !del.blockers.length ? `<p class="sub" data-warn="inflight">You have ${w.inFlight} paid item${w.inFlight === 1 ? '' : 's'} that ${w.inFlight === 1 ? "hasn't" : "haven't"} reached you yet. If you delete your account the GOM won't have your address to send ${w.inFlight === 1 ? 'it' : 'them'}.</p>` : ''}
         <p class="msg" data-msg hidden></p>
-        <button data-act="delete-account" class="secondary danger" ${del.blockers.length ? 'disabled' : ''}>Delete my account</button></div>`;
+        <button data-act="delete-account" class="secondary danger" ${del.blockers.length ? 'disabled' : ''}>Delete my account</button></div>
+      <p class="sub"><a href="/privacy.html" target="_blank" rel="noopener">Privacy notice</a> — what we keep, why, and for how long.</p>`;
 
     view.onclick = async (e) => {
       const b = e.target.closest('[data-act]'); if (!b) return;

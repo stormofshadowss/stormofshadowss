@@ -8,6 +8,8 @@ export function loadConfig(overrides = {}) {
   return {
     prod,
     port: Number(e.PORT || 3000),
+    // Shown on the privacy notice as the place to send questions or requests about personal information. Optional; anything that isn't a plain email address is ignored.
+    contactEmail: /^[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test((e.CONTACT_EMAIL || '').trim()) ? e.CONTACT_EMAIL.trim() : '',
     // Optional: creates the FIRST admin automatically on start-up (only if there is no admin yet). Lets a fresh install work from the settings file alone.
     initialAdmin: { username: (e.INITIAL_ADMIN_USERNAME || '').trim(), email: (e.INITIAL_ADMIN_EMAIL || '').trim(), password: e.INITIAL_ADMIN_PASSWORD || '' },
     // The address people use in their browser. Sign-in links are built from it.

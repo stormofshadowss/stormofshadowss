@@ -64,6 +64,9 @@
     sset(k, v) { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } },
   };
 
+  // A "Privacy notice" link at the foot of every page that uses this file.
+  if (!document.getElementById('siteFoot')) document.body.insertAdjacentHTML('beforeend', '<footer id="siteFoot" style="text-align:center; padding:6px 20px 28px; font-size:.85rem"><a href="/privacy.html" style="color:inherit">Privacy notice</a></footer>');
+
   // The header: brand, links, and (on the shop) the basket.
   SITE.header = (active) => `<header class="top site-top"><span class="brand">StormOf<span>Shadowss</span></span>
     <nav class="site-nav"><a href="/" class="${active === 'shop' ? 'on' : ''}">Group orders</a><a href="/my.html" class="${active === 'my' ? 'on' : ''}">My orders</a>
