@@ -122,7 +122,7 @@
     const card = (o) => `<a class="gocard" href="#/order/${o.id}">${o.cover ? `<img class="thumb sm" src="${esc(o.cover.thumb)}" alt="">` : ''}<strong>${esc(o.title)}</strong><span class="sub">${o.items.length} item${o.items.length === 1 ? '' : 's'}${o.closeDate ? ` · closes ${fmtDate(o.closeDate)}` : ''}${o.paymentDeadline ? ` · pay by ${fmtDate(o.paymentDeadline)}` : ''}</span></a>`;
     const shopCard = shopItems.length ? `<h2 style="margin:18px 0 8px">Shop</h2><div class="cards"><a class="gocard" href="#/shop"><strong>Shop — on hand now</strong><span class="sub">${shopItems.filter((i) => i.left > 0).length} item${shopItems.filter((i) => i.left > 0).length === 1 ? '' : 's'} available · held for you as soon as you claim</span></a></div>` : '';
     view.innerHTML = `<h1 style="margin:18px 0 6px">Group orders</h1>
-      <p class="muted">Pick what you want and claim it with just your Instagram handle — no password, no sign-up. Storm will confirms claims, then you pay.</p>
+      <p class="muted">Pick what you want and claim it with just your Instagram handle — no password, no sign-up. Storm will confirm claims, then you pay.</p>
       ${shopCard}
       ${open.length ? [...byGroup.entries()].map(([g, os]) => `<h2 style="margin:18px 0 8px">${os[0].groupCover ? `<img class="avatar" src="${esc(os[0].groupCover.thumb)}" alt="">` : ''}${esc(g)}</h2><div class="cards">${os.map(card).join('')}</div>`).join('') : '<div class="card"><p class="muted">No group orders are open right now — check back soon.</p></div>'}
       ${closed.length ? `<details style="margin-top:22px"><summary>Closed orders (${closed.length})</summary><div class="cards" style="margin-top:8px">${closed.map(card).join('')}</div></details>` : ''}`;
