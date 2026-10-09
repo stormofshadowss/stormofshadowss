@@ -21,7 +21,7 @@ export function setRoutes(app, { pool, notifier }) {
       `SELECT s.id, s.set_number AS number, s.admin_decision AS decision, i.id AS itemId, i.title AS itemTitle, i.price, i.price_tbc AS itemTbc, i.requires_full_set AS requiresFullSet,
               go.id AS orderId, go.title AS orderTitle
          FROM item_sets s JOIN items i ON i.id = s.item_id JOIN group_orders go ON go.id = i.order_id
-        WHERE ${where.join(' AND ')} ORDER BY go.id, i.id, s.set_number`, params);
+        WHERE ${where.join(' AND ')} AND i.cancelled_at IS NULL AND go.cancelled_at IS NULL ORDER BY go.id, i.id, s.set_number`, params);
     if (!sets.length) return res.json({ sets: [] });
     const itemIds = [...new Set(sets.map((s) => s.itemId))];
     const [members] = await pool.query('SELECT item_id, name, price FROM item_members WHERE item_id IN (?) ORDER BY sort_order, id', [itemIds]);

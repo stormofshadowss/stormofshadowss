@@ -7,8 +7,8 @@ import { conflict, notFound } from '../errors.js';
 //     behind it (those records must stay), or if the item was included in a proxy payment. For those, close the order and make it private instead.
 // `itemIds` are the items going; `orderId` (when a whole order is going) also takes every claim recorded against the order.
 export async function deletionPlan(conn, { itemIds, orderId = null, lock = false }) {
+  if (itemIds.length) await conn.query('SELECT id FROM items WHERE id IN (?) ORDER BY id FOR UPDATE', [itemIds]);      // items BEFORE the order (placing a claim locks the item, then touches the order)
   if (orderId) await conn.query('SELECT id FROM group_orders WHERE id = ? FOR UPDATE', [orderId]);
-  if (itemIds.length) await conn.query('SELECT id FROM items WHERE id IN (?) ORDER BY id FOR UPDATE', [itemIds]);
   const where = orderId ? 'c.order_id = ?' : 'c.item_id IN (?)';
   const arg = orderId ? orderId : (itemIds.length ? itemIds : [0]);
   if (lock) {                                                  // the item first (like every placement), then the people lowest-first, then the claims

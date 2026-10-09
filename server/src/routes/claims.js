@@ -78,11 +78,12 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
           continue;
         }
         const [[item]] = await conn.query(
-          `SELECT i.id, i.order_id, i.item_type, i.title, i.price, i.price_tbc, i.size_bucket, go.status, go.is_private
+          `SELECT i.id, i.order_id, i.item_type, i.title, i.price, i.price_tbc, i.size_bucket, i.cancelled_at, go.status, go.is_private
              FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id = ?`, [line.itemId]);
         // Private orders look exactly like orders that don't exist.
         if (!item || item.is_private) throw notFound('That item isn\'t available');
         if (item.status !== 'open') throw bad('That order has closed', 'order_closed');
+        if (item.cancelled_at) throw bad("That item isn't available any more", 'item_cancelled');
         if (item.item_type === 'set') {
           const asked = {};
           for (const p of line.parts || []) asked[p.member] = (asked[p.member] || 0) + p.qty;

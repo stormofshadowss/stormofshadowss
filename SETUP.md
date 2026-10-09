@@ -278,3 +278,13 @@ Things to know: closed orders are now only reachable from a group's page (the ho
 - **Packing list.** The "Delivery address checked" tick is gone — it isn't needed to pack. Each item that has a picture shows a small thumbnail: tap it to open the picture under that item, tap again to close it.
 - **Parcels on their way.** Joiners now see a highlighted *Parcels on their way* card at the **top** of My orders (and at the top of the Ongoing page), with the *It's arrived* button, instead of at the very bottom.
 - **Being your own proxy.** On the **Proxy** tab, *Your proxies* lists each proxy with a *this is me* tick. Orders (or single items) that use a proxy you've ticked never appear in the "to pay a proxy" list, and can't be logged as a proxy payment.
+
+### Cancelling a group order or an item
+For something that can't be fulfilled (say a photocard set sold out). On **Group Orders**, press **Cancel…** on the group order's row — or open its **Items** and press **Cancel…** on one item.
+1. **See the impact first.** A panel shows how many claims (confirmed and unconfirmed) and how many people are affected, and how much of what they've paid will go back to them as **credit**. Anything in the way — a claim already inside a parcel or a warehouse box — is listed, and the cancel button isn't offered until you've sorted it (it's all-or-nothing: nothing is cancelled if anything is blocked).
+2. **Type the name** of the order or item to unlock the button (capitals and spacing don't matter), then press it.
+3. **One last "are you sure".** Then every live claim on it is cancelled and the money returned as credit. Claims already **received** are left alone.
+- **Nobody is emailed.** You tell people yourself.
+- A cancelled **group order** closes and disappears from the shop; a cancelled **item** disappears and can't be claimed. Both stay visible to you in Group Orders, marked *Cancelled*, and are removed from the Sets tab and the proxy "to pay" list. Standing (fixed) claims on them end.
+- A blocked handle's payment is **not** credited, as with any cancellation — the panel says so before you confirm.
+- Later you can still **Delete** a cancelled order if nothing was ever paid on it; one that had payments on it is kept (its records stay).

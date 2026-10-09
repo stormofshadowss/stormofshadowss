@@ -165,3 +165,14 @@ test('INVARIANTS: no orphaned sets, members, variants or picture records; every 
   }
   assert.equal((await app.q('SELECT COUNT(*) AS n FROM images i WHERE NOT EXISTS (SELECT 1 FROM items WHERE image_id = i.id) AND NOT EXISTS (SELECT 1 FROM group_orders WHERE cover_image_id = i.id) AND NOT EXISTS (SELECT 1 FROM artist_groups WHERE cover_image_id = i.id) AND NOT EXISTS (SELECT 1 FROM leftover_items WHERE image_id = i.id)'))[0].n, 0);
 });
+
+test('concurrency (whole order): people claiming at the instant a WHOLE ORDER is deleted never cause a server error or a deadlock — items are always locked before the order', async () => {
+  for (let round = 0; round < 6; round++) {
+    const go = await order(); const it = await item(go);
+    const hs = Array.from({ length: 4 }, () => u('rc'));
+    const rs = await Promise.all([...hs.map((h) => app.api('POST', '/api/claims', { handle: h, lines: [{ itemId: it }] })), del('orders', go)]);
+    assert.ok(rs.every((r) => r.status < 500), `round ${round}: ${rs.map((r) => r.status)}`);
+    assert.equal(rs.at(-1).status, 200, 'the delete itself succeeds (unconfirmed requests are not binding)');
+    assert.equal((await app.q('SELECT COUNT(*) AS n FROM claims WHERE item_id IS NULL AND leftover_item_id IS NULL'))[0].n, 0, `round ${round}: no orphan claim`);
+  }
+});

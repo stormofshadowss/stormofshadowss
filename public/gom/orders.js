@@ -1,7 +1,7 @@
 // Group Orders tab: create and edit group orders, add and edit their items.
 (function () {
   const { esc, money, fmtDate, api, errText, $, $$ } = GOM;
-  let orders = [], groups = [], root = null;
+  let orders = [], groups = [], root = null, cancelFlow = null;
   document.addEventListener('gom:picture', (e) => {            // a picture changed: keep what this tab remembers in step, so the next redraw is right
     const { kind, id, image } = e.detail;
     if (kind === 'item') orders.forEach((x) => x.items.forEach((i) => { if (i.id === id) i.image = image; }));
@@ -83,7 +83,7 @@
     }
     return `<tr><td>${it.image ? `<img class="thumb sm" src="${esc(it.image.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}${esc(it.title)}${it.description ? `<div class="sub" style="white-space:pre-line">${esc(it.description.length > 140 ? it.description.slice(0, 140) + '…' : it.description)}</div>` : ''}</td><td>${esc(typeName[it.type])}</td><td class="nowrap">${it.priceTbc ? '<span class="pill warn">TBC</span>' : money(it.price)}</td>
       <td class="nowrap">${fmtDate(it.payBy)}${it.ownPaymentDeadline ? ' <span class="sub">(own)</span>' : ''}</td><td>${esc(it.proxy || '—')}</td>
-      <td>${itemSummary(it)}</td><td>${it.claimed}</td><td><button class="sm secondary" data-act="edit-item" data-id="${it.id}">Edit</button> <button class="sm secondary danger" data-act="delete-item" data-id="${it.id}">Delete</button>${it.type === 'set' ? ` <button class="sm secondary" data-act="fixed" data-id="${it.id}">Fixed claimers</button>` : ''}</td></tr>`;
+      <td>${itemSummary(it)}</td><td>${it.claimed}</td><td><button class="sm secondary" data-act="edit-item" data-id="${it.id}">Edit</button> <button class="sm secondary danger" data-act="delete-item" data-id="${it.id}">Delete</button>${it.cancelled ? ' <span class="pill warn" data-cancelled>Cancelled</span>' : ` <button class="sm secondary danger" data-act="cancel-item" data-id="${it.id}">Cancel…</button>`}${it.type === 'set' ? ` <button class="sm secondary" data-act="fixed" data-id="${it.id}">Fixed claimers</button>` : ''}</td></tr>`;
   }
 
   const currentOrder = () => orders.find((o) => o.id === itemsFor) || {};
@@ -126,6 +126,21 @@
   }
   async function loadFixed() { const r = await api('GET', `/api/admin/items/${fixedFor}/fixed`); fixedList = r.json?.fixed || []; }
 
+  // Cancelling a group order or an item that can't be fulfilled: first the impact, then the exact name typed, then one last "are you sure".
+  const norm = (s) => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  function cancelPanel() {
+    if (!cancelFlow) return '';
+    const { kind, plan: p } = cancelFlow, s = p.summary, what = kind === 'order' ? 'group order' : 'item';
+    const blocked = p.blockers.length > 0;
+    return `<div class="card" id="cancelPanel" style="border:2px solid var(--accent)"><h2>Cancel the ${what} “${esc(p.title)}”?</h2>
+      ${s.claims ? `<p data-impact>This will cancel <strong>${s.claims} claim${s.claims === 1 ? '' : 's'}</strong> (${s.confirmed} confirmed, ${s.requested} unconfirmed) from <strong>${s.people} ${s.people === 1 ? 'person' : 'people'}</strong>${s.paid > 0 ? ` and return the <strong>${money(s.credit)}</strong> they've paid to them as credit` : ''}.${s.forfeited > 0 ? ` <strong>${money(s.forfeited)}</strong> paid by blocked handles will <em>not</em> be credited.` : ''}</p>
+        <ul style="margin:0 0 8px; padding-left:20px" data-claims>${p.claims.map((c) => `<li>@${esc(c.handle)} — ${esc(c.label)} <span class="sub">(${c.status}${c.paid > 0 ? `, paid ${money(c.paid)}` : ''})</span></li>`).join('')}${s.claims > p.claims.length ? `<li class="sub">…and ${s.claims - p.claims.length} more</li>` : ''}</ul>`
+        : '<p data-impact>Nobody has a live claim on it, so no claims change.</p>'}
+      <p class="sub" style="margin-top:0">${kind === 'order' ? 'The order closes and disappears from the shop (all its items go with it).' : 'The item disappears from the shop and can no longer be claimed.'} <strong>Nothing is emailed</strong> — you'll need to tell people yourself.</p>
+      ${blocked ? `<div class="msg" data-blockers><strong>It can't be cancelled yet:</strong>${p.blockers.map((b) => `<div style="margin-top:4px">“${esc(b.label)}” (@${esc(b.handle)}) — ${esc(b.reason)}</div>`).join('')}</div>` : `<label for="cancelTyped">To confirm, type the name: <strong>${esc(p.title)}</strong></label><input id="cancelTyped" autocomplete="off" style="max-width:420px">`}
+      <p class="msg" data-msg hidden></p>
+      <div class="btn-row"><button class="danger" data-act="cancel-go" disabled ${blocked ? 'hidden' : ''}>Cancel the ${what}…</button><button class="secondary" data-act="cancel-close">${blocked ? 'Close' : 'Keep it'}</button></div></div>`;
+  }
   function draw() {
     const proxies = [...new Set(orders.flatMap((o) => [o.proxy, ...o.items.map((i) => i.proxy)]).filter(Boolean))];
     root.innerHTML = `
@@ -134,11 +149,12 @@
       <details class="card" id="groupPics"><summary>Artist / group pictures (${groups.length})</summary>${groups.length ? groups.map((g) => GOM.pictureControl('group', g.id, g.cover, g.name)).join('') : '<p class="muted">No artist groups yet — one is created with your first group order.</p>'}</details>
       <datalist id="proxyList">${proxies.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>
       ${showNew ? `<div class="card"><h2>New group order</h2>${orderForm(null)}</div>` : ''}
+      ${cancelPanel()}
       <div class="card"><div class="scroll"><table class="grid"><thead><tr><th>Title</th><th>Group</th><th>Status</th><th>Listing</th><th>Closes</th><th>Payment due</th><th>Proxy</th><th></th></tr></thead><tbody>
       ${orders.length ? orders.map((o) => `<tr data-order="${o.id}"><td>${o.cover ? `<img class="thumb sm" src="${esc(o.cover.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}<strong>${esc(o.title)}</strong></td><td>${esc(o.group)}</td>
-        <td><span class="pill ${o.status === 'open' ? 'ok' : 'dim'}">${o.status === 'open' ? 'Open' : 'Closed'}</span></td>
+        <td>${o.cancelled ? '<span class="pill warn" data-cancelled>Cancelled</span>' : `<span class="pill ${o.status === 'open' ? 'ok' : 'dim'}">${o.status === 'open' ? 'Open' : 'Closed'}</span>`}</td>
         <td>${o.isPrivate ? '<span class="pill warn">Private</span>' : 'Public'}</td><td>${fmtDate(o.closeDate)}</td><td>${fmtDate(o.paymentDeadline)}</td><td>${esc(o.proxy || '—')}</td>
-        <td class="nowrap"><button class="sm secondary" data-act="edit-order" data-id="${o.id}">Edit</button> <button class="sm" data-act="open-items" data-id="${o.id}">Items (${o.items.length})</button> <button class="sm secondary danger" data-act="delete-order" data-id="${o.id}">Delete</button></td></tr>
+        <td class="nowrap"><button class="sm secondary" data-act="edit-order" data-id="${o.id}">Edit</button> <button class="sm" data-act="open-items" data-id="${o.id}">Items (${o.items.length})</button> <button class="sm secondary danger" data-act="delete-order" data-id="${o.id}">Delete</button>${o.cancelled ? '' : ` <button class="sm secondary danger" data-act="cancel-order" data-id="${o.id}">Cancel…</button>`}</td></tr>
         ${editingId === o.id ? `<tr><td colspan="8">${orderForm(o)}</td></tr>` : ''}`).join('') : '<tr><td colspan="8" class="muted">No group orders yet. Create your first one above.</td></tr>'}
       </tbody></table></div></div>
       ${itemsFor ? itemsPanel() : ''}${itemsFor && fixedFor ? fixedPanel() : ''}`;
@@ -278,6 +294,23 @@
         await loadFixed(); draw(); GOM.toast(r.json.refunded > 0 ? `Removed. £${r.json.refunded.toFixed(2)} returned as credit.` : 'Removed.');
         break;
       }
+      case 'cancel-order': case 'cancel-item': {
+        const kind = b.dataset.act === 'cancel-order' ? 'order' : 'item';
+        const r = await api('GET', `/api/admin/${kind}s/${id}/cancel-plan`);
+        if (!r.ok) return GOM.toast(errText(r), true);
+        cancelFlow = { kind, id, plan: r.json }; draw();
+        const panel = $('#cancelPanel', root); panel?.scrollIntoView?.({ block: 'center' }); $('#cancelTyped', root)?.focus(); break;
+      }
+      case 'cancel-close': cancelFlow = null; draw(); break;
+      case 'cancel-go': {
+        const { kind, id: cid, plan: p } = cancelFlow, typed = $('#cancelTyped', root).value, s = p.summary;
+        if (norm(typed) !== norm(p.title)) return;
+        const ok = await GOM.confirm(`Really cancel “${p.title}”?\n\n${s.claims ? `${s.claims} claim${s.claims === 1 ? '' : 's'} will be cancelled${s.credit > 0 ? ` and ${money(s.credit)} returned to people as credit` : ''}.` : 'No claims will change.'} Nobody is emailed. This can't be undone.`, { ok: 'Yes, cancel it', cancel: 'Go back' });
+        if (!ok) return;
+        const r = await api('POST', `/api/admin/${kind}s/${cid}/cancel`, { confirm: typed });
+        if (!r.ok) return GOM.toast(errText(r), true);
+        cancelFlow = null; await reload(true); GOM.toast(`Cancelled “${r.json.title}” — ${r.json.claims} claim${r.json.claims === 1 ? '' : 's'}${r.json.credit > 0 ? `, ${money(r.json.credit)} returned as credit` : ''}.`); break;
+      }
       case 'delete-item': await deleteIt('items', id, currentOrder().items?.find((x) => x.id === id)?.title); break;
       case 'delete-order': await deleteIt('orders', id, orders.find((x) => x.id === id)?.title); break;
       case 'edit-item': editingItem = id; draw(); break;
@@ -299,6 +332,6 @@
 
   GOM.registerTab({
     id: 'orders', label: 'Group Orders',
-    async render(el) { await render(el); el.onclick = onClick; el.onsubmit = onSubmit; el.onchange = onChange; },
+    async render(el) { await render(el); el.onclick = onClick; el.onsubmit = onSubmit; el.onchange = onChange; el.oninput = (e) => { if (e.target.id === 'cancelTyped' && cancelFlow) $('[data-act="cancel-go"]', root).disabled = norm(e.target.value) !== norm(cancelFlow.plan.title); }; },
   });
 })();

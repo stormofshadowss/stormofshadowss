@@ -1,3 +1,4 @@
+import { cancelPlan, cancelNow } from '../lib/cancel-order.js';
 import { z } from 'zod';
 import { deletionPlan, deleteCatalog, itemsOfOrder } from '../lib/delete-catalog.js';
 import { imageOut, removeFiles } from '../lib/images.js';
@@ -18,7 +19,7 @@ async function proxyIdFor(conn, name) {
 
 async function loadOrders(pool, whereSql, params, { admin }) {
   const [orders] = await pool.query(
-    `SELECT go.id, go.title, go.status, go.is_private, go.close_date, go.payment_deadline, go.expected_ship_date,
+    `SELECT go.id, go.title, go.status, go.is_private, go.cancelled_at, go.close_date, go.payment_deadline, go.expected_ship_date,
             go.group_id, ag.name AS group_name, p.name AS proxy_name, oi.filename AS cover_file, oi.width AS cover_w, oi.height AS cover_h, gi.filename AS gcover_file, gi.width AS gcover_w, gi.height AS gcover_h
        FROM group_orders go JOIN artist_groups ag ON ag.id = go.group_id LEFT JOIN proxies p ON p.id = go.proxy_id
        LEFT JOIN images oi ON oi.id = go.cover_image_id LEFT JOIN images gi ON gi.id = ag.cover_image_id
@@ -26,8 +27,8 @@ async function loadOrders(pool, whereSql, params, { admin }) {
   if (!orders.length) return [];
   const ids = orders.map((o) => o.id);
   const [items] = await pool.query(
-    `SELECT i.id, i.order_id, i.item_type, i.title, i.description, i.price, i.price_tbc, i.payment_deadline, i.requires_full_set, p.name AS proxy_name, im.filename AS image_file, im.width AS image_w, im.height AS image_h
-       FROM items i LEFT JOIN proxies p ON p.id = i.proxy_id LEFT JOIN images im ON im.id = i.image_id WHERE i.order_id IN (?) ORDER BY i.sort_order, i.id`, [ids]);
+    `SELECT i.id, i.order_id, i.item_type, i.title, i.cancelled_at, i.description, i.price, i.price_tbc, i.payment_deadline, i.requires_full_set, p.name AS proxy_name, im.filename AS image_file, im.width AS image_w, im.height AS image_h
+       FROM items i LEFT JOIN proxies p ON p.id = i.proxy_id LEFT JOIN images im ON im.id = i.image_id WHERE i.order_id IN (?) ${admin ? '' : 'AND i.cancelled_at IS NULL'} ORDER BY i.sort_order, i.id`, [ids]);
   const itemIds = items.map((i) => i.id);
   const [members] = itemIds.length ? await pool.query('SELECT item_id, name, price FROM item_members WHERE item_id IN (?) ORDER BY sort_order, id', [itemIds]) : [[]];
   const [variants] = itemIds.length ? await pool.query('SELECT item_id, label FROM item_variants WHERE item_id IN (?) ORDER BY sort_order, id', [itemIds]) : [[]];
@@ -38,14 +39,14 @@ async function loadOrders(pool, whereSql, params, { admin }) {
   const [setRows] = setItemIds.length ? await pool.query('SELECT id, item_id, set_number, admin_decision FROM item_sets WHERE item_id IN (?) ORDER BY set_number', [setItemIds]) : [[]];
   const [takenRows] = setRows.length ? await pool.query('SELECT set_id, member_name FROM set_slots WHERE set_id IN (?)', [setRows.map((s) => s.id)]) : [[]];
   return orders.map((o) => ({
-    id: o.id, title: o.title, groupId: o.group_id, group: o.group_name, cover: imageOut(o.cover_file, o.cover_w, o.cover_h), groupCover: imageOut(o.gcover_file, o.gcover_w, o.gcover_h), status: o.status, isPrivate: !!o.is_private,
+    id: o.id, title: o.title, groupId: o.group_id, group: o.group_name, cover: imageOut(o.cover_file, o.cover_w, o.cover_h), groupCover: imageOut(o.gcover_file, o.gcover_w, o.gcover_h), status: o.status, isPrivate: !!o.is_private, cancelled: !!o.cancelled_at,
     closeDate: o.close_date, paymentDeadline: o.payment_deadline, expectedShipDate: o.expected_ship_date,
     ...(admin ? { proxy: o.proxy_name } : {}),
     items: items.filter((i) => i.order_id === o.id).map((i) => {
       // each part carries its effective price: its own if it has one, else the item's
       const parts = members.filter((m) => m.item_id === i.id).map((m) => ({ name: m.name, price: m.price ?? (i.price_tbc ? null : i.price) }));   // null = price still TBC
       return {
-      id: i.id, type: i.item_type, title: i.title, description: i.description || '', image: imageOut(i.image_file, i.image_w, i.image_h), price: i.price_tbc ? null : i.price, priceTbc: !!i.price_tbc,
+      id: i.id, type: i.item_type, title: i.title, cancelled: !!i.cancelled_at, description: i.description || '', image: imageOut(i.image_file, i.image_w, i.image_h), price: i.price_tbc ? null : i.price, priceTbc: !!i.price_tbc,
       // an item's own pay-by date wins; otherwise the GO's applies
       payBy: i.payment_deadline || o.payment_deadline,
       members: parts,
@@ -63,6 +64,25 @@ async function loadOrders(pool, whereSql, params, { admin }) {
 }
 
 export function catalogRoutes(app, { pool, cfg }) {
+  // ───────── cancelling a group order (or one item) that can't be fulfilled ─────────
+  // "cancel-plan" is the preview the screen shows first; "cancel" needs the exact name typed. No emails are sent.
+  const planReply = (p) => ({ kind: p.kind, id: p.id, title: p.title, summary: p.summary, blockers: p.blockers,
+    claims: p.claims.slice(0, 12).map((x) => ({ handle: x.handle, label: x.label, status: x.status, paid: Number(x.paid) })) });
+  app.get('/api/admin/orders/:id/cancel-plan', requireAdmin, wrap(async (req, res) => res.json(planReply(await withTx(pool, (conn) => cancelPlan(conn, { orderId: Number(req.params.id) }))))));
+  app.get('/api/admin/items/:id/cancel-plan', requireAdmin, wrap(async (req, res) => res.json(planReply(await withTx(pool, (conn) => cancelPlan(conn, { itemId: Number(req.params.id) }))))));
+  const doCancel = (what) => wrap(async (req, res) => {
+    const { confirm } = z.object({ confirm: z.string().max(300) }).parse(req.body || {});
+    const id = Number(req.params.id);
+    const out = await withTx(pool, async (conn) => {
+      const r = await cancelNow(conn, { ...(what === 'order' ? { orderId: id } : { itemId: id }), confirm, adminId: req.account.id });
+      await audit(conn, req.account.id, `${what}.cancel`, what, id, { claims: r.claims, people: r.people, credit: r.credit, forfeited: r.forfeited });
+      return r;
+    });
+    res.json({ ok: true, ...out });
+  });
+  app.post('/api/admin/orders/:id/cancel', requireAdmin, doCancel('order'));
+  app.post('/api/admin/items/:id/cancel', requireAdmin, doCancel('item'));
+
   // ───────── deleting an item or a whole group order ─────────
   // "check" says exactly what would be removed (and what stops it) — the screen shows that before you confirm. See lib/delete-catalog.js for the rules.
   const checkReply = (plan) => ({ canDelete: !plan.blockers.length, blockers: plan.blockers, removes: plan.removes });
@@ -97,14 +117,14 @@ export function catalogRoutes(app, { pool, cfg }) {
   app.get('/api/groups', wrap(async (req, res) => {
     const [rows] = await pool.query(
       `SELECT g.id, g.name, im.filename AS file, im.width AS w, im.height AS h,
-              (SELECT COUNT(*) FROM group_orders go WHERE go.group_id = g.id AND go.is_private = 0 AND go.status = 'open') AS open_orders,
-              (SELECT COUNT(*) FROM group_orders go WHERE go.group_id = g.id AND go.is_private = 0 AND go.status <> 'open') AS closed_orders
+              (SELECT COUNT(*) FROM group_orders go WHERE go.group_id = g.id AND go.is_private = 0 AND go.cancelled_at IS NULL AND go.status = 'open') AS open_orders,
+              (SELECT COUNT(*) FROM group_orders go WHERE go.group_id = g.id AND go.is_private = 0 AND go.cancelled_at IS NULL AND go.status <> 'open') AS closed_orders
          FROM artist_groups g LEFT JOIN images im ON im.id = g.cover_image_id WHERE g.is_hidden = 0 ORDER BY g.sort_order, g.name`);
     res.json({ groups: rows.map((g) => ({ id: g.id, name: g.name, cover: imageOut(g.file, g.w, g.h), openOrders: Number(g.open_orders), closedOrders: Number(g.closed_orders) })) });
   }));
 
   app.get('/api/orders', wrap(async (req, res) => {
-    res.json({ orders: await loadOrders(pool, 'WHERE go.is_private = 0 AND ag.is_hidden = 0', [], { admin: false }) });
+    res.json({ orders: await loadOrders(pool, 'WHERE go.is_private = 0 AND ag.is_hidden = 0 AND go.cancelled_at IS NULL', [], { admin: false }) });
   }));
 
   app.get('/api/payment-methods', requireLogin, wrap(async (req, res) => {
