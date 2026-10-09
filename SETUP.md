@@ -241,3 +241,18 @@ The simplest way to run it: no cloning, no terminal. The stack builds the app st
 - *Page won't load:* check `sos-app` is running, that nothing else uses port 2999, and the log (`docker logs sos-app`) — it prints `Created the first admin …` or says why not.
 - *Forgot the admin password:* in the terminal, `docker exec -it sos-app node src/admin-cli.js set-password gom`.
 - Port 2999 on `0.0.0.0` means anyone on your home network can reach the login page over plain http. That's normal for a home server — just don't forward the port on your router; use the Cloudflare tunnel for outside access.
+
+### Joiner settings, and deleting an account
+On their **My orders** page joiners now have a **My settings** card. It holds:
+- **Instagram handles** — add another, or **remove** one (only when it has no orders in progress, nothing owing and no credit). The box that used to sit on the home page moved here; a brand-new person with no handle still sees "Link your Instagram handle" on the home page so they know where to start.
+- **Sign-in email** — change it: a confirmation link goes to the **new** address and nothing changes until it's opened there; they're signed out on other devices and the old address is told.
+- **Shipping defaults** — a saved bias and Lomo name, pre-filled (never forced) when they ask for shipping or accept a friend's invitation.
+- **Emails from us** — leads to the email page, where each kind of email (claims confirmed, payment decisions, parcel posted, friend invitations, cancellation answers, overdue reminders) can be switched on or off.
+- **Delete my account** — see below.
+
+**What deleting an account does** (the person is never told this part — the screen just says their account and details are deleted):
+- **Blocked while** they owe money on a confirmed order, a payment is waiting to be checked, they've asked to cancel something and you haven't answered, or a parcel is on its way (theirs, or one with their items in it). The Settings page lists exactly what's in the way.
+- **If they have no financial record** (no confirmed order, confirmed payment or credit movement): everything about them is erased, including the handle.
+- **If they do:** the orders, amounts, payments and dates stay, but their login, email, delivery details, bias/Lomo names, parcel notes, payer names and their handle in your activity log are removed, and they appear to you as **deleted-123**. (A payment's *reference* is kept as the financial identifier; their handle and names are replaced if they typed them into it, but it can't catch anything else typed there.)
+- **Their handle is kept instead** if they hold **credit** (so you can settle it — they then appear on the People tab's flagged list) or are **blocked** (so deleting can't shed a block).
+- UK data-protection rules expect a short **privacy notice** saying what you keep and why (for example "payment records are kept for accounting"). It doesn't have to appear on the delete screen, but it's worth having a line on the site.

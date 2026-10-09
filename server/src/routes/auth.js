@@ -2,7 +2,7 @@ import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { wrap, esc, simplePage } from '../lib/http.js';
-import { createLoginToken, consumeLoginToken, startSession, sessionCookieOptions, COOKIE, requireLogin } from '../auth.js';
+import { createLoginToken, consumeLoginToken, peekLoginToken, startSession, sessionCookieOptions, COOKIE, requireLogin } from '../auth.js';
 import { readDevice, deviceHasProof } from '../lib/device.js';
 import { linkJoiner } from '../lib/linking.js';
 import { redeemInvite } from '../lib/invites.js';
@@ -53,14 +53,16 @@ export default function authRoutes({ cfg, pool, mailer }) {
   // 2) The emailed link opens this page. It does NOT sign anyone in by itself:
   //    mail scanners and link previewers fetch links automatically and would
   //    use the token up. Only the button (a POST) signs you in.
-  r.get('/auth/confirm', (req, res) => {
+  r.get('/auth/confirm', wrap(async (req, res) => {
     const token = String(req.query.token || '');
+    const live = token ? await peekLoginToken(pool, token) : null;
     res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
-    res.type('html').send(simplePage('Sign in',
-      `<p>Tap the button to finish signing in on this device.</p>
+    const change = !!live?.changesEmail;
+    res.type('html').send(simplePage(change ? 'Confirm your new email' : 'Sign in',
+      `<p>${change ? 'Tap the button to make this your new sign-in email.' : 'Tap the button to finish signing in on this device.'}</p>
        <form method="post" action="/auth/confirm"><input type="hidden" name="token" value="${esc(token)}">
-       <button type="submit">Sign in</button></form>`));
-  });
+       <button type="submit">${change ? 'Confirm new email' : 'Sign in'}</button></form>`));
+  }));
 
   r.post('/auth/confirm', express.urlencoded({ extended: false, limit: '4kb' }), wrap(async (req, res) => {
     const token = String(req.body?.token || '');
@@ -69,6 +71,27 @@ export default function authRoutes({ cfg, pool, mailer }) {
     if (!used) {
       return res.status(400).type('html').send(simplePage('This link has expired',
         '<p>Sign-in links work once and expire quickly. <a href="/">Get a new one</a>.</p>'));
+    }
+    if (used.changeAccountId) {                                                      // a link from "Change my sign-in email": the account's email becomes this address
+      const done = await withTx(pool, async (conn) => {
+        const [[acct]] = await conn.query('SELECT id, email, is_admin FROM accounts WHERE id = ? FOR UPDATE', [used.changeAccountId]);
+        if (!acct || acct.is_admin) return null;
+        const [[clash]] = await conn.query('SELECT 1 AS x FROM accounts WHERE email = ? AND id <> ?', [used.email, acct.id]);
+        if (clash) return { taken: true };
+        try { await conn.query('UPDATE accounts SET email = ? WHERE id = ?', [used.email, acct.id]); } catch (e) { if (e.code === 'ER_DUP_ENTRY') return { taken: true }; throw e; }
+        await conn.query('DELETE FROM sessions WHERE account_id = ?', [acct.id]);          // signed out everywhere else; this device signs back in below
+        return { old: acct.email };
+      });
+      if (!done || done.taken) return res.status(400).type('html').send(simplePage("That email can't be used",
+        '<p>Nothing was changed — that address is already used by another account. <a href="/my.html#/settings">Back to your settings</a>.</p>'));
+      try {
+        const masked = used.email.replace(/^(.).*(@.*)$/, '$1***$2');
+        await mailer.send({ to: done.old, subject: 'Your StormOfShadowss sign-in email was changed',
+          text: `The sign-in email on your StormOfShadowss account was just changed from this address to ${masked}.\n\nIf that was you, there's nothing to do. If it wasn't, contact the GOM straight away.` });
+      } catch (err) { console.error('mail failed:', err.message); }
+      const { token: sessionToken } = await startSession(pool, cfg, used.email, req);
+      res.cookie(COOKIE, sessionToken, sessionCookieOptions(cfg));
+      return res.redirect(303, '/my.html?updated=email#/settings');
     }
     const { token: sessionToken, accountId } = await startSession(pool, cfg, used.email, req);
     let invited = false;

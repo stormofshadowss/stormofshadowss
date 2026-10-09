@@ -235,14 +235,16 @@ test('My orders when signed in: handle, the five "what you owe" tiles, and each 
   p.close();
 });
 
-test('My orders: linking a handle — new (instant), taken (explained), already has orders (waits, nothing else held up)', async () => {
+test('My orders: linking a handle — the first one on the home page (instant); more in Settings: taken (explained), already has orders (waits, nothing else held up)', async () => {
   const c = await app.login('linker@x.com');
   const p = await openPage(app, '/my.html', { cookies: [c] });
-  assert.match(p.text(p.q('#handleCard')), /No handle linked yet/);
-  const link = async (h) => { p.q('#handle').value = h; await p.submit(p.q('form[data-form="handle"]')); };
-  await link('@Brand_New');
+  assert.match(p.text(p.q('#handleCard')), /Link your Instagram handle.*Your orders are tied to your Instagram handle/s);
+  p.q('#handle').value = '@Brand_New'; await p.submit(p.q('form[data-form="handle"]'));
+  assert.equal(p.q('#handleCard'), null, 'once you have a handle the box leaves the home page');
+  assert.match(p.text(p.q('#view')), /@brand_new/); assert.match(p.text(p.q('#view')), /No claims yet — browse group orders/);
+  p.window.location.hash = '#/settings'; await new Promise((r) => setTimeout(r, 40)); await p.settle();
+  const link = async (h) => { p.q('#handle').value = h; await p.submit(p.q('form[data-form="link-handle"]')); };
   assert.match(p.text(p.q('#handleCard')), /@brand_new/);
-  assert.match(p.text(p.q('#view')), /No claims yet — browse group orders/);
   await link('email_fan');                                                           // owned by someone else
   assert.match(p.text(p.q('#handleCard [data-msg]')), /already linked to another account/);
   await link('skip_fan');                                                            // has orders, nobody owns it: needs the GOM

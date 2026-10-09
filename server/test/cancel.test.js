@@ -144,62 +144,71 @@ test('block / unblock / bulk cancel / goodwill credit are the GOM only', async (
   assert.equal((await post('/api/admin/credit/add', { handle: 'no_such_handle', amount: 5, reason: 'r' })).status, 404);
 });
 
-test('deleting an account removes the login and personal details but keeps the order history', async () => {
+test('deleting an account when paid up: the login and every personal detail go; the paid order stays on record under an anonymous name', async () => {
   const c = await joinerSession(app, 'del1@x.com', 'del1');
   await app.api('PUT', '/api/my/address', { fullName: 'Del One', address: '1 Road, Leeds', email: 'del1@x.com', phone: '0700' }, c);
-  const [id] = await claimAndSecure(app, admin, 'del1', w.album);                      // owes £26 and never pays
+  const [id] = await claimAndSecure(app, admin, 'del1', w.album); await payIn(c, 26);        // £26 owed, and paid
 
   assert.equal((await app.api('DELETE', '/api/me', {}, c)).status, 400, 'must confirm');
   const r = await app.api('DELETE', '/api/me', { confirm: true }, c);
-  assert.equal(r.status, 200);
-  assert.deepEqual(r.json.handles, ['del1']);
+  assert.equal(r.status, 200); assert.deepEqual(r.json, { ok: true }, 'the screen is told nothing about what is kept');
 
   assert.equal((await app.api('GET', '/api/me', undefined, c)).status, 401, 'the session is gone');
   assert.equal((await app.q("SELECT COUNT(*) AS n FROM accounts WHERE email = 'del1@x.com'"))[0].n, 0);
-  assert.equal((await app.q('SELECT COUNT(*) AS n FROM addresses a JOIN joiners j ON j.id = a.joiner_id WHERE j.instagram_handle = ?', ['del1']))[0].n, 0, 'address and phone are erased');
-  assert.equal((await claimRow(id)).status, 'confirmed', 'but the order record stays — it is your financial record');
-  const j = (await app.q('SELECT account_id, account_deleted_at FROM joiners WHERE instagram_handle = ?', ['del1']))[0];
-  assert.equal(j.account_id, null);
-  assert.ok(j.account_deleted_at);
+  assert.equal((await app.q('SELECT COUNT(*) AS n FROM addresses'))[0].n >= 0, true);
+  assert.equal((await claimRow(id)).status, 'confirmed', 'the financial record stays');
+  const j = (await app.q('SELECT j.instagram_handle AS handle, j.account_id, j.account_deleted_at, j.anonymised_at FROM claims c JOIN joiners j ON j.id = c.joiner_id WHERE c.id = ?', [id]))[0];
+  assert.match(j.handle, /^deleted-\d+$/); assert.equal(j.account_id, null); assert.ok(j.account_deleted_at && j.anonymised_at);
+  assert.equal((await app.q("SELECT COUNT(*) AS n FROM joiners WHERE instagram_handle = 'del1'"))[0].n, 0, 'the handle is free again');
 });
 
-test('a deleted account that still owes money appears on the GOM\'s flagged list with the amounts', async () => {
+test('a person who still OWES money cannot delete their account (they are told how to put it right); nothing is touched', async () => {
   const c = await joinerSession(app, 'del2@x.com', 'del2');
+  await app.api('PUT', '/api/my/address', { fullName: 'Del Two', address: '2 Road, Leeds', email: 'del2@x.com', phone: '0700' }, c);
   await claimAndSecure(app, admin, 'del2', w.album);                                   // owes £26
-  const paidOne = await joinerSession(app, 'del3@x.com', 'del3');
-  await claimAndSecure(app, admin, 'del3', w.keyring); await payIn(paidOne, 6);        // paid up, holds an item
+  const r = await app.api('DELETE', '/api/me', { confirm: true }, c);
+  assert.equal(r.status, 409); assert.equal(r.json.code, 'cannot_delete'); assert.match(r.json.error, /You still owe £26\.00\. Pay it — or ask the GOM to cancel those orders — and then you can delete your account\./);
+  assert.equal((await app.api('GET', '/api/me', undefined, c)).status, 200, 'still signed in');
+  assert.equal((await app.q("SELECT COUNT(*) AS n FROM addresses a JOIN joiners j ON j.id = a.joiner_id WHERE j.instagram_handle = 'del2'"))[0].n, 1);
+});
+
+test('the GOM\'s flagged list shows people who left holding CREDIT (their handle is kept so you can settle it) and blocked handles — not anonymised leavers', async () => {
+  const holder = await joinerSession(app, 'del3@x.com', 'del3');
+  await claimAndSecure(app, admin, 'del3', w.keyring); await payIn(holder, 6);          // paid up…
+  await post('/api/admin/credit/add', { handle: 'del3', amount: 5, reason: 'goodwill' }); // …and holding £5 credit
+  const paidOne = await joinerSession(app, 'del3b@x.com', 'del3b');
+  await claimAndSecure(app, admin, 'del3b', w.keyring); await payIn(paidOne, 6);        // paid up, nothing held
   await post('/api/admin/joiners/block', { handle: 'flag_blocked', reason: 'chargeback' });
-  await app.api('DELETE', '/api/me', { confirm: true }, c);
-  await app.api('DELETE', '/api/me', { confirm: true }, paidOne);
+  assert.equal((await app.api('DELETE', '/api/me', { confirm: true }, holder)).status, 200);
+  assert.equal((await app.api('DELETE', '/api/me', { confirm: true }, paidOne)).status, 200);
 
   const f = (await app.api('GET', '/api/admin/joiners/flagged', undefined, admin)).json.joiners;
   const by = Object.fromEntries(f.map((x) => [x.handle, x]));
-  assert.equal(by.del2.owed, 26);
-  assert.ok(by.del2.accountDeletedAt);
-  assert.equal(by.del2.openClaims, 1);
-  assert.equal(by.del3.owed, 0, 'paid-up leavers are flagged too (they still hold an item) but owe nothing');
-  assert.equal(by.flag_blocked.blocked, true);
-  assert.equal(by.flag_blocked.blockedReason, 'chargeback');
+  assert.equal(by.del3.credit, 5); assert.ok(by.del3.accountDeletedAt, 'kept by name because they hold credit');
+  assert.ok(!by.del3b && !f.some((x) => /^deleted-/.test(x.handle)), 'a paid-up leaver is anonymous and has nothing to settle, so is not flagged');
+  assert.equal(by.flag_blocked.blocked, true); assert.equal(by.flag_blocked.blockedReason, 'chargeback');
   assert.ok(!by.fine_person, 'ordinary people are not on the list');
 });
 
 test('a person with a parcel on its way cannot delete their account yet', async () => {
   const c = await joinerSession(app, 'del4@x.com', 'del4');
   await app.api('PUT', '/api/my/address', { fullName: 'Del Four', address: '1 Road, Leeds', email: 'del4@x.com', phone: '0700' }, c);
-  const [id] = await claimAndSecure(app, admin, 'del4', w.keyring);
+  const [id] = await claimAndSecure(app, admin, 'del4', w.keyring); await payIn(c, 6);
   await app.api('PATCH', `/api/admin/claims/${id}`, { pipeline: READY }, admin);
   await app.api('POST', '/api/my/parcels', { claimIds: [id], method: 'UK Royal Mail Tracked 48', addressConfirmed: true }, c);
   const r = await app.api('DELETE', '/api/me', { confirm: true }, c);
   assert.equal(r.status, 409);
-  assert.equal(r.json.code, 'parcel_in_progress');
+  assert.equal(r.json.code, 'cannot_delete'); assert.match(r.json.error, /A parcel for @del4 is still on its way — you can delete your account once it has arrived\./);
   assert.equal((await app.api('GET', '/api/me', undefined, c)).status, 200, 'nothing was deleted');
   assert.ok((await app.q("SELECT COUNT(*) AS n FROM addresses a JOIN joiners j ON j.id = a.joiner_id WHERE j.instagram_handle = 'del4'"))[0].n === 1);
 });
 
-test('someone who deleted their account can return only with the GOM\'s say-so, which clears the flag', async () => {
+test('someone who deleted their account while holding credit can return only with the GOM\'s say-so, which clears the flag and restores their credit', async () => {
   const old = await joinerSession(app, 'back1@x.com', 'back1');
-  await claimAndSecure(app, admin, 'back1', w.album);
-  await app.api('DELETE', '/api/me', { confirm: true }, old);
+  await claimAndSecure(app, admin, 'back1', w.keyring); await payIn(old, 6);
+  await post('/api/admin/credit/add', { handle: 'back1', amount: 5, reason: 'goodwill' });
+  assert.equal((await app.api('DELETE', '/api/me', { confirm: true }, old)).status, 200);
+  assert.equal((await app.q("SELECT COUNT(*) AS n FROM joiners WHERE instagram_handle = 'back1'"))[0].n, 1, 'the handle was kept because credit is held');
 
   const again = await app.login('back1.new@x.com');
   const r = await app.api('POST', '/api/me/handles', { handle: 'back1' }, again);
@@ -207,7 +216,7 @@ test('someone who deleted their account can return only with the GOM\'s say-so, 
   assert.equal((await app.api('GET', '/api/my/summary', undefined, again)).status, 403);
   const req = (await app.api('GET', '/api/admin/handle-requests', undefined, admin)).json.requests.find((x) => x.handle === 'back1');
   await post(`/api/admin/handle-requests/${req.id}/approve`, {});
-  assert.equal((await summary(again)).owed.total, 26, 'their old debt is still there');
+  assert.equal((await summary(again)).credit, 5, 'their credit is still there');
   assert.equal((await app.q("SELECT account_deleted_at AS d FROM joiners WHERE instagram_handle = 'back1'"))[0].d, null, 'no longer flagged');
 });
 

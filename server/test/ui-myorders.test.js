@@ -43,7 +43,7 @@ test('the landing page: what you owe (five tiles), and a card for each thing you
   const p = await mine('lan_h');
   assert.deepEqual(tiles(p), { Initials: '£6.00', EMS: '£2.00', Customs: '£0.00', Doms: '£0.00', Packaging: '£0.00', 'Total to pay': '£8.00' });
   const cards = Object.fromEntries(p.qa('a.gocard').map((c) => [p.text(c.querySelector('strong')), p.text(c.querySelector('.sub'))]));
-  assert.deepEqual(cards, { 'Make a payment': '£8.00 owed', 'Request shipping': 'nothing ready yet', 'Ongoing orders': '2 items', 'Completed orders': '0 received', 'Email notifications': 'off', 'Delivery details': 'not added yet' });
+  assert.deepEqual(cards, { 'Make a payment': '£8.00 owed', 'Request shipping': 'nothing ready yet', 'Ongoing orders': '2 items', 'Completed orders': '0 received', 'Email notifications': 'off', 'Delivery details': 'not added yet', 'My settings': 'handles, email & preferences' });
   assert.deepEqual([p.errors], [[]]);
   p.close();
 });
@@ -56,7 +56,8 @@ test('someone with two handles can switch between them', async () => {
   assert.equal(tiles(p)['Total to pay'], '£6.00');
   await p.choose(p.q('#sw'), 'two_b');
   assert.equal(tiles(p)['Total to pay'], '£0.00', 'the other handle owes nothing');
-  assert.match(text(p, '#handleCard'), /@two_a.*@two_b/);
+  assert.match(text(p, '#sw'), /@two_a.*@two_b/);
+  assert.equal(p.q('#handleCard'), null, 'the handles box now lives in Settings');
   p.close();
 });
 
@@ -275,16 +276,21 @@ test('ongoing orders: grouped by order, each item shows its stage, cost lines wi
   p.close();
 });
 
-test('deleting your account: asked first; keeping it changes nothing; confirming erases it; a parcel on its way blocks it', async () => {
+test('deleting your account (from Settings): asked first; keeping it changes nothing; confirming deletes it and says nothing about what is kept; a parcel on its way, or money owed, stops it and says why', async () => {
   await joiner('del_h', { address: 'Del Eted' });
   await claimAndSecure(app, admin, 'del_h', w.keyring);
-  const p = await mine('del_h'); await go(p, '#/account');
-  await p.click(p.q('[data-act="delete"]'));
-  assert.match(p.text(modal(p)), /erased and you'll be signed out.*can't be undone/s);
+  const pay = await app.api('POST', '/api/my/payments', { method: 'PayPal', amount: 6, reference: 'del' }, cookies.del_h); await api('POST', `/api/admin/payments/${pay.json.id}/verify`, {});
+  const p = await mine('del_h'); await go(p, '#/settings');
+  assert.equal(p.q('[data-blocked]'), null); assert.equal(p.q('[data-act="delete-account"]').disabled, false);
+  assert.match(text(p, '#deleteCard'), /signs you out everywhere and deletes your account and your personal details \(name, address, phone and email\)/);
+  assert.match(text(p, '[data-warn="inflight"]'), /You have 1 paid item that hasn't reached you yet\. If you delete your account the GOM won't have your address to send it\./);
+  await p.click(p.q('[data-act="delete-account"]'));
+  assert.match(p.text(modal(p)), /personal details will be deleted and you'll be signed out.*can't be undone/s);
   await press(p, 'Keep my account');
   assert.equal((await api('GET', '/api/me', undefined, cookies.del_h)).status, 200);
-  await p.click(p.q('[data-act="delete"]')); await press(p, 'Yes, delete it');
-  assert.match(text(p), /Your account has been deleted/);
+  await p.click(p.q('[data-act="delete-account"]')); await press(p, 'Yes, delete it');
+  assert.match(text(p), /Your account has been deleted.*Your login and personal details are gone/s);
+  assert.doesNotMatch(text(p), /history|record|kept|keep|stays|retain/i, 'the screen says nothing about what the GOM holds on to');
   assert.equal((await api('GET', '/api/me', undefined, cookies.del_h)).status, 401);
   assert.equal((await app.q("SELECT COUNT(*) AS n FROM addresses a JOIN joiners j ON j.id = a.joiner_id WHERE j.instagram_handle = 'del_h'"))[0].n, 0);
 
@@ -293,10 +299,17 @@ test('deleting your account: asked first; keeping it changes nothing; confirming
   const q = await mine('delblock_h'); await go(q, '#/ship');
   q.q('input[name="claim"]').checked = true; await q.choose(q.q('select[name="method"]'), 'UK Inpost to House');
   q.q('input[name="addressConfirmed"]').checked = true; await q.submit(q.q('form[data-form="ship"]'));
-  await go(q, '#/account'); await q.click(q.q('[data-act="delete"]')); await press(q, 'Yes, delete it');
-  assert.match(text(q, '[data-msg]'), /parcel for @delblock_h is still on its way/);
+  await go(q, '#/settings');
+  assert.match(text(q, '[data-blocker="parcel"]'), /A parcel for @delblock_h is still on its way — you can delete your account once it has arrived\./);
+  assert.match(text(q, '[data-blocked]'), /You can't delete your account just yet/);
+  assert.equal(q.q('[data-act="delete-account"]').disabled, true, 'the button does not work while something is in the way');
   assert.equal((await api('GET', '/api/me', undefined, cookies.delblock_h)).status, 200, 'nothing was deleted');
-  p.close(); q.close();
+
+  await joiner('delowe_h', { address: 'Owe Ed' }); await claimAndSecure(app, admin, 'delowe_h', w.keyring);
+  const o = await mine('delowe_h'); await go(o, '#/settings');
+  assert.match(text(o, '[data-blocker="owed"]'), /You still owe £6\.00\. Pay it — or ask the GOM to cancel those orders — and then you can delete your account\./);
+  assert.equal(o.q('[data-act="delete-account"]').disabled, true);
+  p.close(); q.close(); o.close();
 });
 
 test('labels with HTML are shown as text on every joiner page', async () => {
@@ -342,7 +355,8 @@ test('email notifications: off by default, explained plainly, and turned on and 
   await go(p, '#/notifications');
   const t = text(p);
   assert.match(t, new RegExp(`These are off unless you turn them on.*notify_nia@x\\.com`, 's'));
-  assert.match(t, /your claims are secured \(and what you now owe\).*verified — or couldn't be.*your parcel has been shipped.*one reminder per item, never repeated/s);
+  assert.match(t, /My claims are confirmed.*A payment of mine is approved or declined.*My parcel is posted.*A friend asks to ship a parcel together.*The GOM answers my request to cancel.*Reminders about payments that are overdue/s);
+  assert.ok(p.qa('input[data-event]').every((x) => x.disabled && x.checked), 'every kind is listed, on by default, but greyed out until emails are switched on');
   assert.equal(p.q('#notifyToggle').checked, false);
   assert.match(t, /Notifications are off\./);
   await p.click(p.q('#notifyToggle'));

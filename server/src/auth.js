@@ -21,14 +21,14 @@ export function parseCookies(header = '') {
 // Creates a one-time sign-in token. Returns null when this email has already
 // asked for too many links this hour (the caller still answers "ok", so
 // nobody can use the endpoint to learn anything about an email address).
-export async function createLoginToken(pool, cfg, email, ip, linkJoinerId = null, inviteId = null) {
+export async function createLoginToken(pool, cfg, email, ip, linkJoinerId = null, inviteId = null, changeAccountId = null) {
   const [[{ n }]] = await pool.query(
     'SELECT COUNT(*) AS n FROM login_tokens WHERE email = ? AND created_at > (NOW(3) - INTERVAL 1 HOUR)', [email]);
   if (n >= cfg.loginLinksPerEmailPerHour) return null;
   const token = newToken();
   await pool.query(
-    'INSERT INTO login_tokens (email, token_hash, ip, expires_at, link_joiner_id, invite_id) VALUES (?, ?, ?, NOW(3) + INTERVAL ? MINUTE, ?, ?)',
-    [email, sha256(token), ip || null, cfg.loginLinkMinutes, linkJoinerId, inviteId]);
+    'INSERT INTO login_tokens (email, token_hash, ip, expires_at, link_joiner_id, invite_id, change_account_id) VALUES (?, ?, ?, NOW(3) + INTERVAL ? MINUTE, ?, ?, ?)',
+    [email, sha256(token), ip || null, cfg.loginLinkMinutes, linkJoinerId, inviteId, changeAccountId]);
   return token;
 }
 
@@ -39,9 +39,15 @@ export async function consumeLoginToken(pool, token) {
   const [res] = await pool.query(
     'UPDATE login_tokens SET used_at = NOW(3) WHERE token_hash = ? AND used_at IS NULL AND expires_at > NOW(3)', [hash]);
   if (res.affectedRows !== 1) return null;
-  const [[row]] = await pool.query('SELECT email, link_joiner_id, invite_id FROM login_tokens WHERE token_hash = ?', [hash]);
+  const [[row]] = await pool.query('SELECT email, link_joiner_id, invite_id, change_account_id FROM login_tokens WHERE token_hash = ?', [hash]);
   const [[adm]] = await pool.query('SELECT 1 AS x FROM accounts WHERE email = ? AND is_admin = 1', [row.email]);
-  return adm ? null : { email: row.email, linkJoinerId: row.link_joiner_id, inviteId: row.invite_id };
+  return adm ? null : { email: row.email, linkJoinerId: row.link_joiner_id, inviteId: row.invite_id, changeAccountId: row.change_account_id };
+}
+
+// Looks at a link WITHOUT using it (the page that asks "tap to confirm" must not use it up): is it a live link, and is it for changing an email?
+export async function peekLoginToken(pool, token) {
+  const [[row]] = await pool.query('SELECT change_account_id FROM login_tokens WHERE token_hash = ? AND used_at IS NULL AND expires_at > NOW(3)', [sha256(token)]);
+  return row ? { changesEmail: !!row.change_account_id } : null;
 }
 
 // Signs an admin in (after their password was checked). Admin sessions are shorter than joiner ones.

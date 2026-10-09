@@ -3,10 +3,11 @@ import { z } from 'zod';
 import { wrap } from '../lib/http.js';
 import { requireLogin, requireAdmin, audit } from '../auth.js';
 import { withTx } from '../db.js';
-import { bad, conflict, notFound } from '../errors.js';
+import { bad, conflict, forbidden, notFound } from '../errors.js';
 import { normalizeHandle, isValidHandle } from '../lib/handles.js';
 import { readDevice, deviceHasProof } from '../lib/device.js';
 import { linkJoiner } from '../lib/linking.js';
+import { deleteAccount, deletionCheck, unlinkHandle } from '../lib/delete-account.js';
 
 // Does this handle already have anything attached to it (orders, money, an address…)?
 // If so, a new sign-in can't just take it over — the GOM has to say yes once.
@@ -55,29 +56,35 @@ export default function handleRoutes({ pool }) {
     res.status(out.status === 'pending_approval' ? 202 : 200).json(out);
   }));
 
-  // "Delete my account": removes the login and the personal details (address, phone, email on file).
-  // The order history stays, because it's the GOM's financial record. If money is still owed or held
-  // the handle shows up in the GOM's "flagged" list so they can decide what to do.
+  // What would stop deleting the account, and what to warn about first (credit they'd lose, paid items not yet delivered). Used by the Settings page.
+  r.get('/me/delete-check', requireLogin, wrap(async (req, res) => {
+    const [js] = await pool.query('SELECT id FROM joiners WHERE account_id = ?', [req.account.id]);
+    const c = await deletionCheck(pool, js.map((j) => j.id));
+    res.json({ canDelete: !c.blockers.length, blockers: c.blockers, warnings: c.warnings });
+  }));
+
+  // "Delete my account": see lib/delete-account.js for exactly what is erased and what is stripped but kept. The person is only told that their account and details are deleted.
   r.delete('/me', requireLogin, wrap(async (req, res) => {
     z.object({ confirm: z.literal(true) }).parse(req.body);
-    const handles = await withTx(pool, async (conn) => {
-      const [js] = await conn.query('SELECT id, instagram_handle FROM joiners WHERE account_id = ? ORDER BY id FOR UPDATE', [req.account.id]);
-      for (const j of js) {
-        const [busy] = await conn.query(
-          "SELECT 1 FROM parcels WHERE joiner_id = ? AND status IN ('requested','packed','shipped') LIMIT 1", [j.id]);
-        if (busy.length) throw conflict(`A parcel for @${j.instagram_handle} is still on its way — you can delete your account once it has arrived.`, 'parcel_in_progress');
-      }
-      for (const j of js) {
-        await conn.query('DELETE FROM addresses WHERE joiner_id = ?', [j.id]);
-        await conn.query('UPDATE joiners SET account_deleted_at = NOW(3) WHERE id = ?', [j.id]);
-      }
-      await conn.query('DELETE FROM login_tokens WHERE email = ?', [req.account.email]);
-      await conn.query('DELETE FROM accounts WHERE id = ?', [req.account.id]);   // sessions and link requests go with it; handles are unlinked
-      await audit(conn, null, 'account.delete', 'joiner', null, { handles: js.map((j) => j.instagram_handle) });
-      return js.map((j) => j.instagram_handle);
+    if (req.account.isAdmin) throw forbidden('This is the GOM account — it can\'t be deleted from here.');
+    const out = await withTx(pool, async (conn) => {
+      const result = await deleteAccount(conn, { accountId: req.account.id, email: req.account.email });
+      await audit(conn, null, 'account.delete', 'account', req.account.id, result);          // ids only — never handles or emails
+      return result;
     });
     res.clearCookie('sos_session', { path: '/' });
-    res.json({ ok: true, handles });
+    res.json({ ok: true });
+  }));
+
+  // "Remove this handle from my account" (only when it has nothing in progress).
+  r.delete('/me/handles/:handle', requireLogin, wrap(async (req, res) => {
+    const handle = normalizeHandle(req.params.handle);
+    const out = await withTx(pool, async (conn) => {
+      const result = await unlinkHandle(conn, req.account.id, handle);
+      await audit(conn, req.account.id, 'handle.unlink', 'joiner', result.joinerId);
+      return result;
+    });
+    res.json({ ok: true });
   }));
 
   // ── GOM side ──

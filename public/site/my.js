@@ -59,7 +59,8 @@
     const ready = S.readyItems().length;
     const tile = (label, n, cls = '') => `<div class="tile ${cls}"><div class="sub" style="color:inherit">${label}</div><div class="n">${money(n)}</div></div>`;
     const card = (href, title, hint) => `<a class="gocard" href="${href}"><strong>${title}</strong><span class="sub">${hint}</span></a>`;
-    view.innerHTML = `<div class="row" style="margin:18px 0 8px"><h1 style="margin:0">My orders</h1><span class="muted">${esc(m.account.email)} · <a href="#" data-act="logout">Sign out</a></span></div>
+    const settingsCard = card('#/settings', 'My settings', m.pending.length ? `${m.pending.length} handle${m.pending.length === 1 ? '' : 's'} waiting for the GOM` : 'handles, email & preferences');
+    view.innerHTML = `<div class="row" style="margin:18px 0 8px"><h1 style="margin:0">My orders</h1><span class="muted">${handles.length === 1 ? `<strong>@${esc(handles[0])}</strong> · ` : ''}${esc(m.account.email)} · <a href="#" data-act="logout">Sign out</a></span></div>
       ${handles.length > 1 ? `<div class="card"><label for="sw">Viewing</label><select id="sw" data-act="switch">${handles.map((h) => `<option value="${esc(h)}" ${h === S.handle ? 'selected' : ''}>@${esc(h)}</option>`).join('')}</select></div>` : ''}
       ${S.invites.length ? `<div class="card" data-invite-notice style="background:var(--paper)"><strong>${S.invites.length === 1 ? `@${esc(S.invites[0].fromHandle)} has asked` : `${S.invites.length} people have asked`} to ship a parcel together with yours</strong><div class="sub">One parcel, one address — you choose which of your items go in. Nothing happens unless you say yes.</div><a class="pillbtn" href="#/ship" style="margin-top:8px">Have a look</a></div>` : ''}
       ${sum ? `<div class="card"><h2>What you owe</h2><div class="tiles">${CATS.map(([k, n]) => tile(n, o[k])).join('')}${tile('Total to pay', o.total, 'total')}</div>
@@ -70,13 +71,14 @@
         ${card('#/completed', 'Completed orders', `${completed.length} received`)}
         ${S.fixed.fixed.length || S.fixed.requests.length ? card('#/fixed', 'Fixed claims', `${S.fixed.fixed.length} standing claim${S.fixed.fixed.length === 1 ? '' : 's'}${S.fixed.fixed.some((x) => x.pending) ? ' · a request is waiting' : ''}`) : ''}
         ${card('#/notifications', 'Email notifications', S.notify.enabled ? 'on' : 'off')}
-        ${card('#/address', 'Delivery details', S.address ? esc(S.address.fullName) : 'not added yet')}</div>` : ''}
-      <div class="card" id="handleCard"><h2>Your Instagram handle${handles.length > 1 ? 's' : ''}</h2>
-        <div>${handles.map((h) => `<span class="pill ${h === S.handle ? 'ok' : ''}">@${esc(h)}</span>`).join('')}${m.pending.map((p) => `<span class="pill warn">@${esc(p.handle)} — waiting for the GOM to confirm it's you</span>`).join('')}${!handles.length && !m.pending.length ? '<span class="muted">No handle linked yet.</span>' : ''}</div>
-        <form data-form="handle"><label for="handle">${handles.length ? 'Link another handle' : 'Which Instagram handle is yours?'}</label><input id="handle" name="handle" placeholder="@yourhandle" autocomplete="off" autocapitalize="none" required>
-        <p class="msg" data-msg hidden></p><button type="submit">This is mine</button></form></div>
-      ${sum && !sum.orders.length ? '<div class="card"><p class="muted">No claims yet — <a href="/">browse group orders</a>.</p></div>' : ''}
-      <p class="sub"><a href="#/account">Delete my account</a></p>`;
+        ${card('#/address', 'Delivery details', S.address ? esc(S.address.fullName) : 'not added yet')}
+        ${settingsCard}</div>` : `<div class="cards">${settingsCard}</div>`}
+      ${!handles.length ? `<div class="card" id="handleCard"><h2>Link your Instagram handle</h2>
+        <p class="sub">Your orders are tied to your Instagram handle, so link it to see them here.</p>
+        ${m.pending.length ? `<div>${m.pending.map((p) => `<span class="pill warn">@${esc(p.handle)} — waiting for the GOM to confirm it's you</span>`).join('')}</div>` : ''}
+        <form data-form="handle"><label for="handle">Which Instagram handle is yours?</label><input id="handle" name="handle" placeholder="@yourhandle" autocomplete="off" autocapitalize="none" required>
+        <p class="msg" data-msg hidden></p><button type="submit">This is mine</button></form></div>` : ''}
+      ${sum && !sum.orders.length ? '<div class="card"><p class="muted">No claims yet — <a href="/">browse group orders</a>.</p></div>' : ''}`;
   }
 
   // ── ongoing / completed ──
@@ -122,13 +124,6 @@
   SITE.views.completed = async () => ordersList('completed');
 
   // ── account ──
-  SITE.views.account = async () => {
-    view.innerHTML = `${S.crumb}<h1 style="margin:4px 0 10px">Your account</h1><div class="card"><h2>Delete my account</h2>
-      <p>This signs you out everywhere and erases your delivery details (name, address, phone) and email. Your order history stays, because it's the GOM's record of what was ordered and paid.</p>
-      <p class="sub">If you still owe money, the GOM will see that. You can't delete your account while a parcel is on its way to you.</p>
-      <p class="msg" data-msg hidden></p><button data-act="delete" class="secondary">Delete my account</button></div>`;
-  };
-
   // ── events ──
   view.addEventListener('submit', async (e) => {                                  // sending a request to cancel
     const form = e.target; if (form.dataset?.form !== 'cancel') return;
@@ -153,14 +148,7 @@
       if (!r.ok) return SITE.toast(errText(r), true);
       await S.reload(); SITE.toast('Marked as received — enjoy!'); return route();
     }
-    if (b.dataset.act === 'delete') {
-      const ok = await SITE.confirm('Delete your account?\n\nYour login and delivery details will be erased and you\'ll be signed out. This can\'t be undone.', { ok: 'Yes, delete it', cancel: 'Keep my account' });
-      if (!ok) return;
-      const r = await api('DELETE', '/api/me', { confirm: true });
-      if (!r.ok) return S.say($('[data-msg]', view), errText(r));
-      S.me = null;                      // (the address is left alone: changing it would reload the page and replace this message)
-      view.innerHTML = '<div class="card"><h1>Your account has been deleted</h1><p>Your login and delivery details are gone. Thanks for ordering with us.</p><a href="/">Back to group orders</a></div>';
-    }
+
   });
   view.addEventListener('change', async (e) => {
     if (e.target.dataset.act === 'switch') { S.handle = e.target.value; await S.reload(); route(); }
@@ -189,7 +177,8 @@
       return;
     }
     const name = (location.hash || '#/').replace(/^#\/?/, '') || 'home';
-    if (name !== 'home' && name !== 'account' && !S.handle) { location.hash = '#/'; return; }
+    if (name === 'account') { location.replace('#/settings'); return; }                // the old "Your account" page now lives in Settings
+    if (!['home', 'settings'].includes(name) && !S.handle) { location.hash = '#/'; return; }
     const fn = SITE.views[name];
     if (!fn || name === 'home') return home();
     view.innerHTML = '<p class="muted">Loading…</p>';

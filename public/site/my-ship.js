@@ -66,8 +66,8 @@
     return here.map((i) => `<form class="card" data-form="accept" data-parcel="${i.parcelId}" style="border:2px solid var(--accent)"><h2>@${esc(i.fromHandle)} has asked to ship together with you</h2>
       <p>@${esc(i.fromHandle)} is posting a parcel to <strong>their own address</strong> and would like your items in the same box. It's one parcel, and the postage and packaging are shared out <strong>${/^ww\b/i.test(i.method) ? "by the weight of each person's items" : 'equally per person'}</strong>${/^ww\b/i.test(i.method) ? '' : ' (not by how many items each has)'} — there may be more than two of you. @${esc(i.fromHandle)} will confirm when it arrives. It's your choice — you can say no.</p>
       ${ready.length ? `<label>Which of your items should go in?</label>${ready.map((c) => `<label class="chk" style="margin:6px 0"><input type="checkbox" name="claim" value="${c.id}"> ${esc(c.label)} <span class="sub">${esc(c.orderTitle)}</span></label>`).join('')}
-        <div class="formgrid" style="margin-top:10px"><div><label>Your bias (for your thank-you card 💌)</label><input name="bias" maxlength="80" placeholder="e.g. Felix"></div>
-        <div><label>Personalised Lomo name</label><input name="lomoName" maxlength="80" placeholder="${a?.fullName ? `Leave blank to use ${esc(a.fullName.trim())}` : 'optional'}"></div></div>
+        <div class="formgrid" style="margin-top:10px"><div><label>Your bias (for your thank-you card 💌)</label><input name="bias" maxlength="80" value="${esc(S.defaults?.bias || '')}" placeholder="e.g. Felix"></div>
+        <div><label>Personalised Lomo name</label><input name="lomoName" maxlength="80" value="${esc(S.defaults?.lomoName || '')}" placeholder="${a?.fullName ? `Leave blank to use ${esc(a.fullName.trim())}` : 'optional'}"></div></div>
         <label style="margin-top:10px">Packing notes (optional)</label><textarea name="notes" rows="2" maxlength="1000" style="width:100%; padding:10px 12px; border:1.5px solid var(--line); border-radius:8px; font:inherit"></textarea>`
       : '<p class="muted" data-nothing-ready>You don\'t have anything ready to ship yet, so you can\'t join this one. You can say no, or wait until something is ready.</p>'}
       <p class="msg" data-msg hidden></p><div class="btn-row">${ready.length ? '<button type="submit">Yes — add my items</button>' : ''}<button type="button" class="secondary" data-act="decline" data-id="${i.parcelId}" data-from="${esc(i.fromHandle)}">No thanks</button></div></form>`).join('')
@@ -76,6 +76,8 @@
 
   SITE.views.ship = async (view) => {
     const S = SITE.my, a = S.address, ready = S.readyItems();
+    const dr = S.handle ? await S.api('GET', '/api/my/defaults') : null;                       // saved bias / Lomo name, used to pre-fill (never forced)
+    S.defaults = dr?.ok ? dr.json : { bias: '', lomoName: '' };
     let body;
     if (!a) {
       body = `<div class="card"><h2>Add your delivery details first</h2><p>We need to know where to send your parcel.</p><a class="pillbtn" href="#/address">Add delivery details</a></div>`;
@@ -93,9 +95,9 @@
         <div class="sub" style="margin-bottom:6px">If friends live nearby, you can post <strong>one parcel to your address</strong> with everyone's items in it — up to 5 people in all. They'll each be asked to say yes and choose their own items. Postage and packaging are shared out between you: equally per person for UK postage, or by the weight of each person's items for worldwide. They need to have signed in to this site.</div>
         <input name="shareWith" maxlength="200" placeholder="Their Instagram handles, e.g. @friend1, @friend2" autocomplete="off">
         <label style="margin-top:12px">Packing notes for your parcel (optional)</label><textarea name="notes" rows="2" maxlength="1000" placeholder="e.g. please keep photocards in a toploader, pack fragile items away from the edge of the box…" style="width:100%; padding:10px 12px; border:1.5px solid var(--line); border-radius:8px; font:inherit"></textarea>
-        <label>Your bias (so we know whose photo to sneak into your thank-you card 💌)</label><input name="bias" maxlength="80" placeholder="e.g. Hyunjin">
+        <label>Your bias (so we know whose photo to sneak into your thank-you card 💌)</label><input name="bias" maxlength="80" value="${esc(S.defaults.bias)}" placeholder="e.g. Hyunjin">
         <label>Personalised Lomo</label><div class="sub" style="margin-bottom:6px">Sometimes I like to include a personalised Lomo in with orders. Can I use the name you provided in your delivery details (<strong>${esc(name)}</strong>)? If you have a name you would prefer me to use, please enter it here.</div>
-        <input name="lomoName" maxlength="80" placeholder="Leave blank to use ${esc(name)}">
+        <input name="lomoName" maxlength="80" value="${esc(S.defaults.lomoName)}" placeholder="Leave blank to use ${esc(name)}">
         <div class="card" style="background:var(--paper); margin-top:14px"><strong>Sending to</strong><div style="white-space:pre-line">${esc(a.fullName)}\n${esc(a.address)}\n${esc(a.email)} · ${esc(a.phone)}</div>
           <label class="chk" style="margin-top:8px"><input type="checkbox" name="addressConfirmed"> This is still the correct address, email and phone number</label><a href="#/address">Change delivery details</a></div>
         <p class="msg" data-msg hidden></p><button type="submit">Request shipping for selected</button></form>`;

@@ -302,7 +302,7 @@ export function adminRoutes(app, { pool, notifier }) {
               (SELECT COALESCE(SUM(balance_effect), 0) FROM credit_ledger WHERE joiner_id = j.id) AS credit,
               (SELECT COALESCE(SUM(amount), 0) FROM credit_ledger WHERE joiner_id = j.id AND kind = 'forfeited') AS forfeited,
               (SELECT COUNT(*) FROM claims WHERE joiner_id = j.id AND status = 'confirmed' AND pipeline <> 'completed') AS openClaims
-         FROM joiners j WHERE j.is_blocked = 1 OR j.account_deleted_at IS NOT NULL ORDER BY j.instagram_handle`);
+         FROM joiners j WHERE j.is_blocked = 1 OR (j.account_deleted_at IS NOT NULL AND j.anonymised_at IS NULL) ORDER BY j.instagram_handle`);   // (anonymised people have nothing left to settle)
     res.json({ joiners: rows.map((r) => ({ ...r, blocked: !!r.blocked, owed: round2(r.owed), credit: round2(r.credit), forfeited: round2(r.forfeited) })) });
   }));
 

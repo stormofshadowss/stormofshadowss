@@ -1,3 +1,4 @@
+import { offSet } from './notify-events.js';
 import { round2 } from './money.js';
 
 const pounds = (n) => `£${Number(n).toFixed(2)}`;
@@ -18,9 +19,12 @@ export function createNotifier({ pool, mailer, cfg }) {
   // Wraps a trigger so it can never throw into the caller; returns a promise (tests await idle(), servers just let it run).
   const safe = (fn) => (...args) => { const p = (async () => { try { await fn(...args); } catch (e) { console.error('notification failed:', e.message); } })(); inflight.add(p); p.finally(() => inflight.delete(p)); return p; };
 
-  async function recipient(joinerId) {
-    const [[r]] = await pool.query('SELECT j.instagram_handle AS handle, a.email FROM joiners j JOIN accounts a ON a.id = j.account_id WHERE j.id = ? AND a.notify_email = 1', [joinerId]);
-    return r || null;
+  // Who to email, if they've turned emails on — and, when `event` is given, haven't switched off that kind of email.
+  async function recipient(joinerId, event = null) {
+    const [[r]] = await pool.query('SELECT j.instagram_handle AS handle, a.email, a.notify_off AS off FROM joiners j JOIN accounts a ON a.id = j.account_id WHERE j.id = ? AND a.notify_email = 1', [joinerId]);
+    if (!r) return null;
+    if (event && offSet(r.off).has(event)) return null;
+    return { handle: r.handle, email: r.email };
   }
   async function owedNow(joinerId) {
     const [[r]] = await pool.query("SELECT COALESCE(SUM(cc.cost - cc.paid), 0) AS n FROM claim_costs cc JOIN claims c ON c.id = cc.claim_id WHERE c.joiner_id = ? AND c.status = 'confirmed' AND cc.cost > cc.paid", [joinerId]);
@@ -37,7 +41,7 @@ export function createNotifier({ pool, mailer, cfg }) {
     const [rows] = await pool.query(
       `SELECT c.joiner_id AS joinerId, c.label, (SELECT COALESCE(SUM(cost), 0) FROM claim_costs WHERE claim_id = c.id) AS cost FROM claims c WHERE c.id IN (?) AND c.status = 'confirmed' ORDER BY c.joiner_id, c.id`, [claimIds]);
     for (const joinerId of [...new Set(rows.map((r) => r.joinerId))]) {
-      const to = await recipient(joinerId); if (!to) continue;
+      const to = await recipient(joinerId, 'claimsSecured'); if (!to) continue;
       const mine = rows.filter((r) => r.joinerId === joinerId);
       const owed = await owedNow(joinerId);
       const lines = mine.map((r) => `  • ${r.label} — ${pounds(r.cost)}`).join('\n');
@@ -50,7 +54,7 @@ export function createNotifier({ pool, mailer, cfg }) {
   const paymentDecided = safe(async (paymentId) => {
     const [[p]] = await pool.query('SELECT joiner_id AS joinerId, amount, method, reference, status FROM payments WHERE id = ?', [paymentId]);
     if (!p || !['confirmed', 'rejected'].includes(p.status)) return;
-    const to = await recipient(p.joinerId); if (!to) return;
+    const to = await recipient(p.joinerId, 'paymentDecided'); if (!to) return;
     const what = `${pounds(p.amount)} via ${p.method}${p.reference ? ` (ref: ${p.reference})` : ''}`;
     if (p.status === 'confirmed') {
       const [owed, credit] = [await owedNow(p.joinerId), await creditNow(p.joinerId)];
@@ -74,7 +78,7 @@ export function createNotifier({ pool, mailer, cfg }) {
     const shared = mine.length > 1, on = p.shipped ? ` on ${ukDate(p.shipped)}` : '';
     const rcpt = mine.find((x) => x.joinerId === p.joinerId)?.handle;
     for (const m of mine) {
-      const to = await recipient(m.joinerId); if (!to) continue;
+      const to = await recipient(m.joinerId, 'parcelShipped'); if (!to) continue;
       const items = `${m.n} item${m.n === 1 ? '' : 's'}`;
       const others = mine.filter((x) => x.joinerId !== m.joinerId).map((x) => x.handle);
       if (!shared) {
@@ -95,7 +99,7 @@ export function createNotifier({ pool, mailer, cfg }) {
   const companionInvited = safe(async (parcelId, friendIds = null) => {
     const [rows] = await pool.query("SELECT pc.joiner_id AS friendId, p.joiner_id AS recipientId FROM parcel_companions pc JOIN parcels p ON p.id = pc.parcel_id WHERE pc.parcel_id = ? AND pc.status = 'invited'", [parcelId]);
     for (const c of rows.filter((r) => !friendIds || friendIds.includes(r.friendId))) {
-      const to = await recipient(c.friendId); if (!to) continue;
+      const to = await recipient(c.friendId, 'companionInvited'); if (!to) continue;
       const [[r]] = await pool.query('SELECT instagram_handle AS h FROM joiners WHERE id = ?', [c.recipientId]);
       await deliver(to.email, `@${r.h} would like to ship together with you`,
         `Hi @${to.handle},\n\n@${r.h} has asked to ship their parcel together with yours — one parcel to their address. Nothing happens unless you say yes: you choose which of your items go in, and you can decline.\n\nPlease look at it in My orders: ${myOrders}#/ship`);
@@ -106,7 +110,7 @@ export function createNotifier({ pool, mailer, cfg }) {
   const cancelDecided = safe(async (requestId) => {
     const [[r]] = await pool.query('SELECT r.status, r.decision_note AS note, r.kept, r.refunded, c.label, c.joiner_id AS joinerId FROM cancel_requests r JOIN claims c ON c.id = r.claim_id WHERE r.id = ?', [requestId]);
     if (!r || !['approved', 'declined'].includes(r.status)) return;
-    const to = await recipient(r.joinerId); if (!to) return;
+    const to = await recipient(r.joinerId, 'cancelDecided'); if (!to) return;
     const note = r.note ? `\n\nMessage from the GOM: ${r.note}` : '';
     if (r.status === 'declined') {
       await deliver(to.email, `Your cancellation request wasn't approved (@${to.handle})`,
@@ -138,7 +142,7 @@ export function createNotifier({ pool, mailer, cfg }) {
         if (ins.affectedRows === 1) mine.push(r);
       }
       if (!mine.length) continue;
-      const to = await recipient(joinerId);
+      const to = await recipient(joinerId, 'overdue');
       const ok = to && await deliver(to.email, `A friendly reminder: payment is overdue (@${to.handle})`,
         `Hi @${to.handle},\n\nJust a friendly reminder — ${mine.length === 1 ? 'this item is' : 'these items are'} past the pay-by date:\n\n${mine.map((r) => `  • ${r.label} — ${pounds(r.owed)} still to pay (was due ${ukDate(r.due)})`).join('\n')}\n\nIf you've already paid, thank you — it may just not have been checked yet. Otherwise you can pay here: ${myOrders}#/pay\n\nThis is the only reminder we'll send for these items.`);
       if (!ok) { await pool.query("DELETE FROM notification_log WHERE kind = 'overdue_reminder' AND ref_id IN (?)", [mine.map((r) => r.claimId)]); continue; }

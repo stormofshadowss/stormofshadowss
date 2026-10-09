@@ -27,7 +27,8 @@ async function orderWith(opts = {}, itemOpts = {}) {
 
 test('the setting: off by default, one per account, saved, and only for signed-in people', async () => {
   const j = await joiner({ optIn: false });
-  assert.deepEqual((await app.api('GET', '/api/my/notifications', undefined, j.cookie)).json, { enabled: false, email: j.email });
+  const first = (await app.api('GET', '/api/my/notifications', undefined, j.cookie)).json;
+  assert.deepEqual([first.enabled, first.email, first.events.length, first.events.every((e) => e.enabled)], [false, j.email, 6, true], 'off by default; every kind is on once emails are enabled');
   assert.equal((await app.api('PUT', '/api/my/notifications', { enabled: true }, j.cookie)).status, 200);
   assert.equal((await app.api('GET', '/api/my/notifications', undefined, j.cookie)).json.enabled, true);
   assert.equal((await app.api('PUT', '/api/my/notifications', { enabled: false }, j.cookie)).json.enabled, false);

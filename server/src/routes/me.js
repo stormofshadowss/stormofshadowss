@@ -1,3 +1,4 @@
+import { NOTIFY_EVENTS, EVENT_KEYS, offSet, offString } from '../lib/notify-events.js';
 import { z } from 'zod';
 import { wrap } from '../lib/http.js';
 import { requireLogin } from '../auth.js';
@@ -244,13 +245,22 @@ export function meRoutes(app, { pool }) {
   }));
 
   // Email notifications are OFF until the person turns them on. One setting per account (all the handles linked to it).
+  const eventsOut = (offStr) => { const off = offSet(offStr); return NOTIFY_EVENTS.map((e) => ({ ...e, enabled: !off.has(e.key) })); };
   app.get('/api/my/notifications', auth, wrap(async (req, res) => {
-    const [[a]] = await pool.query('SELECT email, notify_email FROM accounts WHERE id = ?', [req.account.id]);
-    res.json({ enabled: !!a.notify_email, email: a.email });
+    const [[a]] = await pool.query('SELECT email, notify_email, notify_off FROM accounts WHERE id = ?', [req.account.id]);
+    res.json({ enabled: !!a.notify_email, email: a.email, events: eventsOut(a.notify_off) });
   }));
+  // `enabled` is the master switch; `events` switches individual kinds of email on/off ({ parcelShipped: false }). Either or both can be sent.
   app.put('/api/my/notifications', auth, wrap(async (req, res) => {
-    const { enabled } = z.object({ enabled: z.boolean() }).parse(req.body);
-    await pool.query('UPDATE accounts SET notify_email = ? WHERE id = ?', [enabled ? 1 : 0, req.account.id]);
-    res.json({ ok: true, enabled });
+    const b = z.object({ enabled: z.boolean().optional(), events: z.record(z.string(), z.boolean()).optional() }).refine((x) => x.enabled !== undefined || x.events, 'Nothing to change').parse(req.body);
+    for (const k of Object.keys(b.events || {})) if (!EVENT_KEYS.includes(k)) throw bad(`Unknown kind of email: ${k}`, 'unknown_event');
+    await withTx(pool, async (conn) => {
+      const [[a]] = await conn.query('SELECT notify_off FROM accounts WHERE id = ? FOR UPDATE', [req.account.id]);
+      const off = offSet(a.notify_off);
+      for (const [k, on] of Object.entries(b.events || {})) on ? off.delete(k) : off.add(k);
+      await conn.query('UPDATE accounts SET notify_email = COALESCE(?, notify_email), notify_off = ? WHERE id = ?', [b.enabled === undefined ? null : (b.enabled ? 1 : 0), offString(off), req.account.id]);
+    });
+    const [[a]] = await pool.query('SELECT notify_email, notify_off FROM accounts WHERE id = ?', [req.account.id]);
+    res.json({ ok: true, enabled: !!a.notify_email, events: eventsOut(a.notify_off) });
   }));
 }

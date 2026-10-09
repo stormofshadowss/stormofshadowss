@@ -130,6 +130,8 @@ test('unblocking: asks first, says what it does not undo, then lets them order a
 test('someone who deleted their account is flagged with the date, even though they are not blocked', async () => {
   const c = await person('gone_hal');
   await claimAndSecure(app, admin, 'gone_hal', w.keyring);
+  const pay = await app.api('POST', '/api/my/payments', { method: 'PayPal', amount: 6, reference: 'g' }, c); await app.api('POST', `/api/admin/payments/${pay.json.id}/verify`, {}, admin);
+  await app.api('POST', '/api/admin/credit/add', { handle: 'gone_hal', amount: 5, reason: 'goodwill' }, admin);          // holds credit, so their handle is kept and flagged
   assert.equal((await app.api('DELETE', '/api/me', { confirm: true }, c)).status, 200);
   const p = await open();
   const row = text(p, '[data-flag="gone_hal"]');
