@@ -25,6 +25,9 @@ export function createApp({ cfg, pool, mailer, extraRoutes = [] }) {
         defaultSrc: ["'self'"], scriptSrc: ["'self'"], styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:'], connectSrc: ["'self'"], formAction: ["'self'"],
         frameAncestors: ["'none'"], baseUri: ["'self'"], objectSrc: ["'none'"],
+        // "Fetch every stylesheet/script over https" is only right when the site IS served over https. On plain http (e.g. http://192.168.1.12:2999) it makes browsers
+        // request the CSS and JS over https on a port that doesn't speak it, so they fail and the page shows as bare, unstyled HTML.
+        upgradeInsecureRequests: cfg.cookieSecure ? [] : null,
       },
     },
     crossOriginEmbedderPolicy: false,

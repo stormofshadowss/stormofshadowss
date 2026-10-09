@@ -10,16 +10,16 @@ public/            the pages the server hands out (a small sign-in page + previe
 server/            the API (Node 20, Express, mysql2)
   src/routes/      auth · handles · catalog · claims · my (joiner) · admin (GOM)
   src/lib/         ledger.js (all the money rules) · parcels.js · money.js
-  test/            836 tests that run against a real MariaDB
+  test/            841 tests that run against a real MariaDB
 db/migrations/     001_init.sql — the whole database design (32 tables)
 deploy/backup.sh   automatic database backups
-docker-compose.yml app + MariaDB + backups (+ optional Cloudflare tunnel, + optional DB viewer)
+docker-compose.yml app + MariaDB + backups (+ optional DB viewer)
 .env.example       every setting, explained
 ```
 
 ## What is built, and what isn't
 
-**Built and tested against a real MariaDB (836 tests):**
+**Built and tested against a real MariaDB (841 tests):**
 
 | Area | What it does |
 |---|---|
@@ -42,7 +42,7 @@ EMS boxes and the weight split, proxy payments, the Shop (leftover) stock, image
 dashboard, and the screens themselves talking to this API. [ROADMAP.md](ROADMAP.md) has the order I'd do them in.
 
 > **What I could not test from where this was built:** `docker compose up` itself, the Unraid
-> Compose-Manager screens, the Cloudflare tunnel, and a real SMTP server — there's no Docker or
+> Compose-Manager screens and a real SMTP server — there's no Docker or
 > internet in the build environment. Everything *inside* the container was tested for real: the
 > server on a fresh database exactly as the container starts it, the install step the Dockerfile
 > runs, the backup/restore, and the sign-in. Expect to read the first startup log carefully.
@@ -52,7 +52,7 @@ dashboard, and the screens themselves talking to this API. [ROADMAP.md](ROADMAP.
 ## Deploy on Unraid
 
 **You need:** Unraid with Docker enabled; either the **Docker Compose Manager** plugin
-(Community Applications) or SSH access; for a public site, a domain on Cloudflare (free) and an SMTP
+(Community Applications) or SSH access; for a public site, a domain and an SMTP
 account for the sign-in emails.
 
 ### 1. Put the files on the server
@@ -124,15 +124,9 @@ domain you've verified with them so the emails don't land in spam.
 > While SMTP is blank, anyone who can read the container logs can sign in as anyone. Fine on your own
 > network while testing; **don't leave it that way** on a public site.
 
-### 6. Make it public (HTTPS) with a Cloudflare Tunnel — no router ports
+### 6. Making it public (HTTPS)
 
-1. Cloudflare dashboard → **Zero Trust → Networks → Tunnels → Create a tunnel** (Cloudflared).
-2. Copy the tunnel token into `.env` as `CLOUDFLARE_TUNNEL_TOKEN`.
-3. In the tunnel, add a **Public Hostname**: e.g. `orders.yourdomain.com` → Service **`http://app:3000`**.
-4. In `.env`: `PUBLIC_URL=https://orders.yourdomain.com`, `COOKIE_SECURE=true`, `APP_BIND=127.0.0.1`.
-5. `docker compose --profile tunnel up -d`
-
-Do **not** port-forward Unraid to the internet; the tunnel makes that unnecessary.
+However you make the site reachable from outside (for example a reverse proxy), once it's served over **https** set in `.env`: `PUBLIC_URL=https://orders.yourdomain.com`, `COOKIE_SECURE=true`, and `TRUST_PROXY=1` if it sits behind a reverse proxy. Keep the database and Unraid itself off the public internet.
 
 ### 7. Backups
 
@@ -227,7 +221,7 @@ docker compose up -d --build --no-deps app
 
 ## Safety notes
 
-- It stores people's **names, addresses, emails and phone numbers**. Keep it behind HTTPS (the tunnel),
+- It stores people's **names, addresses, emails and phone numbers**. Keep it behind HTTPS,
   keep Unraid itself off the public internet, use long database passwords, and keep the images updated
   (`docker compose pull && docker compose up -d --build`).
 - Under UK GDPR you need a way to **delete someone's data on request**, and since you run this as a

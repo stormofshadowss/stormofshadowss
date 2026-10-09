@@ -69,14 +69,9 @@ testing, not for real people, because anyone who can read the logs could use the
 
 ## Stage 4 — Put it on the internet safely (20 minutes)
 
-Use a Cloudflare Tunnel so you never open a port on your router:
+However you make the site reachable from outside (for example a reverse proxy that serves it over https), set these in `.env` once it's served over **https**: `PUBLIC_URL=https://orders.yourdomain.com`, `COOKIE_SECURE=true`, and — if it sits behind a reverse proxy — `TRUST_PROXY=1`. Keep the database and Unraid itself off the public internet.
 
-1. Cloudflare → Zero Trust → Networks → Tunnels → **Create a tunnel** → copy the token into `.env` as `CLOUDFLARE_TUNNEL_TOKEN`.
-2. In the tunnel add a **Public Hostname** (e.g. `orders.yourdomain.com`) pointing at **`http://app:3000`**.
-3. In `.env` set `PUBLIC_URL=https://orders.yourdomain.com`, `COOKIE_SECURE=true`, `APP_BIND=127.0.0.1`.
-4. `docker compose --profile tunnel up -d`
-
-**Check:** `https://orders.yourdomain.com/admin.html` loads over https and your login works. Do **not** port-forward Unraid.
+**Check:** `https://orders.yourdomain.com/admin.html` loads over https and your login works.
 
 ## Stage 5 — Backups (5 minutes — do this before real people use it)
 
@@ -233,14 +228,15 @@ The simplest way to run it: no cloning, no terminal. The stack builds the app st
 
 **Updating:** after new files are on GitHub, press **Compose Up** again. It rebuilds from the newest code (instantly from cache if nothing changed) and restarts the app; the database changes itself on start. Nightly backups run automatically; for an extra one just before an update, in the Unraid terminal: `docker exec -e ONCE=1 sos-backup /bin/sh /backup.sh`.
 
-**Where things are:** database, pictures and backups are all under `/mnt/user/appdata/sos`. Containers are `sos-app`, `sos-db`, `sos-backup`. Optional extras, switched on with `COMPOSE_PROFILES` in the env box: `tunnel` (Cloudflare — set `APP_BIND=127.0.0.1`, `COOKIE_SECURE=true`, `TRUST_PROXY=1`, point the tunnel at `http://app:2999`) and `tools` (a database viewer on port 8081, this machine only).
+**Where things are:** database, pictures and backups are all under `/mnt/user/appdata/sos`. Containers are `sos-app`, `sos-db`, `sos-backup`. One optional extra, switched on with `COMPOSE_PROFILES=tools` in the env box: a database viewer on port 8081 (this machine only).
 
 **If something's wrong**
 - *Build fails with "repository not found":* `REPO_URL` has a typo, or the repository is private and has no token in the address.
 - *You can sign in but it signs you straight out:* `COOKIE_SECURE` must be `false` while you use plain `http://`.
+- *The page opens but looks bare — no styling, no group cards, just a link or two:* this happens when the site is opened over plain `http://` and the server tells the browser to fetch its stylesheet and scripts over `https://`. It was a bug in earlier versions; update to this version and keep `COOKIE_SECURE=false` in the env box while you use plain `http://` (set it to `true` only once the site is served over https). To check, press F12 → Network, reload, and look for failed requests to `https://…`.
 - *Page won't load:* check `sos-app` is running, that nothing else uses port 2999, and the log (`docker logs sos-app`) — it prints `Created the first admin …` or says why not.
 - *Forgot the admin password:* in the terminal, `docker exec -it sos-app node src/admin-cli.js set-password gom`.
-- Port 2999 on `0.0.0.0` means anyone on your home network can reach the login page over plain http. That's normal for a home server — just don't forward the port on your router; use the Cloudflare tunnel for outside access.
+- Port 2999 on `0.0.0.0` means anyone on your home network can reach the login page over plain http. That's normal for a home server.
 
 ### Joiner settings, and deleting an account
 On their **My orders** page joiners now have a **My settings** card. It holds:
