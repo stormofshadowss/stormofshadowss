@@ -288,3 +288,14 @@ For something that can't be fulfilled (say a photocard set sold out). On **Group
 - A cancelled **group order** closes and disappears from the shop; a cancelled **item** disappears and can't be claimed. Both stay visible to you in Group Orders, marked *Cancelled*, and are removed from the Sets tab and the proxy "to pay" list. Standing (fixed) claims on them end.
 - A blocked handle's payment is **not** credited, as with any cancellation — the panel says so before you confirm.
 - Later you can still **Delete** a cancelled order if nothing was ever paid on it; one that had payments on it is kept (its records stay).
+
+### Test data, launching and going live
+There's a **Launch** tab (at the end of the tab row) for the move from testing to the real thing.
+- **Mark test orders.** When you create or edit a group order, tick **Test order**. It gets a *Test* pill in the list.
+- **Delete a test order with everything on it.** On the Launch tab, *Delete…* shows exactly what goes — its claims, the payments made towards them, parcels, boxes, proxy payments, pictures — and puts anyone's credit back to how it was before that order. Type the order's name, then confirm once more. The people stay. It **refuses** (and says why, deleting nothing) if something on it is shared with another order — a payment that also paid for another order, a parcel/box/proxy payment that also holds other orders' items — or if removing it would leave someone's credit negative because that credit was spent elsewhere. In those cases delete the other test orders too, or use Reset.
+- **Reset for launch.** Wipes **every** order, item, claim, payment, parcel, box, proxy payment, shop item, picture and log. **Kept:** your artists/groups, payment methods, proxies and your own GOM login. You choose whether to **keep people** (accounts, Instagram handles, delivery details — their orders, payments and credit are still wiped).
+  1. **Take a backup first** (the tab shows the command): `docker exec -e ONCE=1 sos-backup /bin/sh /backup.sh`, then tick *I've taken a backup just now*. The site can't check that you did, so this is on you.
+  2. Type **RESET**, press the button, confirm once more.
+  Do it when nobody is using the site, and **before** the Notion import.
+- **Go live.** The last step, once real data is in: type **GO LIVE**. It is **permanent** — resetting and deleting test orders are then switched off for good, so a real order can never be wiped by accident. (If you ever press it by mistake, the only way back is the database: `docker exec -it sos-db mariadb -u sos -p sos` then `UPDATE launch_state SET launched_at = NULL WHERE id = 1;`.)
+- **Suggested order:** finish testing → Launch tab: backup, **Reset** → check your groups, payment methods and proxies → Notion import → **Go live**.

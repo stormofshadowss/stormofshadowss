@@ -40,7 +40,7 @@ test('signing in: a first visit shows the login (no "session ended" scare), a wr
   p.q('#username').value = ADMIN.username; p.q('#password').value = ADMIN.password;
   await p.submit(p.q('#loginForm'));
   assert.equal(p.q('#appView').hidden, false);
-  assert.deepEqual(p.qa('#tabs button').map((b) => b.dataset.tab), ['orders', 'claims', 'sets', 'payments', 'proxy', 'warehouse', 'shop', 'packing', 'overdue', 'people', 'import']);
+  assert.deepEqual(p.qa('#tabs button').map((b) => b.dataset.tab), ['orders', 'claims', 'sets', 'payments', 'proxy', 'warehouse', 'shop', 'packing', 'overdue', 'people', 'import', 'launch']);
   assert.match(p.text(p.q('#whoami')), /Signed in as boss/);
   assert.deepEqual(p.errors, []);
   p.close();

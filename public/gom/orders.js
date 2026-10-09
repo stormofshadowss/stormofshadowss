@@ -49,6 +49,7 @@
         ${dateInput('closeDate', o?.closeDate, 'Closes')}${dateInput('paymentDeadline', o?.paymentDeadline, 'Payment due')}${dateInput('expectedShipDate', o?.expectedShipDate, 'Expected ship date')}
         <div><label>Proxy</label><input name="proxy" list="proxyList" value="${esc(o?.proxy || '')}" maxlength="80"></div>
         <div class="full"><label class="chk"><input type="checkbox" name="isPrivate" ${o?.isPrivate ? 'checked' : ''}> Private — not listed publicly (for off-site orders you assign by hand)</label></div>
+        <div class="full"><label class="chk"><input type="checkbox" name="isTest" ${o?.isTest ? 'checked' : ''}> Test order — can be deleted with everything on it (payments, parcels…) from the Launch tab, until you go live</label></div>
       </div>
       <p class="msg" data-msg hidden></p>
       <div class="btn-row"><button type="submit">${editing ? 'Save changes' : 'Create group order'}</button>
@@ -153,7 +154,7 @@
       <div class="card"><div class="scroll"><table class="grid"><thead><tr><th>Title</th><th>Group</th><th>Status</th><th>Listing</th><th>Closes</th><th>Payment due</th><th>Proxy</th><th></th></tr></thead><tbody>
       ${orders.length ? orders.map((o) => `<tr data-order="${o.id}"><td>${o.cover ? `<img class="thumb sm" src="${esc(o.cover.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}<strong>${esc(o.title)}</strong></td><td>${esc(o.group)}</td>
         <td>${o.cancelled ? '<span class="pill warn" data-cancelled>Cancelled</span>' : `<span class="pill ${o.status === 'open' ? 'ok' : 'dim'}">${o.status === 'open' ? 'Open' : 'Closed'}</span>`}</td>
-        <td>${o.isPrivate ? '<span class="pill warn">Private</span>' : 'Public'}</td><td>${fmtDate(o.closeDate)}</td><td>${fmtDate(o.paymentDeadline)}</td><td>${esc(o.proxy || '—')}</td>
+        <td>${o.isPrivate ? '<span class="pill warn">Private</span>' : 'Public'}${o.isTest ? ' <span class="pill" data-test>Test</span>' : ''}</td><td>${fmtDate(o.closeDate)}</td><td>${fmtDate(o.paymentDeadline)}</td><td>${esc(o.proxy || '—')}</td>
         <td class="nowrap"><button class="sm secondary" data-act="edit-order" data-id="${o.id}">Edit</button> <button class="sm" data-act="open-items" data-id="${o.id}">Items (${o.items.length})</button> <button class="sm secondary danger" data-act="delete-order" data-id="${o.id}">Delete</button>${o.cancelled ? '' : ` <button class="sm secondary danger" data-act="cancel-order" data-id="${o.id}">Cancel…</button>`}</td></tr>
         ${editingId === o.id ? `<tr><td colspan="8">${orderForm(o)}</td></tr>` : ''}`).join('') : '<tr><td colspan="8" class="muted">No group orders yet. Create your first one above.</td></tr>'}
       </tbody></table></div></div>
@@ -224,7 +225,7 @@
       }
       if (!groupId) return showMsg(form, 'Choose a group, or type a new group name.');
       const r = await api('POST', '/api/admin/orders', {
-        groupId, title: val(form, 'title'), status: val(form, 'status'), isPrivate: form.elements.isPrivate.checked,
+        groupId, title: val(form, 'title'), status: val(form, 'status'), isPrivate: form.elements.isPrivate.checked, isTest: form.elements.isTest.checked,
         closeDate: val(form, 'closeDate') || null, paymentDeadline: val(form, 'paymentDeadline') || null,
         expectedShipDate: val(form, 'expectedShipDate') || null, proxy: val(form, 'proxy') || null,
       });
@@ -232,7 +233,7 @@
       showNew = false; itemsFor = r.json.id; await render(root); GOM.toast('Group order created — now add its items.');
     } else if (kind === 'edit-order') {
       const r = await api('PATCH', `/api/admin/orders/${form.dataset.id}`, {
-        title: val(form, 'title'), status: val(form, 'status'), isPrivate: form.elements.isPrivate.checked,
+        title: val(form, 'title'), status: val(form, 'status'), isPrivate: form.elements.isPrivate.checked, isTest: form.elements.isTest.checked,
         closeDate: val(form, 'closeDate') || null, paymentDeadline: val(form, 'paymentDeadline') || null,
         expectedShipDate: val(form, 'expectedShipDate') || null, proxy: val(form, 'proxy') || null,
       });

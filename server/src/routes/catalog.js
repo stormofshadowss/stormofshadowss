@@ -1,3 +1,4 @@
+import { requireNotLive } from '../lib/launch.js';
 import { cancelPlan, cancelNow } from '../lib/cancel-order.js';
 import { z } from 'zod';
 import { deletionPlan, deleteCatalog, itemsOfOrder } from '../lib/delete-catalog.js';
@@ -19,7 +20,7 @@ async function proxyIdFor(conn, name) {
 
 async function loadOrders(pool, whereSql, params, { admin }) {
   const [orders] = await pool.query(
-    `SELECT go.id, go.title, go.status, go.is_private, go.cancelled_at, go.close_date, go.payment_deadline, go.expected_ship_date,
+    `SELECT go.id, go.title, go.status, go.is_private, go.is_test, go.cancelled_at, go.close_date, go.payment_deadline, go.expected_ship_date,
             go.group_id, ag.name AS group_name, p.name AS proxy_name, oi.filename AS cover_file, oi.width AS cover_w, oi.height AS cover_h, gi.filename AS gcover_file, gi.width AS gcover_w, gi.height AS gcover_h
        FROM group_orders go JOIN artist_groups ag ON ag.id = go.group_id LEFT JOIN proxies p ON p.id = go.proxy_id
        LEFT JOIN images oi ON oi.id = go.cover_image_id LEFT JOIN images gi ON gi.id = ag.cover_image_id
@@ -41,7 +42,7 @@ async function loadOrders(pool, whereSql, params, { admin }) {
   return orders.map((o) => ({
     id: o.id, title: o.title, groupId: o.group_id, group: o.group_name, cover: imageOut(o.cover_file, o.cover_w, o.cover_h), groupCover: imageOut(o.gcover_file, o.gcover_w, o.gcover_h), status: o.status, isPrivate: !!o.is_private, cancelled: !!o.cancelled_at,
     closeDate: o.close_date, paymentDeadline: o.payment_deadline, expectedShipDate: o.expected_ship_date,
-    ...(admin ? { proxy: o.proxy_name } : {}),
+    ...(admin ? { proxy: o.proxy_name, isTest: !!o.is_test } : {}),
     items: items.filter((i) => i.order_id === o.id).map((i) => {
       // each part carries its effective price: its own if it has one, else the item's
       const parts = members.filter((m) => m.item_id === i.id).map((m) => ({ name: m.name, price: m.price ?? (i.price_tbc ? null : i.price) }));   // null = price still TBC
@@ -166,15 +167,16 @@ export function catalogRoutes(app, { pool, cfg }) {
   app.post('/api/admin/orders', requireAdmin, wrap(async (req, res) => {
     const b = z.object({
       groupId: z.number().int().positive(), title: z.string().trim().min(1).max(160),
-      isPrivate: z.boolean().optional(), status: z.enum(['open', 'closed']).optional(),
+      isPrivate: z.boolean().optional(), isTest: z.boolean().optional(), status: z.enum(['open', 'closed']).optional(),
       closeDate: date, paymentDeadline: date, expectedShipDate: date, proxy: z.string().trim().max(80).nullable().optional(),
     }).parse(req.body);
     const id = await withTx(pool, async (conn) => {
+      if (b.isTest) await requireNotLive(conn);
       const proxyId = await proxyIdFor(conn, b.proxy);
       const [r] = await conn.query(
-        `INSERT INTO group_orders (group_id, title, status, is_private, close_date, payment_deadline, expected_ship_date, proxy_id)
-         VALUES (?,?,?,?,?,?,?,?)`,
-        [b.groupId, b.title, b.status || 'open', b.isPrivate ? 1 : 0, b.closeDate || null, b.paymentDeadline || null, b.expectedShipDate || null, proxyId]);
+        `INSERT INTO group_orders (group_id, title, status, is_private, is_test, close_date, payment_deadline, expected_ship_date, proxy_id)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+        [b.groupId, b.title, b.status || 'open', b.isPrivate ? 1 : 0, b.isTest ? 1 : 0, b.closeDate || null, b.paymentDeadline || null, b.expectedShipDate || null, proxyId]);
       await audit(conn, req.account.id, 'order.create', 'order', r.insertId);
       return r.insertId;
     });
@@ -184,7 +186,7 @@ export function catalogRoutes(app, { pool, cfg }) {
   app.patch('/api/admin/orders/:id', requireAdmin, wrap(async (req, res) => {
     const id = Number(req.params.id);
     const b = z.object({
-      title: z.string().trim().min(1).max(160).optional(), isPrivate: z.boolean().optional(), status: z.enum(['open', 'closed']).optional(),
+      title: z.string().trim().min(1).max(160).optional(), isPrivate: z.boolean().optional(), isTest: z.boolean().optional(), status: z.enum(['open', 'closed']).optional(),
       closeDate: date, paymentDeadline: date, expectedShipDate: date, proxy: z.string().trim().max(80).nullable().optional(),
     }).parse(req.body);
     await withTx(pool, async (conn) => {
@@ -194,6 +196,7 @@ export function catalogRoutes(app, { pool, cfg }) {
       const add = (col, v) => { set.push(`${col} = ?`); vals.push(v); };
       if (b.title !== undefined) add('title', b.title);
       if (b.isPrivate !== undefined) add('is_private', b.isPrivate ? 1 : 0);
+      if (b.isTest !== undefined) { if (b.isTest) await requireNotLive(conn); add('is_test', b.isTest ? 1 : 0); }      // a test tick can't be added once the site is live
       if (b.status !== undefined) add('status', b.status);
       if (b.closeDate !== undefined) add('close_date', b.closeDate);
       if (b.paymentDeadline !== undefined) add('payment_deadline', b.paymentDeadline);

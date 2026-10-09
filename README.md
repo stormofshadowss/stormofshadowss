@@ -10,7 +10,7 @@ public/            the pages the server hands out (a small sign-in page + previe
 server/            the API (Node 20, Express, mysql2)
   src/routes/      auth · handles · catalog · claims · my (joiner) · admin (GOM)
   src/lib/         ledger.js (all the money rules) · parcels.js · money.js
-  test/            841 tests that run against a real MariaDB
+  test/            884 tests that run against a real MariaDB
 db/migrations/     001_init.sql — the whole database design (32 tables)
 deploy/backup.sh   automatic database backups
 docker-compose.yml app + MariaDB + backups (+ optional DB viewer)
@@ -19,7 +19,7 @@ docker-compose.yml app + MariaDB + backups (+ optional DB viewer)
 
 ## What is built, and what isn't
 
-**Built and tested against a real MariaDB (841 tests):**
+**Built and tested against a real MariaDB (884 tests):**
 
 | Area | What it does |
 |---|---|
