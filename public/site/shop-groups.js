@@ -17,7 +17,7 @@
     const left = shopItems.filter((i) => i.left > 0).length;
     const shopCard = shopItems.length ? `<h2 style="margin:18px 0 8px">Shop</h2><div class="cards"><a class="gocard" href="#/shop"><strong>Shop — on hand now</strong><span class="sub">${plural(left, 'item', 'items')} available · held for you as soon as you claim</span></a></div>` : '';
     view.innerHTML = `<h1 style="margin:18px 0 6px">Group orders</h1>
-      <p class="muted">Pick what you want and claim it with just your Instagram handle — no password, no sign-up. Storm will confirms claims, then you pay.</p>
+      <p class="muted">Pick what you want and claim it with just your Instagram handle — no password, no sign-up. Storm will confirm claims, then you pay.</p>
       ${shopCard}
       ${active.length ? `<div class="cards" id="groupCards" style="margin-top:14px">${active.map(groupCard).join('')}</div>` : '<div class="card"><p class="muted">No group orders are open right now — check back soon.</p></div>'}`;
   }
