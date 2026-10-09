@@ -19,8 +19,8 @@
   const waiting = (p) => (p.companions || []).filter((c) => c.status === 'invited');
   const declined = (p) => (p.companions || []).filter((c) => c.status === 'declined');
   const names = (hs) => { const t = hs.map((h) => `@${esc(h)}`); return t.length <= 1 ? t.join('') : `${t.slice(0, -1).join(', ')} and ${t[t.length - 1]}`; };
-  const checkTotal = (p) => p.items.length + 1 + (p.lomoName ? 1 : 0) + (p.bias ? 1 : 0) + friends(p).reduce((n, f) => n + (f.lomoName ? 1 : 0) + (f.bias ? 1 : 0), 0);
-  const checkDone = (p) => p.items.filter((i) => i.packed).length + (p.addressChecked ? 1 : 0) + (p.lomoName && p.lomoChecked ? 1 : 0) + (p.bias && p.biasChecked ? 1 : 0)
+  const checkTotal = (p) => p.items.length + (p.lomoName ? 1 : 0) + (p.bias ? 1 : 0) + friends(p).reduce((n, f) => n + (f.lomoName ? 1 : 0) + (f.bias ? 1 : 0), 0);
+  const checkDone = (p) => p.items.filter((i) => i.packed).length + (p.lomoName && p.lomoChecked ? 1 : 0) + (p.bias && p.biasChecked ? 1 : 0)
     + friends(p).reduce((n, f) => n + (f.lomoName && f.lomoChecked ? 1 : 0) + (f.bias && f.biasChecked ? 1 : 0), 0);
   const allTicked = (p) => checkDone(p) === checkTotal(p) && !waiting(p).length;
   const tag = (p, i) => (friends(p).length ? ` <span class="sub">@${esc(i.owner)}</span>` : '');
@@ -29,8 +29,7 @@
   function checklist(p) {
     const box = (kind, checked, label, claim, friendHandle) => `<label class="chk" style="margin:4px 0"><input type="checkbox" data-tick="${kind}" ${claim ? `data-claim="${claim}"` : ''} ${friendHandle ? `data-friend="${esc(friendHandle)}"` : ''} ${checked ? 'checked' : ''}> ${label}</label>`;
     return `<div data-checklist><div class="row" style="margin-bottom:4px"><label style="margin:0">Packing checklist <span class="pill" data-count>${checkDone(p)} of ${checkTotal(p)} ticked</span></label><button class="sm secondary" data-act="tick-all" data-id="${p.id}">Tick all</button></div>
-      ${p.items.map((i) => box('item', i.packed, `${esc(i.label)}${tag(p, i)}`, i.claimId)).join('')}
-      ${box('address', p.addressChecked, 'Delivery address checked')}
+      ${p.items.map((i) => `<div data-item-row="${i.claimId}" style="display:flex; align-items:center; gap:8px">${i.image ? `<button type="button" class="ghost sm" data-act="pic" data-url="${esc(i.image.url)}" title="Show the picture" aria-label="Show a picture of ${esc(i.label)}" style="padding:0; border:0; background:none"><img src="${esc(i.image.thumb)}" alt="" width="36" height="36" style="border-radius:6px; object-fit:cover; display:block"></button>` : ''}<div style="flex:1">${box('item', i.packed, `${esc(i.label)}${tag(p, i)}`, i.claimId)}</div></div>`).join('')}
       ${p.lomoName ? box('lomo', p.lomoChecked, `Lomo name checked — <strong>${esc(p.lomoName)}</strong> <span class="sub">(${p.lomoSource === 'custom' ? 'a name they chose' : 'their delivery name'})</span>`) : ''}
       ${p.bias ? box('bias', p.biasChecked, `Bias name checked — <strong>${esc(p.bias)}</strong> <span class="sub">(for the thank-you card)</span>`) : ''}
       ${friends(p).map((f) => `${f.lomoName ? box('lomo', f.lomoChecked, `Lomo name for @${esc(f.handle)} checked — <strong>${esc(f.lomoName)}</strong> <span class="sub">(${f.lomoSource === 'custom' ? 'a name they chose' : 'their delivery name'})</span>`, null, f.handle) : ''}
@@ -142,13 +141,19 @@
     const act = b.dataset.act, id = Number(b.dataset.id);
     const p = parcels.find((x) => x.id === id);
     if (act === 'status') { status = b.dataset.status; return render(root); }
+    if (act === 'pic') {                                                                // tap a thumbnail: the full picture opens under that item (tap again to close)
+      const row = b.closest('[data-item-row]'), open = row.nextElementSibling;
+      if (open && open.matches('[data-pic-open]')) { open.remove(); return; }
+      const div = document.createElement('div'); div.setAttribute('data-pic-open', ''); div.style.cssText = 'margin:2px 0 8px 44px';
+      const img = document.createElement('img'); img.src = b.dataset.url; img.alt = ''; img.style.cssText = 'max-width:100%; max-height:340px; border-radius:8px'; div.appendChild(img); row.after(div); return;
+    }
     if (act === 'tick-all') {
       const card = $(`[data-parcel="${id}"]`);
       const a = await api('POST', `/api/admin/parcels/${id}/items-packed`, { packed: true });
-      const c = a.ok && await api('POST', `/api/admin/parcels/${id}/checks`, { address: true, lomo: true, bias: true });
+      const c = a.ok && await api('POST', `/api/admin/parcels/${id}/checks`, { lomo: true, bias: true });
       const f = a.ok && c.ok && friends(p).length ? await api('POST', `/api/admin/parcels/${id}/checks`, { friend: true, lomo: true, bias: true }) : { ok: true };
       if (!a.ok || !c.ok || !f.ok) { GOM.toast(errText(!a.ok ? a : !c.ok ? c : f), true); return render(root); }
-      p.items.forEach((i) => { i.packed = true; }); p.addressChecked = p.lomoChecked = p.biasChecked = true;
+      p.items.forEach((i) => { i.packed = true; }); p.lomoChecked = p.biasChecked = true;
       friends(p).forEach((f2) => { f2.lomoChecked = f2.biasChecked = true; });
       $$('input[data-tick]', card).forEach((x) => { x.checked = true; });
       return refreshChecklist(card, p);

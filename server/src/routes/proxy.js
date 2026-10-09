@@ -19,12 +19,12 @@ export function proxyRoutes(app, { pool }) {
     const [sets] = await pool.query(
       `SELECT i.id AS itemId, i.title, go.title AS orderTitle, ${EFFECTIVE}, (SELECT COUNT(*) FROM item_members m WHERE m.item_id = i.id) AS roster, COUNT(s.id) AS count
          FROM items i JOIN item_sets s ON s.item_id = i.id AND s.admin_decision = 'secured' AND s.included_in_proxy_payment = 0 ${JOINS}
-        WHERE i.item_type = 'set' GROUP BY i.id, i.title, go.id, go.title, pi.name, po.name, i.payment_deadline, go.payment_deadline ORDER BY go.id, i.id`);
+        WHERE i.item_type = 'set' AND COALESCE(pi.is_self, po.is_self, 0) = 0 GROUP BY i.id, i.title, go.id, go.title, pi.name, po.name, i.payment_deadline, go.payment_deadline ORDER BY go.id, i.id`);
     const [items] = await pool.query(
       `SELECT i.id AS itemId, i.title, go.title AS orderTitle, ${EFFECTIVE}, COUNT(c.id) AS confirmed,
               (SELECT COALESCE(SUM(x.claim_count), 0) FROM proxy_payment_items x WHERE x.item_id = i.id AND x.set_id IS NULL) AS covered
          FROM items i JOIN claims c ON c.item_id = i.id AND c.status = 'confirmed' AND c.set_id IS NULL ${JOINS}
-        WHERE i.item_type <> 'set' AND NOT EXISTS (SELECT 1 FROM import_records ir WHERE ir.kind = 'item' AND ir.entity_id = i.id)   -- imported history isn't something to pay a proxy for
+        WHERE i.item_type <> 'set' AND COALESCE(pi.is_self, po.is_self, 0) = 0 AND NOT EXISTS (SELECT 1 FROM import_records ir WHERE ir.kind = 'item' AND ir.entity_id = i.id)   -- imported history isn't something to pay a proxy for
         GROUP BY i.id, i.title, go.id, go.title, pi.name, po.name, i.payment_deadline, go.payment_deadline
        HAVING confirmed > covered ORDER BY go.id, i.id`);
     res.json({
@@ -40,8 +40,15 @@ export function proxyRoutes(app, { pool }) {
   }));
 
   app.get('/api/admin/proxy/names', admin, wrap(async (req, res) => {
-    const [rows] = await pool.query('SELECT name FROM proxies ORDER BY name');
-    res.json({ names: rows.map((r) => r.name) });
+    const [rows] = await pool.query('SELECT id, name, is_self FROM proxies ORDER BY name');
+    res.json({ names: rows.map((r) => r.name), proxies: rows.map((r) => ({ id: r.id, name: r.name, isSelf: !!r.is_self })) });
+  }));
+  // "This proxy is me": orders using it are left out of the proxy-payment lists.
+  app.patch('/api/admin/proxies/:id', admin, wrap(async (req, res) => {
+    const { isSelf } = z.object({ isSelf: z.boolean() }).parse(req.body);
+    const [r] = await pool.query('UPDATE proxies SET is_self = ? WHERE id = ?', [isSelf ? 1 : 0, Number(req.params.id)]);
+    if (!r.affectedRows) throw notFound('No such proxy');
+    res.json({ ok: true, isSelf });
   }));
 
   app.post('/api/admin/proxy/payments', admin, wrap(async (req, res) => {
@@ -52,6 +59,8 @@ export function proxyRoutes(app, { pool }) {
       for (const w of wanted) {                         // lowest item first, locking each, so two people logging at once can't deadlock or both succeed
         const [[it]] = await conn.query('SELECT id, title, item_type FROM items WHERE id = ? FOR UPDATE', [w.id]);
         if (!it) throw notFound('One of those items no longer exists');
+        const [[me]] = await conn.query('SELECT COALESCE(pi.is_self, po.is_self, 0) AS self FROM items i JOIN group_orders go ON go.id = i.order_id LEFT JOIN proxies pi ON pi.id = i.proxy_id LEFT JOIN proxies po ON po.id = go.proxy_id WHERE i.id = ?', [w.id]);
+        if (me?.self) throw bad(`"${it.title}" uses a proxy you've marked as yourself, so there's no proxy payment to log for it.`, 'self_proxy');
         if (w.kind === 'set') {
           if (it.item_type !== 'set') throw bad(`"${it.title}" isn't a member set`);
           const [sets] = await conn.query("SELECT id FROM item_sets WHERE item_id = ? AND admin_decision = 'secured' AND included_in_proxy_payment = 0 FOR UPDATE", [w.id]);

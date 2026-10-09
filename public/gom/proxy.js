@@ -1,13 +1,13 @@
 // Proxy tab: a log of what you owe (or have paid) your proxies, so nothing is paid twice and nothing slips past its date.
 (function () {
   const { esc, money, fmtDate, api, errText, $, $$ } = GOM;
-  let root = null, cands = [], pays = [], names = [], selected = new Set(), search = '';
+  let root = null, cands = [], pays = [], names = [], proxyList = [], selected = new Set(), search = '';
   const val = (id) => ($(`#${id}`, root) || {}).value || '';
 
   async function render(el) {
     root = el;
     const [c, p, n] = await Promise.all([api('GET', '/api/admin/proxy/candidates'), api('GET', `/api/admin/proxy/payments${search ? `?q=${encodeURIComponent(search)}` : ''}`), api('GET', '/api/admin/proxy/names')]);
-    cands = c.json?.candidates || []; pays = p.json?.payments || []; names = n.json?.names || [];
+    cands = c.json?.candidates || []; pays = p.json?.payments || []; names = n.json?.names || []; proxyList = n.json?.proxies || [];
     selected = new Set([...selected].filter((k) => cands.some((x) => x.key === k)));
     draw();
   }
@@ -42,9 +42,12 @@
       ${done.length ? `<details style="margin-top:10px"><summary>Paid (${done.length})</summary>${done.map(payCard).join('')}</details>` : ''}</div>`;
   }
 
+  // Which of the proxies is you? Orders using that proxy have nothing to pay and are left out of the lists below.
+  const meCard = () => proxyList.length ? `<div class="card" id="proxyMe"><h2>Your proxies</h2><p class="sub" style="margin-top:0">Tick any proxy that is <strong>you</strong>. Orders that use it won't appear in "to pay a proxy".</p>
+    ${proxyList.map((x) => `<label class="chk" style="display:flex; margin:6px 0"><input type="checkbox" data-proxy-self="${x.id}" ${x.isSelf ? 'checked' : ''}> ${esc(x.name)} — this is me</label>`).join('')}</div>` : '';
   function draw() {
     const keep = { name: val('pxName'), deadline: val('pxDeadline'), summary: val('pxSummary'), paid: ($('#pxPaid', root) || {}).checked };
-    root.innerHTML = `<h1 style="margin:18px 0 10px">Proxy</h1>${logCard()}${listCard()}`;
+    root.innerHTML = `<h1 style="margin:18px 0 10px">Proxy</h1>${meCard()}${logCard()}${listCard()}`;
     $('#pxName', root).value = keep.name; $('#pxDeadline', root).value = keep.deadline; $('#pxSummary', root).value = keep.summary; $('#pxPaid', root).checked = !!keep.paid;
   }
   const msg = (t, ok) => { const m = $('#pxMsg', root); m.textContent = t; m.className = `msg${ok ? ' ok' : ''}`; m.hidden = false; };
@@ -78,6 +81,11 @@
   }
 
   async function onChange(e) {
+    if (e.target.dataset.proxySelf) {
+      const r = await api('PATCH', `/api/admin/proxies/${e.target.dataset.proxySelf}`, { isSelf: e.target.checked });
+      if (!r.ok) { e.target.checked = !e.target.checked; return GOM.toast(errText(r), true); }
+      await render(root); return GOM.toast(e.target.checked ? 'Marked as you — its orders are left out.' : 'No longer marked as you.');
+    }
     const t = e.target;
     if (t.dataset.act === 'pick') {
       t.checked ? selected.add(t.dataset.key) : selected.delete(t.dataset.key);

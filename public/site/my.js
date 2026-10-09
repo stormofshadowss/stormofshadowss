@@ -63,6 +63,7 @@
     view.innerHTML = `<div class="row" style="margin:18px 0 8px"><h1 style="margin:0">My orders</h1><span class="muted">${handles.length === 1 ? `<strong>@${esc(handles[0])}</strong> · ` : ''}${esc(m.account.email)} · <a href="#" data-act="logout">Sign out</a></span></div>
       ${handles.length > 1 ? `<div class="card"><label for="sw">Viewing</label><select id="sw" data-act="switch">${handles.map((h) => `<option value="${esc(h)}" ${h === S.handle ? 'selected' : ''}>@${esc(h)}</option>`).join('')}</select></div>` : ''}
       ${S.invites.length ? `<div class="card" data-invite-notice style="background:var(--paper)"><strong>${S.invites.length === 1 ? `@${esc(S.invites[0].fromHandle)} has asked` : `${S.invites.length} people have asked`} to ship a parcel together with yours</strong><div class="sub">One parcel, one address — you choose which of your items go in. Nothing happens unless you say yes.</div><a class="pillbtn" href="#/ship" style="margin-top:8px">Have a look</a></div>` : ''}
+      ${shippedBanner()}
       ${sum ? `<div class="card"><h2>What you owe</h2><div class="tiles">${CATS.map(([k, n]) => tile(n, o[k])).join('')}${tile('Total to pay', o.total, 'total')}</div>
         ${sum.credit > 0 ? `<p class="sub">You have ${money(sum.credit)} credit on your account — it's used automatically against what you owe.</p>` : ''}</div>
       <div class="cards">${card('#/pay', 'Make a payment', o.total > 0 ? `${money(o.total)} owed` : 'nothing owing')}
@@ -104,21 +105,21 @@
       if (cr?.status === 'pending') return `<div class="sub" data-cancel-state="pending">⏳ You've asked to cancel this — waiting for the GOM to answer. <button class="sm secondary" data-act="cancel-withdraw" data-req="${cr.id}">Withdraw request</button></div>`;
       if (!['confirmed', 'requested'].includes(c.status) || c.isFixed || inParcel.has(c.id)) return '';
       if (S.cancelOpen === c.id) return `<form data-form="cancel" data-id="${c.id}" class="card" style="background:var(--paper); margin-top:8px"><strong>Ask to cancel “${esc(c.label)}”</strong>
-        <p class="sub">${c.status === 'requested' ? "This hasn't been confirmed yet, but any cancellation still has to be approved by the GOM — it keeps member sets tidy. Nothing changes until they answer." : `The GOM has to approve this — nothing changes until they answer. If they do, ${paidOn(c) > 0 ? `the ${money(paidOn(c))} you've paid towards it` : 'anything you pay towards it'} comes back to your account as credit, but they may keep a cancellation fee, especially if it has already been ordered.`}</p>
+        <p class="sub">${c.status === 'requested' ? "This hasn't been confirmed yet, but any cancellation still has to be approved by the GOM (it keeps sets tidy) — nothing changes until they answer." : `The GOM has to approve this — nothing changes until they answer. If they do, ${paidOn(c) > 0 ? `the ${money(paidOn(c))} you've paid towards it` : 'anything you pay towards it'} comes back to your account as credit, but they may keep a cancellation fee, especially if it has already been ordered.`}</p>
         <label>Why? (optional)</label><textarea name="reason" rows="2" maxlength="500" style="width:100%; padding:10px 12px; border:1.5px solid var(--line); border-radius:8px; font:inherit"></textarea>
         <p class="msg" data-msg hidden></p><div class="btn-row"><button type="submit">Send request</button><button type="button" class="secondary" data-act="cancel-close">Never mind</button></div></form>`;
       return `${cr?.status === 'declined' ? `<div class="sub" data-cancel-state="declined">Your request to cancel this was declined${cr.note ? `: “${esc(cr.note)}”` : ''}.</div>` : ''}<button class="sm secondary" data-act="cancel-ask" data-id="${c.id}" style="margin-top:4px">${cr?.status === 'declined' ? 'Ask again' : 'Ask to cancel'}</button>`;
     };
     view.innerHTML = `${S.crumb}<h1 style="margin:4px 0 10px">${done ? 'Completed orders' : 'Ongoing orders'}</h1>
+      ${!done ? shippedBanner() : ''}
       ${byGo.size ? [...byGo.entries()].map(([title, cs]) => `<div class="card"><h2>${esc(title)}</h2>${cs.map((c) => `<div class="itemrow"><div class="grow">${esc(c.label)} ${c.isFixed ? '<span class="pill">fixed</span>' : ''}
         <div class="sub">${esc(stage(c))}${c.payBy && c.owed > 0 ? ` · pay by ${fmtDate(c.payBy)}` : ''}</div><div style="margin-top:4px">${costChips(c)}</div>${cancelUi(c)}</div>
         <div>${c.overdue ? '<span class="pill warn">overdue</span>' : ''}</div></div>`).join('')}</div>`).join('')
-      : `<div class="card"><p class="muted">${done ? 'Nothing has been received yet.' : 'No ongoing orders. <a href="#/completed">See completed orders</a>'}</p></div>`}
-      ${!done ? shippedBanner() : ''}`;
+      : `<div class="card"><p class="muted">${done ? 'Nothing has been received yet.' : 'No ongoing orders. <a href="#/completed">See completed orders</a>'}</p></div>`}`;
   }
   function shippedBanner() {
     const on = S.parcels.filter((p) => p.status === 'shipped');
-    return on.length ? `<div class="card"><h2>Parcels on their way</h2>${on.map((p) => `<div class="itemrow"><div class="grow">Parcel #${p.id} <span class="sub">${p.items.map((i) => esc(i.label)).join(', ')}</span>${p.shared?.active ? `<div class="sub" data-shared-note>${p.canConfirm ? `Shared with ${p.shared.people.filter((x) => x.status === 'accepted').map((x) => `@${esc(x.handle)}`).join(', ')} — pressing the button confirms it for everyone.` : `Posted to @${esc(p.shared.people[0].handle)}'s address together with theirs. @${esc(p.shared.people[0].handle)} will confirm when it arrives.`}</div>` : ''}</div>${p.canConfirm ? `<button data-act="received" data-id="${p.id}">It's arrived — mark as received</button>` : ''}</div>`).join('')}</div>` : '';
+    return on.length ? `<div class="card" data-parcels-card style="border:2px solid var(--accent)"><h2>Parcels on their way</h2>${on.map((p) => `<div class="itemrow"><div class="grow">Parcel #${p.id} <span class="sub">${p.items.map((i) => esc(i.label)).join(', ')}</span>${p.shared?.active ? `<div class="sub" data-shared-note>${p.canConfirm ? `Shared with ${p.shared.people.filter((x) => x.status === 'accepted').map((x) => `@${esc(x.handle)}`).join(', ')} — pressing the button confirms it for everyone.` : `Posted to @${esc(p.shared.people[0].handle)}'s address together with theirs. @${esc(p.shared.people[0].handle)} will confirm when it arrives.`}</div>` : ''}</div>${p.canConfirm ? `<button data-act="received" data-id="${p.id}">It's arrived — mark as received</button>` : ''}</div>`).join('')}</div>` : '';
   }
   SITE.views.ongoing = async () => ordersList('ongoing');
   SITE.views.completed = async () => ordersList('completed');

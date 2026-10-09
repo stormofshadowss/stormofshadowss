@@ -248,12 +248,12 @@ test('GOM: the checklist for a shared parcel includes the friend\'s own Lomo nam
   const card = () => queueCard(p, r.json.id);
   const list = text(p, `[data-parcel="${r.json.id}"] [data-checklist]`);
   assert.match(list, new RegExp(`Lomo name for @${b.handle} checked — Bee.*Bias name for @${b.handle} checked — Felix`, 's'));
-  assert.match(list, /0 of 7 ticked/, '2 items + address + the recipient\'s Lomo and bias + the friend\'s Lomo and bias');
+  assert.match(list, /0 of 6 ticked/, '2 items + the recipient\'s Lomo and bias + the friend\'s Lomo and bias');
   await p.click(p.q('input[data-friend][data-tick="lomo"]', card()));
-  assert.match(text(p, `[data-parcel="${r.json.id}"] [data-count]`), /1 of 7 ticked/);
+  assert.match(text(p, `[data-parcel="${r.json.id}"] [data-count]`), /1 of 6 ticked/);
   assert.equal((await api('GET', '/api/admin/packing')).json.parcels.find((x) => x.id === r.json.id).companions[0].lomoChecked, true, 'the tick was saved');
   await p.click(btn(p, /^Tick all/, card()));
-  assert.match(text(p, `[data-parcel="${r.json.id}"] [data-count]`), /7 of 7 ticked/);
+  assert.match(text(p, `[data-parcel="${r.json.id}"] [data-count]`), /6 of 6 ticked/);
   assert.equal(btn(p, /^Mark packed/, card()).disabled, false);
   const form = p.q(`form[data-form="fees"][data-id="${r.json.id}"]`); form.elements.doms.value = '9'; form.elements.packaging.value = '3';
   await p.click(btn(p, /^Mark packed/, card()));

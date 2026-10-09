@@ -254,14 +254,14 @@ test('fees differ per joiner: each parcel keeps its own figures, and the Claims 
 // ───────────── the packing checklist ─────────────
 const stateOf = async (id) => (await api('GET', '/api/admin/packing?status=requested')).json.parcels.find((x) => x.id === id);
 
-test('the checklist: every item, the address, the Lomo name and the bias name — with Mark packed locked until all are ticked', async () => {
+test('the checklist: every item, the Lomo name and the bias name (no delivery-address tick) — with Mark packed locked until all are ticked', async () => {
   await makeParcel('ck1', 'Cee Kay', { lomoName: 'Kayy', bias: 'Han' }, [w.keyring, w.album]);
   const p = await open();
   const c = card(p, parcel.ck1);
   const list = p.text(p.q('[data-checklist]', c));
-  assert.match(list, /Packing checklist 0 of 5 ticked/, '2 items + address + Lomo + bias');
+  assert.match(list, /Packing checklist 0 of 4 ticked/, '2 items + Lomo + bias');
   assert.match(list, /Keyring/); assert.match(list, /Album/);
-  assert.match(list, /Delivery address checked/);
+  assert.doesNotMatch(list, /Delivery address checked/, 'the address is not part of packing');
   assert.match(list, /Lomo name checked — Kayy \(a name they chose\)/);
   assert.match(list, /Bias name checked — Han \(for the thank-you card\)/);
   assert.equal(p.q('[data-act="packed"]', c).disabled, true);
@@ -274,19 +274,19 @@ test('ticking: the count and the button follow each tick, ticks are saved as you
   const c = () => card(p, parcel.ck1);
   const boxes = () => p.qa('input[data-tick]', c());
   const count = () => p.text(p.q('[data-count]', c()));
-  assert.equal(boxes().length, 5);
-  for (const [n, box] of boxes().slice(0, 4).entries()) {
+  assert.equal(boxes().length, 4);
+  for (const [n, box] of boxes().slice(0, 3).entries()) {
     await p.click(box);
-    assert.equal(count(), `${n + 1} of 5 ticked`);
+    assert.equal(count(), `${n + 1} of 4 ticked`);
     assert.equal(p.q('[data-act="packed"]', c()).disabled, true, 'still locked');
   }
   const saved = await stateOf(parcel.ck1);
   assert.deepEqual(saved.items.map((i) => i.packed), [true, true]);
-  assert.deepEqual([saved.addressChecked, saved.lomoChecked, saved.biasChecked], [true, true, false], 'saved on the server as each box was ticked');
+  assert.deepEqual([saved.lomoChecked, saved.biasChecked], [true, false], 'saved on the server as each box was ticked');
   await p.click(p.byText('#tabs button', 'Packing'));                              // a fresh load of the tab
-  assert.equal(count(), '4 of 5 ticked', 'the ticks were still there');
-  await p.click(boxes()[4]);
-  assert.equal(count(), '5 of 5 ticked');
+  assert.equal(count(), '3 of 4 ticked', 'the ticks were still there');
+  await p.click(boxes()[3]);
+  assert.equal(count(), '4 of 4 ticked');
   assert.equal(p.q('[data-act="packed"]', c()).disabled, false, 'everything ticked: unlocked');
   assert.equal(p.q('[data-pack-hint]', c()).hidden, true);
   await p.click(boxes()[0]);                                                      // take one back
@@ -308,9 +308,9 @@ test('ticking never redraws the screen, so fees you have typed are not lost', as
 test('"Tick all", then Mark packed: the whole flow works and the parcel moves on with its checklist intact', async () => {
   const p = await open();
   await tickAll(p, parcel.ck1);
-  assert.match(p.text(p.q('[data-count]', card(p, parcel.ck1))), /5 of 5 ticked/);
+  assert.match(p.text(p.q('[data-count]', card(p, parcel.ck1))), /4 of 4 ticked/);
   const s = await stateOf(parcel.ck1);
-  assert.deepEqual([s.items.every((i) => i.packed), s.addressChecked, s.lomoChecked, s.biasChecked], [true, true, true, true]);
+  assert.deepEqual([s.items.every((i) => i.packed), s.lomoChecked, s.biasChecked], [true, true, true]);
   await p.click(p.q(`[data-act="packed"][data-id="${parcel.ck1}"]`)); await press(p, 'Mark packed');
   assert.match(toast(p), /Marked packed/);
   await p.click(p.byText('[data-act="status"]', 'Packed'));
@@ -324,7 +324,7 @@ test('a parcel with no bias has no bias box; the Lomo box is only there when the
   await makeParcel('ck2', 'Dee Kay', {}, [w.keyring]);
   const p = await open();
   const list = p.text(p.q('[data-checklist]', card(p, parcel.ck2)));
-  assert.match(list, /0 of 3 ticked/, 'item + address + Lomo (their delivery name)');
+  assert.match(list, /0 of 2 ticked/, 'item + Lomo (their delivery name)');
   assert.match(list, /Lomo name checked — Dee Kay \(their delivery name\)/);
   assert.doesNotMatch(list, /Bias name checked/);
   for (const box of p.qa('input[data-tick]', card(p, parcel.ck2))) await p.click(box);

@@ -154,6 +154,7 @@
         <div><label>Stage</label><select data-filter="stage"><option value="">All stages</option>${PIPELINE.map((p) => `<option ${p === filter.stage ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select></div>
         <div><label>Sort by</label><select data-filter="sort">${SORTS.map(([v, l]) => `<option value="${v}" ${v === filter.sort ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
         <div><label class="chk" style="margin-top:24px"><input type="checkbox" data-filter="unpaid" ${filter.unpaid ? 'checked' : ''}> Only claims that still owe money</label></div></div></div>
+      ${(() => { const ids = confirmedIds(list); return ids.length ? `<div class="row" style="margin:0 0 10px; justify-content:flex-start; gap:12px; align-items:center"><button class="sm secondary" data-act="pick-all" data-ids="${ids.join(',')}">${ids.every((i) => picked.has(i)) ? 'Unselect' : 'Select'} all ${ids.length} confirmed claim${ids.length === 1 ? '' : 's'} shown</button><span class="sub">Narrow with <em>Group order</em>, <em>Stage</em> or search first to select just those.</span></div>` : ''; })()}
       ${picked.size ? bulkBar() : ''}
       ${byOrder.size ? [...byOrder.values()].map((g) => {
         const all = [...g.people.values()].flat();
@@ -183,7 +184,7 @@
     const claim = claims.find((c) => c.id === id);
     switch (b.dataset.act) {
       case 'pick': b.checked ? picked.add(id) : picked.delete(id); draw(); break;
-      case 'pick-person': case 'pick-order': {
+      case 'pick-person': case 'pick-order': case 'pick-all': {
         const ids = b.dataset.ids.split(',').map(Number);
         const all = ids.every((i) => picked.has(i));
         ids.forEach((i) => (b.dataset.act === 'pick-person' ? b.checked : !all) ? picked.add(i) : picked.delete(i));

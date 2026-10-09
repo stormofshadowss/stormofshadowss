@@ -75,7 +75,7 @@ test('EVERY STAGE: an item that is still only a request can be asked about too �
   const page = await myPage({ cookie: c }); await go(page, '#/ongoing');
   assert.match(text(page), /waiting for the GOM to confirm/);
   await page.click(btn(page, /^Ask to cancel/));
-  assert.match(page.text(page.q('form[data-form="cancel"]')), /This hasn't been confirmed yet, but any cancellation still has to be approved by the GOM — it keeps member sets tidy\. Nothing changes until they answer\./);
+  assert.match(page.text(page.q('form[data-form="cancel"]')), /This hasn't been confirmed yet, but any cancellation still has to be approved by the GOM \(it keeps sets tidy\) — nothing changes until they answer\./);
   assert.doesNotMatch(page.text(page.q('form[data-form="cancel"]')), /cancellation fee/, 'no talk of fees for something nobody has paid for');
   await page.submit(page.q('form[data-form="cancel"]'));
   assert.match(toast(page), /Request sent/);

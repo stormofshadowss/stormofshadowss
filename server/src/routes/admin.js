@@ -1,3 +1,4 @@
+import { imageOut } from '../lib/images.js';
 import { z } from 'zod';
 import { wrap } from '../lib/http.js';
 import { requireAdmin, audit } from '../auth.js';
@@ -113,7 +114,8 @@ export function adminRoutes(app, { pool, notifier }) {
         WHERE p.status = ? ORDER BY p.requested_at, p.id`, [status]);
     const ids = parcels.map((p) => p.id);
     const items = ids.length ? (await pool.query(
-      'SELECT pi.parcel_id, c.id AS claimId, c.joiner_id AS ownerId, c.label, pi.packed_at AS packedAt, jc.instagram_handle AS owner, pi.doms_share AS doms, pi.packaging_share AS packaging FROM parcel_items pi JOIN claims c ON c.id = pi.claim_id JOIN joiners jc ON jc.id = c.joiner_id WHERE pi.parcel_id IN (?) ORDER BY c.id', [ids]))[0] : [];
+      'SELECT pi.parcel_id, c.id AS claimId, c.joiner_id AS ownerId, c.label, pi.packed_at AS packedAt, jc.instagram_handle AS owner, pi.doms_share AS doms, pi.packaging_share AS packaging, im.filename AS imgFile, im.width AS imgW, im.height AS imgH FROM parcel_items pi JOIN claims c ON c.id = pi.claim_id JOIN joiners jc ON jc.id = c.joiner_id LEFT JOIN items it ON it.id = c.item_id LEFT JOIN leftover_items lo ON lo.id = c.leftover_item_id LEFT JOIN images im ON im.id = COALESCE(it.image_id, lo.image_id) WHERE pi.parcel_id IN (?) ORDER BY c.id', [ids]))[0] : [];
+    for (const i of items) { i.image = imageOut(i.imgFile, i.imgW, i.imgH); delete i.imgFile; delete i.imgW; delete i.imgH; }      // the item's picture (or null), for the packing list
     const comps = ids.length ? (await pool.query(
       `SELECT pc.parcel_id, pc.joiner_id AS joinerId, pc.status, pc.how, pc.bias, pc.lomo_name AS lomoName, pc.lomo_source AS lomoSource, pc.notes, pc.lomo_checked_at AS lomoChecked, pc.bias_checked_at AS biasChecked, pc.weight_g AS weightG, jf.instagram_handle AS handle
          FROM parcel_companions pc JOIN joiners jf ON jf.id = pc.joiner_id WHERE pc.parcel_id IN (?) ORDER BY pc.id`, [ids]))[0] : [];
@@ -121,7 +123,7 @@ export function adminRoutes(app, { pool, notifier }) {
       p.handleVerified = !!p.handleVerified;
       p.queuePosition = await queuePosition(pool, p);
       const mine = items.filter((i) => i.parcel_id === p.id);
-      p.items = mine.map((i) => ({ claimId: i.claimId, label: i.label, packed: !!i.packedAt, owner: i.owner }));
+      p.items = mine.map((i) => ({ claimId: i.claimId, label: i.label, packed: !!i.packedAt, owner: i.owner, image: i.image }));
       p.addressChecked = !!p.addressCheckedAt; p.lomoChecked = !!p.lomoCheckedAt; p.biasChecked = !!p.biasCheckedAt;
       p.feesSet = feesSet({ doms_total: p.domsTotal, packaging_total: p.packagingTotal });
       p.companions = comps.filter((c) => c.parcel_id === p.id).map((c) => ({ handle: c.handle, status: c.status, how: c.how, bias: c.bias, lomoName: c.lomoName, lomoSource: c.lomoSource, notes: c.notes, lomoChecked: !!c.lomoChecked, biasChecked: !!c.biasChecked }));
@@ -161,7 +163,6 @@ export function adminRoutes(app, { pool, notifier }) {
     const [[t]] = await conn.query('SELECT COUNT(*) AS total, COALESCE(SUM(packed_at IS NOT NULL), 0) AS ticked FROM parcel_items WHERE parcel_id = ?', [id]);
     const missing = [];
     if (t.ticked < t.total) missing.push(`${t.total - t.ticked} item${t.total - t.ticked === 1 ? '' : 's'}`);
-    if (!p.address_checked_at) missing.push('the delivery address');
     if (p.lomo_name && !p.lomo_checked_at) missing.push('the Lomo name');
     if (p.bias && !p.bias_checked_at) missing.push('the bias name');
     const [cs] = await conn.query('SELECT pc.status, pc.bias, pc.lomo_name, pc.lomo_checked_at, pc.bias_checked_at, j.instagram_handle AS handle FROM parcel_companions pc JOIN joiners j ON j.id = pc.joiner_id WHERE pc.parcel_id = ? ORDER BY pc.id', [id]);

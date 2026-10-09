@@ -20,6 +20,9 @@
   function candidatesCard() {
     return `<div class="card"><h2>New box</h2>
       <p class="sub">Tick the items going in this box (only items that have arrived at your proxy appear). Enter an exact weight where you have one — items without one share the box's real weight by size.</p>
+      ${candidates.length ? `<div class="btn-row" id="candPicks" style="margin:0 0 8px; flex-wrap:wrap; gap:6px"><button class="sm secondary" data-act="cand-all">Select all ${candidates.length}</button>
+        ${[...new Set(candidates.map((c) => c.orderTitle))].map((t) => `<button class="sm secondary" data-act="cand-order" data-order="${esc(t)}">Select all in “${esc(t)}” (${candidates.filter((c) => c.orderTitle === t).length})</button>`).join('')}
+        <button class="sm secondary" data-act="cand-none">Clear</button></div>` : ''}
       <div class="scroll"><table class="grid"><thead><tr><th></th><th>Person</th><th>Item</th><th>Size</th><th>Weight (g)</th><th>Price</th></tr></thead><tbody>
       ${candidates.length ? candidates.map((c) => `<tr data-cand="${c.claimId}"><td><input type="checkbox" data-act="pick" data-id="${c.claimId}" ${selected.has(c.claimId) ? 'checked' : ''}></td>
         <td>@${esc(c.handle)}</td><td>${esc(c.label)} <span class="sub">${esc(c.orderTitle)}</span></td>
@@ -86,6 +89,14 @@
   async function onClick(e) {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const act = b.dataset.act, id = Number(b.dataset.id);
+    if (act === 'cand-all' || act === 'cand-order' || act === 'cand-none') {       // tick every item, every item in one group order, or none
+      for (const c of candidates) {
+        if (act === 'cand-none') selected.delete(c.claimId);
+        else if (act === 'cand-all' || c.orderTitle === b.dataset.order) selected.add(c.claimId);
+      }
+      $$('input[data-act="pick"]', root).forEach((i) => { i.checked = selected.has(Number(i.dataset.id)); });
+      return refreshPreview();
+    }
     if (act === 'create') {
       if (!selected.size) return msg('Select at least one item first.');
       if (!(num('boxEms') > 0)) return msg("Enter an EMS total — that's what creates the box.");

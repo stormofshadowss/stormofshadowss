@@ -393,9 +393,9 @@ test('checklist: a parcel cannot be marked packed until every applicable box is 
   const { id } = await checklistParcel('cl2', 'Cl Two', { bias: 'Felix', lomoName: 'Fee' });
   let r = await admin_(`/api/admin/parcels/${id}/packed`);
   assert.equal(r.status, 409); assert.equal(r.json.code, 'checklist_incomplete');
-  assert.equal(r.json.error, 'Not everything is ticked off yet: 3 items, the delivery address, the Lomo name, the bias name.');
+  assert.equal(r.json.error, 'Not everything is ticked off yet: 3 items, the Lomo name, the bias name.');
   await tick(id, { packed: true });
-  assert.equal((await admin_(`/api/admin/parcels/${id}/packed`)).json.error, 'Not everything is ticked off yet: the delivery address, the Lomo name, the bias name.');
+  assert.equal((await admin_(`/api/admin/parcels/${id}/packed`)).json.error, 'Not everything is ticked off yet: the Lomo name, the bias name.');
   await check(id, { address: true });
   assert.equal((await admin_(`/api/admin/parcels/${id}/packed`)).json.error, 'Not everything is ticked off yet: the Lomo name, the bias name.');
   await check(id, { lomo: true });
@@ -408,12 +408,12 @@ test('checklist: a parcel cannot be marked packed until every applicable box is 
   assert.deepEqual((await claimsOfHandle('cl2')).map((c) => c.pipeline), ['packed', 'packed', 'packed']);
 });
 
-test('checklist: no bias given means no bias box to tick; the address is always required', async () => {
+test('checklist: no bias given means no bias box to tick; the address is NOT part of packing', async () => {
   const { id } = await checklistParcel('cl3', 'Cl Three');                       // no bias; the Lomo name defaults to the delivery name
   await tick(id, { packed: true });
-  assert.match((await admin_(`/api/admin/parcels/${id}/packed`)).json.error, /the delivery address, the Lomo name\./);
-  await check(id, { address: true, lomo: true });
-  assert.equal((await admin_(`/api/admin/parcels/${id}/packed`)).status, 200, 'the bias was never asked for, so it is not required');
+  assert.match((await admin_(`/api/admin/parcels/${id}/packed`)).json.error, /the Lomo name\./);
+  await check(id, { lomo: true });
+  assert.equal((await admin_(`/api/admin/parcels/${id}/packed`)).status, 200, 'the bias was never asked for, so it is not required — and nobody ticked an address');
 });
 
 test('checklist: only for parcels still in the queue, only for items that are in the parcel, validated, admin-only', async () => {
