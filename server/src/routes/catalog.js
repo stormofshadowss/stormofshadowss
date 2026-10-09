@@ -19,7 +19,7 @@ async function proxyIdFor(conn, name) {
 async function loadOrders(pool, whereSql, params, { admin }) {
   const [orders] = await pool.query(
     `SELECT go.id, go.title, go.status, go.is_private, go.close_date, go.payment_deadline, go.expected_ship_date,
-            ag.name AS group_name, p.name AS proxy_name, oi.filename AS cover_file, oi.width AS cover_w, oi.height AS cover_h, gi.filename AS gcover_file, gi.width AS gcover_w, gi.height AS gcover_h
+            go.group_id, ag.name AS group_name, p.name AS proxy_name, oi.filename AS cover_file, oi.width AS cover_w, oi.height AS cover_h, gi.filename AS gcover_file, gi.width AS gcover_w, gi.height AS gcover_h
        FROM group_orders go JOIN artist_groups ag ON ag.id = go.group_id LEFT JOIN proxies p ON p.id = go.proxy_id
        LEFT JOIN images oi ON oi.id = go.cover_image_id LEFT JOIN images gi ON gi.id = ag.cover_image_id
       ${whereSql} ORDER BY go.id DESC`, params);
@@ -38,7 +38,7 @@ async function loadOrders(pool, whereSql, params, { admin }) {
   const [setRows] = setItemIds.length ? await pool.query('SELECT id, item_id, set_number, admin_decision FROM item_sets WHERE item_id IN (?) ORDER BY set_number', [setItemIds]) : [[]];
   const [takenRows] = setRows.length ? await pool.query('SELECT set_id, member_name FROM set_slots WHERE set_id IN (?)', [setRows.map((s) => s.id)]) : [[]];
   return orders.map((o) => ({
-    id: o.id, title: o.title, group: o.group_name, cover: imageOut(o.cover_file, o.cover_w, o.cover_h), groupCover: imageOut(o.gcover_file, o.gcover_w, o.gcover_h), status: o.status, isPrivate: !!o.is_private,
+    id: o.id, title: o.title, groupId: o.group_id, group: o.group_name, cover: imageOut(o.cover_file, o.cover_w, o.cover_h), groupCover: imageOut(o.gcover_file, o.gcover_w, o.gcover_h), status: o.status, isPrivate: !!o.is_private,
     closeDate: o.close_date, paymentDeadline: o.payment_deadline, expectedShipDate: o.expected_ship_date,
     ...(admin ? { proxy: o.proxy_name } : {}),
     items: items.filter((i) => i.order_id === o.id).map((i) => {
@@ -93,6 +93,16 @@ export function catalogRoutes(app, { pool, cfg }) {
   app.delete('/api/admin/orders/:id', requireAdmin, doDelete('order'));
 
   // What anyone can browse: open GOs that aren't private.
+  // Each artist/group that is shown on the site, with how many public group orders it has open or closed (a group with none still has its page).
+  app.get('/api/groups', wrap(async (req, res) => {
+    const [rows] = await pool.query(
+      `SELECT g.id, g.name, im.filename AS file, im.width AS w, im.height AS h,
+              (SELECT COUNT(*) FROM group_orders go WHERE go.group_id = g.id AND go.is_private = 0 AND go.status = 'open') AS open_orders,
+              (SELECT COUNT(*) FROM group_orders go WHERE go.group_id = g.id AND go.is_private = 0 AND go.status <> 'open') AS closed_orders
+         FROM artist_groups g LEFT JOIN images im ON im.id = g.cover_image_id WHERE g.is_hidden = 0 ORDER BY g.sort_order, g.name`);
+    res.json({ groups: rows.map((g) => ({ id: g.id, name: g.name, cover: imageOut(g.file, g.w, g.h), openOrders: Number(g.open_orders), closedOrders: Number(g.closed_orders) })) });
+  }));
+
   app.get('/api/orders', wrap(async (req, res) => {
     res.json({ orders: await loadOrders(pool, 'WHERE go.is_private = 0 AND ag.is_hidden = 0', [], { admin: false }) });
   }));

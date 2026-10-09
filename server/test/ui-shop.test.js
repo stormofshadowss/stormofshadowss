@@ -29,14 +29,17 @@ const plus = async (p, itemId, { member, variant, n = 1 } = {}) => {
 const claimsOf = async (h) => (await app.api('GET', `/api/admin/claims?handle=${h}`, undefined, admin)).json.claims;
 const submit = async (p, handle) => { p.q('#ig').value = handle; await p.submit(p.q('form[data-form="claim"]')); };
 
-test('home: open group orders grouped by artist, private ones hidden, closed ones tucked away', async () => {
+test('home: just the groups that have orders open (the orders live on each group\'s page); private ones are nowhere; closed ones are tucked away on the group page', async () => {
   const p = await shop();
   const text = p.text(p.q('#view'));
   assert.match(text, /Group orders/);
-  assert.match(text, /Stray Kids.*Run It GO.*closes 05\/01\/2099.*pay by 10\/01\/2099/, 'UK dates');
-  assert.match(text, /ATE1EY.*Debut GO/);
-  assert.doesNotMatch(text.replace(/Closed orders.*/, ''), /Off-site Weverse|Old GO/, 'private and closed orders are not in the open list');
+  assert.match(text, /ATE1EY1 open orderStray Kids1 open order/s, 'one card per group, with how many orders are open');
+  assert.doesNotMatch(text, /Run It GO|Debut GO/, 'the orders themselves are not on the home page');
   assert.ok(!text.includes('Off-site Weverse'), 'a private order is nowhere on the page');
+  await p.click(p.q('a.gocard[data-group]:nth-of-type(2)')); await new Promise((r) => setTimeout(r, 60)); await p.settle();
+  const g = p.text(p.q('#view'));
+  assert.match(g, /Stray Kids.*Run It GO.*closes 05\/01\/2099.*pay by 10\/01\/2099/s, 'UK dates, on the group\'s page');
+  assert.doesNotMatch(g.replace(/Closed orders.*/, ''), /Off-site Weverse|Old GO/, 'private and closed orders are not in the open list');
   assert.match(p.text(p.q('details')), /Closed orders \(1\).*Old GO/);
   assert.deepEqual(p.errors, []);
   p.close();
@@ -49,10 +52,12 @@ test('an order page shows every kind of item with prices, claimed counts and pay
   assert.match(text, /Run It GO.*Stray Kids · closes 05\/01\/2099 · payment due 10\/01\/2099/);
   assert.match(text, /Keyring.*£6\.00 each.*0 claimed · pay by 10\/01\/2099/);
   assert.match(text, /Album.*£26\.00 each.*pay by 02\/02\/2099/, 'an item with its own pay-by date shows that');
-  assert.match(text, /Solo Photocards.*pick any members.*Bang Chan £8\.00.*Han £8\.00/);
+  assert.match(text, /Solo Photocards.*Bang Chan £8\.00.*Han £8\.00/);
+  assert.equal(p.qa('#view .pill').length, 0, 'the item-type pills (member set / pick any members / random) are no longer shown to joiners');
+  assert.doesNotMatch(text, /pick any members|member set/i);
   assert.match(text, /Hoodie.*£50\.00 each.*Size M.*Size L/);
-  assert.match(text, /Random card.*random/);
-  assert.match(text, /Seasons Greetings.*member set.*£9\.00 for the whole set.*every part must be claimed/);
+  assert.match(text, /Random card/);
+  assert.match(text, /Seasons Greetings.*£9\.00 for the whole set.*every part must be claimed/);
   assert.match(text, /Diary £2\.00 · 0 claimed.*Washi tape £1\.00 · 0 claimed/, 'each part shows its own price and how many are claimed');
   assert.match(text, /you can take more than one of the same part, and each goes in a different set/);
   assert.ok(p.byText('button', 'Claim the whole set (£9.00, all in one set)'));
@@ -193,7 +198,9 @@ test('titles with HTML are shown as text', async () => {
   const o = (await app.api('POST', '/api/admin/orders', { groupId: g, title: '<img src=x onerror="window.pwned=1"> GO' }, admin)).json.id;
   await app.api('POST', `/api/admin/orders/${o}/items`, { type: 'normal', title: '<script>window.pwned=2</script>Item', price: 1 }, admin);
   const p = await shop();
-  assert.equal(p.q('#view img'), null);
+  assert.match(p.text(p.q('#view')), /<b>Evil<\/b> Crew1 open order/);
+  await go(p, `#/group/${g}-evil`);
+  assert.equal(p.q('#view img'), null); assert.equal(p.q('#view b'), null);
   assert.match(p.text(p.q('#view')), /<b>Evil<\/b> Crew.*<img src=x onerror="window\.pwned=1"> GO/);
   await go(p, `#/order/${o}`);
   assert.match(p.text(p.q('#view')), /<script>window\.pwned=2<\/script>Item/);

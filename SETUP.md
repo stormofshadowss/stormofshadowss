@@ -267,3 +267,12 @@ Every page people order on (the shop, My orders, claim-your-orders) has a **Priv
 - Change the **"Last updated"** date whenever you edit it.
 
 The tests that guard it fail if the site starts setting a new cookie, loads something from another company's server, or changes who can delete their account — so the notice can't quietly stop being true.
+
+### Group pages
+Each artist/group has **its own page** on the shop. The **home page** is now just the groups that have group orders **open** (each a card with its picture and how many orders are open) plus the Shop card; the orders themselves live on each group's page, at an address like `/#/group/3-stray-kids`. A group page has **tabs along the top** to jump between groups (the groups with orders open, plus the one you're on), that group's open orders, and its **closed orders** tucked into a collapsible list. Private orders appear nowhere.
+
+A group with **nothing open is left off the home page and the tabs** — but its page still works by its link, says "No group orders are open … right now", and shows its closed orders. The moment you open an order for it, it appears on the home page and in everyone's tabs. **Creating a new group** in the admin gives it a page automatically (it just stays off the home page until it has an open order).
+
+Things to know: closed orders are now only reachable from a group's page (the home page no longer lists them), so a quiet group's closed orders can only be found by its link. A group's id is what matters in the link — the name part is just for reading.
+
+**If you've edited `public/site/shop.js`:** the home page and group pages now come from a new file, `public/site/shop-groups.js`, loaded before `shop.js` in `public/index.html`. In `shop.js` three small things change — the end of `route()` hands over to it, the order page's "back" link names the group, and the three item-type pills (`member set`, `pick any members`, `random`) are removed. The home page's intro wording now lives in `public/site/shop-groups.js` (the old `home()` in `shop.js` is only a fallback if that file doesn't load), so edit it there from now on. The order cards on group pages are drawn by `shop-groups.js` too.

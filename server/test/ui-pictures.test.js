@@ -141,11 +141,14 @@ test('joiners see a picture on every kind of item, tappable to the full size; it
   p.close();
 });
 
-test('joiners see the order\'s cover as a banner, small covers on order cards, and the artist\'s picture beside its name', async () => {
+test('joiners see the order\'s cover as a banner, small covers on order cards, and the artist\'s picture on its card and beside its name', async () => {
   const cover = (await setPic('order', orderId, '#c33')).image, artist = (await setPic('group', groupId, '#3a3')).image;
   const p = await openPage(app, '/');
-  assert.equal(p.q(`a.gocard[href="#/order/${orderId}"] img.thumb.sm`).getAttribute('src'), cover.thumb);
-  assert.equal(p.q('h2 img.avatar').getAttribute('src'), artist.thumb);
+  await new Promise((r) => setTimeout(r, 80)); await p.settle();
+  assert.equal(p.q(`a.gocard[data-group="${groupId}"] img.thumb.sm`).getAttribute('src'), artist.thumb, 'the artist\'s picture is on its card on the home page');
+  await go(p, `#/group/${groupId}`);
+  assert.equal(p.q(`a.gocard[href="#/order/${orderId}"] img.thumb.sm`).getAttribute('src'), cover.thumb, 'the order\'s cover is on its card on the group page');
+  assert.equal(p.q('h1 img.avatar').getAttribute('src'), artist.thumb, 'and the artist\'s picture sits beside the group\'s name');
   await go(p, `#/order/${orderId}`);
   assert.equal(p.q('#view img.banner').getAttribute('src'), cover.url);
   assert.ok(p.q('#view img.banner').getAttribute('alt').length > 0);

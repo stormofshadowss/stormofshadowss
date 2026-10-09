@@ -147,7 +147,7 @@
       const count = mine.reduce((s, l) => s + l.qty, 0);
       const multi = mine.some((l) => l.qty > 1);
       const summary = it.members.filter((m) => mine.some((l) => l.member === m.name)).map((m) => { const q = mine.find((l) => l.member === m.name).qty; return q > 1 ? `${q} × ${esc(m.name)}` : esc(m.name); }).join(', ');
-      return `<div class="card"><div class="row"><div><strong>${esc(it.title)}</strong> <span class="pill">member set</span><div class="sub">${it.wholeSetPrice == null ? 'Price TBC' : `${money(it.wholeSetPrice)} for the whole set`}${it.requiresFullSet ? ' · <strong>every part must be claimed for it to go ahead</strong>' : ''}</div></div>${meta}</div>
+      return `<div class="card"><div class="row"><div><strong>${esc(it.title)}</strong><div class="sub">${it.wholeSetPrice == null ? 'Price TBC' : `${money(it.wholeSetPrice)} for the whole set`}${it.requiresFullSet ? ' · <strong>every part must be claimed for it to go ahead</strong>' : ''}</div></div>${meta}</div>
         ${d}<p class="sub">Press + for each part you want — you can take more than one of the same part, and each goes in a different set. If every existing set already has a part, a new set opens for you.</p>
         <div class="opts">${it.members.map((m) => tile(it, m.name, `${priceText(m.price)} · ${it.partsClaimed[m.name] || 0} claimed`, closed)).join('')}</div>
         ${closed ? '' : `<div class="btn-row"><button class="secondary" data-act="whole" data-item="${it.id}">Claim the whole set (${it.wholeSetPrice == null ? 'price TBC' : money(it.wholeSetPrice)}, all in one set)</button></div>`}
@@ -156,20 +156,20 @@
           ${count >= 2 ? `<label class="chk" style="margin-top:6px"><input type="checkbox" data-act="together" data-item="${it.id}" ${together[it.id] ? 'checked' : ''}> Keep these together in the same set</label>${multi ? '<div class="sub">With this on, one of each part goes in the same set, then the next one of each in the next set, and so on.</div>' : ''}` : ''}` : ''}</div>`;
     }
     if (it.type === 'independent') {
-      return `<div class="card"><div class="row"><div><strong>${esc(it.title)}</strong> <span class="pill">pick any members</span></div>${meta}</div>${d}
+      return `<div class="card"><div class="row"><div><strong>${esc(it.title)}</strong></div>${meta}</div>${d}
         <div class="opts">${it.members.map((m) => tile(it, m.name, priceText(m.price), closed)).join('')}</div></div>`;
     }
     if (it.type === 'size') {
       return `<div class="card"><div class="row"><div><strong>${esc(it.title)}</strong> <span class="sub">${eachText(it.price)}</span></div>${meta}</div>${d}
         <div class="pills">${it.variants.map((v) => sizePill(it, v, closed)).join('')}</div></div>`;
     }
-    return `<div class="card"><div class="itemrow" style="border:0; padding:0"><div class="grow"><strong>${esc(it.title)}</strong>${it.type === 'random' ? ' <span class="pill">random</span>' : ''}<div class="sub">${eachText(it.price)}</div>${meta}</div>${stepper(it.id, null, null, closed)}</div>${d}</div>`;
+    return `<div class="card"><div class="itemrow" style="border:0; padding:0"><div class="grow"><strong>${esc(it.title)}</strong><div class="sub">${eachText(it.price)}</div>${meta}</div>${stepper(it.id, null, null, closed)}</div>${d}</div>`;
   }
 
   function orderPage(id) {
     const o = orders.find((x) => x.id === id);
     if (!o) { view.innerHTML = '<div class="card"><p>That group order isn\'t available.</p><a href="#/">← All group orders</a></div>'; return; }
-    view.innerHTML = `<div class="crumb"><a href="#/">← All group orders</a></div>
+    view.innerHTML = `<div class="crumb"><a href="${SITE.groupPages && o.groupId ? SITE.groupPages.href({ id: o.groupId, name: o.group }) : '#/'}">← ${SITE.groupPages && o.groupId ? esc(o.group) : 'All group orders'}</a></div>
       ${o.cover ? `<img class="banner" src="${esc(o.cover.url)}" alt="${esc(o.title)}">` : ''}
       <h1 style="margin:4px 0">${esc(o.title)}</h1>
       <p class="muted">${esc(o.group)}${o.closeDate ? ` · closes ${fmtDate(o.closeDate)}` : ''}${o.paymentDeadline ? ` · payment due ${fmtDate(o.paymentDeadline)}` : ''}</p>
@@ -221,6 +221,7 @@
     if (h === '#/shop') return shopPage();
     if (h === '#/basket') return basketPage();
     if (h === '#/done' && done) return donePage();
+    if (SITE.groupPages) return SITE.groupPages.show({ view, orders, shopItems }, h);       // the home page and the group pages (site/shop-groups.js)
     home();
   }
 

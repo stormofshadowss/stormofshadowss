@@ -10,7 +10,7 @@ public/            the pages the server hands out (a small sign-in page + previe
 server/            the API (Node 20, Express, mysql2)
   src/routes/      auth · handles · catalog · claims · my (joiner) · admin (GOM)
   src/lib/         ledger.js (all the money rules) · parcels.js · money.js
-  test/            823 tests that run against a real MariaDB
+  test/            836 tests that run against a real MariaDB
 db/migrations/     001_init.sql — the whole database design (32 tables)
 deploy/backup.sh   automatic database backups
 docker-compose.yml app + MariaDB + backups (+ optional Cloudflare tunnel, + optional DB viewer)
@@ -19,7 +19,7 @@ docker-compose.yml app + MariaDB + backups (+ optional Cloudflare tunnel, + opti
 
 ## What is built, and what isn't
 
-**Built and tested against a real MariaDB (823 tests):**
+**Built and tested against a real MariaDB (836 tests):**
 
 | Area | What it does |
 |---|---|
@@ -29,7 +29,7 @@ docker-compose.yml app + MariaDB + backups (+ optional Cloudflare tunnel, + opti
 | **Claims** | Claim without signing in; you secure them (all at once per GO, or individually). |
 | **Money** | Five cost lines per claim, payments you verify, **joiner chooses credit or tip** when overpaying, credit that auto-applies, exchange-rate cost adjustments, penny-exact splits, a full audit trail of which payment settled what. **Cancelled claims return what was paid as credit.** |
 | **Parcels** | Joiner requests shipping → first-come-first-served packing queue → you add postage, pack, ship → the joiner confirms it arrived → items complete. Each request also records the name for a **personalised Lomo** (their delivery name unless they pick another). |
-| **Blocked handles & deleted accounts** | You can block a handle (even before it has ever ordered): it can't place claims, and if one of its claims is cancelled the money it paid is recorded as *forfeited* instead of credited. There is a **privacy notice** at `/privacy.html` (linked from every page; set `CONTACT_EMAIL`). People can delete their own account from **My settings** (see below); anyone who leaves holding credit shows up on your flagged list. |
+| **Blocked handles & deleted accounts** | You can block a handle (even before it has ever ordered): it can't place claims, and if one of its claims is cancelled the money it paid is recorded as *forfeited* instead of credited. Each group has its **own page** (`/#/group/<id>-<name>`), with tabs between groups; the home page lists only groups that have orders open. There is a **privacy notice** at `/privacy.html` (linked from every page; set `CONTACT_EMAIL`). People can delete their own account from **My settings** (see below); anyone who leaves holding credit shows up on your flagged list. |
 | **Backups** | Nightly dumps, tested to restore row-for-row. |
 
 **Joiner site (at `/`):** browse group orders, a basket, claim with just an Instagram handle, then an offer to add an email (one link signs in and connects the handle), and `/my.html` (My orders) to sign in, see what you owe, make a payment, add delivery details, request shipping, follow parcels and confirm they've arrived. You can **import your Notion masterlist** (Import tab: upload the export, confirm who's who, preview, import — and undo it if needed), then send each person a **one-time "claim your orders" link** (People tab) so they can link their handle without waiting for approval. Up to 5 friends can **ship together** in one parcel (a joiner invites them, or you combine requests in the Packing tab). Postage and packaging are split equally per person for UK parcels, or **by weight** for worldwide ones (you can override either way and type in what you weighed). There is also a stand-alone Unraid stack — one YAML plus one env box, built straight from GitHub, with the first admin created from the settings (`deploy/unraid/`; SETUP.md has the steps). The server can be updated from a private GitHub repository with one command (`bash deploy/update.sh` — it backs up first). You can **delete** a group order or item (never one with real orders or payments behind it). Joiners can **ask to cancel** an item at any stage (you approve or decline, and choose any cancellation fee to keep; a set can't be secured while one of its parts has a request waiting). Claims can also be **moved to another person** (with the money that was paid on them) from the Claims tab. You can host an item before its price is final (**price TBC**): people can claim it, nothing can be secured until you set the price, and the claims pick it up. Items, shop stock, group orders and artists can each have a **picture** (shrunk for the web, with hidden location data removed). Items you already have on hand can be sold from a **Shop** page (held at once, ready to send once paid). Joiners can opt in to **email notifications** (claims secured, payments verified or rejected, parcels shipped, and one overdue reminder) from My orders — off unless they turn it on. Member sets can be claimed too — pick parts with +/−, and each goes in the right set. Regulars can have **fixed claims**, and manage them from a Fixed claims page.
