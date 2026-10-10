@@ -28,6 +28,9 @@
     return `<button class="sm secondary" data-act="add" data-set="${s.id}" data-member="${esc(p.member)}">Add someone</button>${s.decision === 'secured' ? ` <button class="sm secondary" data-act="split" data-set="${s.id}" data-member="${esc(p.member)}">Split cost &amp; raffle</button>` : ''}`;
   }
 
+  // A new request can join a set that is ALREADY secured (it fills an open part). It waits as "requested" until confirmed here.
+  const newRequests = (s) => s.decision === 'secured' ? s.parts.filter((p) => p.status === 'requested' && p.claimId).map((p) => p.claimId) : [];
+  const confirmNewBtn = (s) => { const ids = newRequests(s); return ids.length ? `<span class="pill warn" data-new-requests>${ids.length} new request${ids.length === 1 ? '' : 's'} waiting</span><button data-act="confirm-new" data-id="${s.id}" data-ids="${ids.join(',')}">Confirm ${ids.length === 1 ? 'it' : `these ${ids.length}`}</button>` : ''; };
   function setCard(s) {
     const open = s.total - s.filled;
     const blocked = s.decision === 'none' && (s.filled === 0 || (s.requiresFullSet && open > 0) || s.hasTbc || s.hasRequests);
@@ -40,7 +43,7 @@
       ${s.parts.filter((p) => p.raffle).map((p) => `<div class="sub" style="margin-top:6px">Each person in this set took on about ${money(p.raffle.share)} extra for the unclaimed ${esc(p.member)} part${p.raffle.status === 'pending' ? ' — pick a raffle winner above.' : ' — it was raffled.'}</div>`).join('')}
       ${s.decision === 'none' ? `<div class="btn-row" style="align-items:center"><button data-act="secure" data-id="${s.id}" ${blocked ? 'disabled' : ''}>Secure this set</button><button class="secondary" data-act="cancel-set" data-id="${s.id}">Cancel this set</button>
         ${blocked ? `<span class="sub">${s.hasRequests ? 'A joiner has asked to cancel one of these parts — answer that first (top of the Claims tab) before this set can be secured.' : s.hasTbc ? "The price is still TBC — set it (Group Orders → Items → Edit) before this set can be secured." : s.filled === 0 ? 'Nobody has claimed anything in this set yet.' : `Waiting for ${open} more part${open === 1 ? '' : 's'} — this set can't go ahead unless every part is claimed.`}</span>` : ''}</div>`
-      : s.decision === 'secured' ? `<div class="btn-row" style="align-items:center"><button class="secondary" data-act="cancel-set" data-id="${s.id}">Cancel this set</button>${open ? `<span class="sub">${open} part${open === 1 ? ' is' : 's are'} still open — you can put someone into ${open === 1 ? 'it' : 'them'} above.</span>` : ''}</div>` : ''}</div>`;
+      : s.decision === 'secured' ? `<div class="btn-row" style="align-items:center">${confirmNewBtn(s)}<button class="secondary" data-act="cancel-set" data-id="${s.id}">Cancel this set</button>${open ? `<span class="sub">${open} part${open === 1 ? ' is' : 's are'} still open — you can put someone into ${open === 1 ? 'it' : 'them'} above.</span>` : ''}</div>` : ''}</div>`;
   }
 
   function draw() {
@@ -99,6 +102,14 @@
       await render(root); GOM.refreshBadges();
       return GOM.toast(r.ok ? `Secured — ${r.json.secured} claim${r.json.secured === 1 ? '' : 's'} confirmed.` : errText(r), !r.ok);
     }
+    if (act === 'confirm-new') {
+      const ids = b.dataset.ids.split(',').map(Number);
+      const ok = await GOM.confirm(`Confirm ${ids.length} new request${ids.length === 1 ? '' : 's'} in ${s.itemTitle} — Set ${s.number}?\n\nThe set is already secured, so each becomes a confirmed claim and what the person owes starts to count (any credit they hold is used first). They're emailed if they've asked for that.`, { ok: 'Confirm', cancel: 'Not yet' });
+      if (!ok) return;
+      const r = await api('POST', '/api/admin/claims/secure', { claimIds: ids });
+      await render(root); GOM.refreshBadges();
+      return GOM.toast(r.ok ? `Confirmed ${r.json.secured} claim${r.json.secured === 1 ? '' : 's'}.${r.json.skippedTbc ? ` ${r.json.skippedTbc} left (price still TBC).` : ''}${r.json.skippedCancel ? ` ${r.json.skippedCancel} left (they asked to cancel).` : ''}` : errText(r), !r.ok);
+    }
     if (act === 'cancel-set') {
       const held = s.parts.filter((p) => p.handle).length;
       const ok = await GOM.confirm(`Cancel ${s.itemTitle} — Set ${s.number}?\n\nAll ${held} claim${held === 1 ? '' : 's'} in it are cancelled. Anything already paid goes back to each person as credit (unless their handle is blocked), and the parts become free for others.`, { ok: 'Cancel the set', cancel: 'Keep it' });
@@ -127,7 +138,8 @@
 
   GOM.registerTab({
     id: 'sets', label: 'Sets',
-    badgeCount: async () => ((await api('GET', '/api/admin/sets?decision=none')).json?.sets || []).length + ((await api('GET', '/api/admin/fixed-requests')).json?.requests || []).length,
+    badgeCount: async () => ((await api('GET', '/api/admin/sets?decision=none')).json?.sets || []).length + ((await api('GET', '/api/admin/fixed-requests')).json?.requests || []).length
+      + ((await api('GET', '/api/admin/sets?decision=secured')).json?.sets || []).reduce((n, s) => n + s.parts.filter((p) => p.status === 'requested').length, 0),
     async render(el) { await render(el); el.onclick = onClick; el.onsubmit = onSubmit; el.onchange = onChange; },
   });
 })();

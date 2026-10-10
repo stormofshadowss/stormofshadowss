@@ -180,8 +180,9 @@ test('the GOM approves: a give-up cancels the claim and returns what was paid as
   assert.equal((await app.api('GET', '/api/my/summary', undefined, ca)).json.credit, 8);
   assert.equal((await claimsOf(a))[0].status, 'cancelled');
   const ok2 = await api('POST', `/api/admin/fixed-requests/${rb}/approve`, {});
-  assert.equal(ok2.json.setNumber, 2, 'the secured Set 1 takes no new claims, so the full set goes to a new Set 2');
-  assert.equal((await claimsOf(b)).filter((x) => x.status !== 'cancelled' && !x.is_fixed).length, 4);
+  assert.equal(ok2.json.setNumber, 1, 'both regulars have left, so every part of the already-bought Set 1 is open again — the full set fills it instead of starting a Set 2');
+  const full = (await claimsOf(b)).filter((x) => x.status !== 'cancelled' && !x.is_fixed);
+  assert.equal(full.length, 4); assert.ok(full.every((x) => x.status === 'requested'), 'they wait for the GOM to confirm them (the set was already secured)');
   assert.equal((await api('POST', `/api/admin/fixed-requests/${ra}/approve`, {})).json.code, 'not_pending', 'approving twice does the work once');
   assert.deepEqual((await app.api('GET', '/api/my/fixed', undefined, ca)).json.requests.map((x) => x.status), ['approved']);
 });

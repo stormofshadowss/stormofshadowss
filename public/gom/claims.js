@@ -255,9 +255,9 @@
       ${picked.size ? bulkBar() : ''}
       ${byOrder.size ? [...byOrder.values()].map((g) => {
         const all = [...g.people.values()].flat();
-        const requested = all.filter((c) => c.status === 'requested' && !c.setId && !c.priceTbc).length;
+        const requested = all.filter((c) => c.status === 'requested' && (!c.setId || c.setDecision === 'secured') && !c.priceTbc).length;
         const tbcWaiting = all.filter((c) => c.status === 'requested' && c.priceTbc).length;
-        const setWaiting = all.filter((c) => c.status === 'requested' && c.setId).length;
+        const setWaiting = all.filter((c) => c.status === 'requested' && c.setId && c.setDecision !== 'secured').length;
         return `<div class="card"><div class="row"><div><h2 style="margin:0">${esc(g.title)}</h2><div class="sub">${all.length} claim${all.length === 1 ? '' : 's'} · ${requested} waiting to be secured${tbcWaiting ? ` · ${tbcWaiting} waiting for a price (TBC)` : ''}${setWaiting ? ` · ${setWaiting} set part${setWaiting === 1 ? '' : 's'} waiting for their set (see the Sets tab)` : ''}</div></div>
           ${requested && g.id ? `<button data-act="secure" data-id="${g.id}" data-n="${requested}" data-title="${esc(g.title)}">Secure all requested (${requested})</button>` : ''}</div>
           ${pickRow(g)}${view === 'item' ? itemsBlock(g) : peopleBlock(g)}</div>`;

@@ -165,16 +165,19 @@ test('securing an ordinary set with parts still open is allowed (the GOM decides
   assert.ok(after.parts.some((p) => p.handle === null), 'some parts are still open');
 });
 
-test('new claims never join a secured set — they go to the next one', async () => {
-  const set = (await api('POST', `/api/admin/orders/${w.order}/items`, { type: 'set', title: 'Skip secured', price: 3, members: ['U', 'V'] })).json.id;
+test('new claims fill an OPEN spot in a secured set (staying requested) before a new set is started; once that set is full they go to the next one', async () => {
+  const set = (await api('POST', `/api/admin/orders/${w.order}/items`, { type: 'set', title: 'Fill secured', price: 3, members: ['U', 'V'] })).json.id;
   await claimSet(fresh('k'), set, [['U']]);
   const [s1] = await sets(set);
   await api('POST', `/api/admin/sets/${s1.id}/secure`, {});
-  const r = await claimSet(fresh('k'), set, [['V']]);                              // V is free in Set 1, but Set 1 is secured
-  assert.equal(r.json.placements[0].setNumber, 2);
+  const h = fresh('k'); const r = await claimSet(h, set, [['V']]);                    // V is free in Set 1, which is secured: the set is bought, so the spot is real
+  assert.equal(r.json.placements[0].setNumber, 1, 'it fills the open spot instead of starting Set 2');
+  assert.equal((await claimsOf(h)).find((c) => c.label.startsWith('Fill secured')).status, 'requested', 'and waits for the GOM to confirm it');
+  const r2 = await claimSet(fresh('k'), set, [['V']]);                                // Set 1 is full now
+  assert.equal(r2.json.placements[0].setNumber, 2);
 });
 
-test('the generic "secure" and a hand-confirm never touch set parts — only the Sets screen does', async () => {
+test('the generic "secure" and a hand-confirm never touch the parts of a set still waiting for a decision — only the Sets screen does', async () => {
   const h = fresh('gen');
   await claimSet(h, P, [['C']]);
   await app.api('POST', '/api/claims', { handle: h, lines: [{ itemId: w.keyring }] });

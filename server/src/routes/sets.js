@@ -1,3 +1,4 @@
+import { lockItemOfSet } from '../lib/sets.js';
 import { z } from 'zod';
 import { wrap } from '../lib/http.js';
 import { requireAdmin, audit } from '../auth.js';
@@ -45,6 +46,7 @@ export function setRoutes(app, { pool, notifier }) {
   app.post('/api/admin/sets/:id/secure', admin, wrap(async (req, res) => {
     const id = Number(req.params.id);
     const out = await withTx(pool, async (conn) => {
+      await lockItemOfSet(conn, id);
       const [[exists]] = await conn.query('SELECT id FROM item_sets WHERE id = ?', [id]);
       if (!exists) throw notFound('No such set');
       // people first (lowest id first), then the set and its claims — the same order every money flow uses
@@ -78,6 +80,7 @@ export function setRoutes(app, { pool, notifier }) {
   app.post('/api/admin/sets/:id/cancel', admin, wrap(async (req, res) => {
     const id = Number(req.params.id);
     const out = await withTx(pool, async (conn) => {
+      await lockItemOfSet(conn, id);
       const [[exists]] = await conn.query('SELECT id FROM item_sets WHERE id = ?', [id]);
       if (!exists) throw notFound('No such set');
       const [claims] = await conn.query("SELECT id, joiner_id FROM claims WHERE set_id = ? AND status <> 'cancelled' ORDER BY joiner_id, id", [id]);
@@ -101,6 +104,7 @@ export function setRoutes(app, { pool, notifier }) {
     const handle = normalizeHandle(b.handle);
     if (!isValidHandle(handle)) throw bad('That is not a valid Instagram handle');
     const out = await withTx(pool, async (conn) => {
+      await lockItemOfSet(conn, id);
       const [[s0]] = await conn.query('SELECT s.id, s.item_id FROM item_sets s WHERE s.id = ?', [id]);
       if (!s0) throw notFound('No such set');
       await conn.query('INSERT IGNORE INTO joiners (instagram_handle) VALUES (?)', [handle]);
@@ -136,6 +140,7 @@ export function setRoutes(app, { pool, notifier }) {
     const { member } = z.object({ member: z.string().min(1).max(80) }).parse(req.body);
     const id = Number(req.params.id);
     const out = await withTx(pool, async (conn) => {
+      await lockItemOfSet(conn, id);
       const [[exists]] = await conn.query('SELECT id FROM item_sets WHERE id = ?', [id]);
       if (!exists) throw notFound('No such set');
       const [who] = await conn.query("SELECT DISTINCT joiner_id FROM claims WHERE set_id = ? AND status <> 'cancelled' ORDER BY joiner_id", [id]);
@@ -169,6 +174,7 @@ export function setRoutes(app, { pool, notifier }) {
     const id = Number(req.params.id);
     const handle = normalizeHandle(b.handle);
     const out = await withTx(pool, async (conn) => {
+      await lockItemOfSet(conn, id);
       const [[exists]] = await conn.query('SELECT id FROM item_sets WHERE id = ?', [id]);
       if (!exists) throw notFound('No such set');
       const [[j]] = await conn.query('SELECT id FROM joiners WHERE instagram_handle = ?', [handle]);

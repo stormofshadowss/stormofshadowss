@@ -30,14 +30,15 @@ export function planSetPlacement(itemMembers, members, together, held) {
 
 // Applies the plan inside a transaction. The caller has already locked the item row, so only one person at a time can be
 // placed into a given item's sets — which is what stops two people taking the same part of the same set.
-// New claims only join sets the GOM hasn't yet secured or cancelled; if none have room, new sets open automatically.
+// New claims join any set that isn't cancelled — including one the GOM has already SECURED (the set is bought, so an open part in it is real and should be filled
+// before a new set is started). A claim in a secured set stays 'requested' until the GOM confirms it. If no set has room, new sets open automatically.
 export async function placeSetParts(conn, { joinerId, item, qtyByMember, together, status = 'requested', fixed = false }) {
   const [members] = await conn.query('SELECT name, price FROM item_members WHERE item_id = ? ORDER BY sort_order, id', [item.id]);
   const order = members.map((m) => m.name);
   const priceOf = Object.fromEntries(members.map((m) => [m.name, m.price ?? (item.price_tbc ? null : item.price)]));   // null = price still TBC
   const list = order.flatMap((n) => Array(qtyByMember[n] || 0).fill(n));
 
-  const [sets] = await conn.query("SELECT id, set_number FROM item_sets WHERE item_id = ? AND admin_decision = 'none' ORDER BY set_number FOR UPDATE", [item.id]);
+  const [sets] = await conn.query("SELECT id, set_number FROM item_sets WHERE item_id = ? AND admin_decision IN ('none', 'secured') ORDER BY set_number FOR UPDATE", [item.id]);
   const [taken] = sets.length ? await conn.query('SELECT set_id, member_name FROM set_slots WHERE set_id IN (?)', [sets.map((s) => s.id)]) : [[]];
   const held = sets.map((s) => taken.filter((t) => t.set_id === s.id).map((t) => t.member_name));
   const plan = planSetPlacement(order, list, together, held);
@@ -64,4 +65,11 @@ export async function placeSetParts(conn, { joinerId, item, qtyByMember, togethe
     placed.push({ claimId: c.insertId, itemId: item.id, member, setId: set.id, setNumber: set.set_number, label, price: priceOf[member] });
   }
   return placed;
+}
+
+// Every set action locks the ITEM first, then the set — the same order as placing a claim (item, then its sets). Taking them in opposite orders
+// lets a person claiming and the GOM securing, cancelling or assigning in the same set wait on each other forever.
+export async function lockItemOfSet(conn, setId) {
+  const [[s]] = await conn.query('SELECT item_id FROM item_sets WHERE id = ?', [setId]);
+  if (s) await conn.query('SELECT id FROM items WHERE id = ? FOR UPDATE', [s.item_id]);
 }

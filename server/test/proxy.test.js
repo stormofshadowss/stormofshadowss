@@ -109,7 +109,7 @@ test('a NEW secured set of an item that was logged before shows up on its own â€
   const go = await order(); const { item } = await securedSets(go, 2);
   await log([`set:${item}`]);
   assert.equal(await cand(`set:${item}`), undefined);
-  await api('POST', '/api/claims', { handle: fresh(), lines: [{ itemId: item, parts: [{ member: 'B', qty: 1 }] }] }, undefined);     // a third set opens
+  await api('POST', '/api/claims', { handle: fresh(), lines: [{ itemId: item, parts: [{ member: 'A', qty: 1 }] }] }, undefined);     // A is taken in both secured sets, so a third set opens (a B would fill an open spot in a secured set)
   const third = (await api('GET', '/api/admin/sets')).json.sets.filter((s) => s.itemId === item && s.decision === 'none');
   await api('POST', `/api/admin/sets/${third[0].id}/secure`, {});
   assert.equal((await cand(`set:${item}`)).count, 1, 'just the one that has not been paid for');

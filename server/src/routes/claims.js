@@ -133,7 +133,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
     if (req.query.status) { where.push('c.status = ?'); params.push(String(req.query.status)); }
     if (req.query.handle) { where.push('j.instagram_handle = ?'); params.push(normalizeHandle(req.query.handle)); }
     const [rows] = await pool.query(
-      `SELECT c.id, c.joiner_id AS joinerId, c.price_tbc AS priceTbc, c.label, c.status, c.pipeline, c.order_id, go.title AS orderTitle, c.set_id AS setId, c.is_direct, c.is_fixed, c.ready_to_pack_date, c.received_date, j.instagram_handle AS handle
+      `SELECT c.id, c.joiner_id AS joinerId, c.price_tbc AS priceTbc, c.label, c.status, c.pipeline, c.order_id, go.title AS orderTitle, c.set_id AS setId, (SELECT admin_decision FROM item_sets WHERE id = c.set_id) AS setDecision, c.is_direct, c.is_fixed, c.ready_to_pack_date, c.received_date, j.instagram_handle AS handle
          FROM claims c JOIN joiners j ON j.id = c.joiner_id LEFT JOIN group_orders go ON go.id = c.order_id WHERE ${where.join(' AND ')} ORDER BY j.instagram_handle, c.id LIMIT ${maxList() + 1}`, params);
     const truncated = rows.length > maxList(); if (truncated) rows.length = maxList();          // the screen says so, so nothing is ever cut off silently
     const costs = rows.length ? (await pool.query('SELECT claim_id, category, cost, paid, paid_date FROM claim_costs WHERE claim_id IN (?)', [rows.map((r) => r.id)]))[0] : [];
@@ -160,8 +160,8 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
     const b = z.object({ orderId: z.number().int().positive().optional(), claimIds: z.array(z.number().int().positive()).max(500).optional() })
       .refine((v) => v.orderId || v.claimIds?.length, 'Give an orderId or claimIds').parse(req.body);
     const out = await withTx(pool, async (conn) => {
-      // set parts are secured a whole set at a time (Sets tab), never one by one here
-      const where = ["status = 'requested'", 'set_id IS NULL']; const params = [];
+      // set parts are secured a whole set at a time (Sets tab) — except a new request that joined a set ALREADY secured, which is confirmed here like any other claim
+      const where = ["status = 'requested'", "(set_id IS NULL OR set_id IN (SELECT id FROM item_sets WHERE admin_decision = 'secured'))"]; const params = [];
       if (b.orderId) { where.push('order_id = ?'); params.push(b.orderId); }
       if (b.claimIds?.length) { where.push('id IN (?)'); params.push(b.claimIds); }
       // A claim whose price is still TBC can't be confirmed — leave those alone, and say how many.
@@ -202,7 +202,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
       if (!c) throw notFound('No such claim');
       if (b.status === 'confirmed' && (await conn.query("SELECT 1 FROM cancel_requests WHERE claim_id = ? AND status = 'pending' LIMIT 1", [id]))[0].length) throw conflict('The person has asked to cancel that claim — answer the request first (top of the Claims tab).', 'cancel_pending');
       if (b.status === 'confirmed' && c.price_tbc) throw conflict("That claim's price is still TBC — set the item's price first, then secure it.", 'price_tbc');
-      if (b.status === 'confirmed' && c.set_id) throw bad('That claim is part of a member set — secure the whole set instead.', 'set_part');
+      if (b.status === 'confirmed' && c.set_id && (await conn.query("SELECT admin_decision FROM item_sets WHERE id = ?", [c.set_id]))[0][0]?.admin_decision !== 'secured') throw bad('That claim is part of a member set — secure the whole set instead.', 'set_part');
       for (const [cat, v] of Object.entries(b.costs || {})) if (v) await setCost(conn, id, cat, v);
       const set = []; const vals = [];
       if (b.pipeline) {

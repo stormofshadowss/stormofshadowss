@@ -23,17 +23,30 @@
     } else parts.forEach((m) => place([m]));
     return out;
   }
+  // ── open spots: where a part would go, and a grid of the sets (a set the GOM has already secured still has real open spots) ──
+  const candidateSets = (it) => it.sets.filter((s) => s.decision !== 'cancelled');             // the same sets the server places into
+  const openIn = (it, name) => candidateSets(it).filter((s) => !s.taken.includes(name)).map((s) => s.number);
+  const spotText = (nums) => (nums.length ? `open in Set ${nums.slice(0, 3).join(', ')}${nums.length > 3 ? ` +${nums.length - 3} more` : ''}` : 'next one starts a new set');
+  const openGrids = new Set();                                                                  // item ids whose grid is open (the page redraws on every click)
+  function setGrid(it) {
+    const cand = candidateSets(it); if (!cand.length) return '';
+    const names = it.members.map((m) => m.name), room = cand.filter((x) => names.some((n) => !x.taken.includes(n))), rows = room.slice(0, 20), full = cand.length - room.length;
+    return `<details class="setgrid" data-setgrid="${it.id}" style="margin-top:10px" ${openGrids.has(it.id) ? 'open' : ''}><summary>See where the open spots are (${room.length} set${room.length === 1 ? '' : 's'} with room)</summary>
+      ${room.length ? `<div class="scroll"><table class="grid"><thead><tr><th>Set</th>${names.map((n) => `<th>${esc(n)}</th>`).join('')}</tr></thead><tbody>${rows.map((x) => `<tr data-set="${x.number}"><td>Set ${x.number}${x.decision === 'secured' ? ' <span class="pill ok">secured</span>' : ''}</td>${names.map((n) => (x.taken.includes(n) ? '<td class="sub">taken</td>' : '<td><strong>open</strong></td>')).join('')}</tr>`).join('')}</tbody></table></div>` : ''}
+      ${room.length > rows.length ? `<p class="sub">…and ${room.length - rows.length} more sets with room.</p>` : ''}${full ? `<p class="sub">${full} full set${full === 1 ? '' : 's'} not shown.</p>` : ''}
+      <p class="sub">A part you claim goes in the earliest set where it's open. Sets marked <em>secured</em> are already bought — a spot there is confirmed by the GOM after you claim it.</p></details>`;
+  }
   function placementText(it) {
     const lines = basket.filter((l) => l.itemId === it.id);
     const parts = it.members.map((m) => m.name).flatMap((n) => Array(lines.filter((l) => l.member === n).reduce((s, l) => s + l.qty, 0)).fill(n));
     if (!parts.length) return '';
-    const open = it.sets.filter((s) => s.decision === 'none');
+    const open = candidateSets(it);
     const maxAll = Math.max(0, ...it.sets.map((s) => s.number));
     const plan = planSet(it.members.map((m) => m.name), parts, !!together[it.id] && parts.length > 1, open.map((s) => s.taken));
     const bySet = {}; plan.forEach((p) => { (bySet[p.setIdx] = bySet[p.setIdx] || []).push(p.member); });
     return Object.keys(bySet).map(Number).sort((a, b) => a - b).map((i) => {
       const fresh = i >= open.length;
-      return `Set ${fresh ? maxAll + (i - open.length) + 1 : open[i].number}${fresh ? ' (new set)' : ''}: ${bySet[i].map(esc).join(', ')}`;
+      return `Set ${fresh ? maxAll + (i - open.length) + 1 : open[i].number}${fresh ? ' (new set)' : open[i].decision === 'secured' ? ' (already secured — the GOM confirms yours)' : ''}: ${bySet[i].map(esc).join(', ')}`;
     }).join(' · ');
   }
   const lineKey = (itemId, member, variant) => `${itemId}|${member || ''}|${variant || ''}`;
@@ -149,7 +162,8 @@
       const summary = it.members.filter((m) => mine.some((l) => l.member === m.name)).map((m) => { const q = mine.find((l) => l.member === m.name).qty; return q > 1 ? `${q} × ${esc(m.name)}` : esc(m.name); }).join(', ');
       return `<div class="card"><div class="row"><div><strong>${esc(it.title)}</strong><div class="sub">${it.wholeSetPrice == null ? 'Price TBC' : `${money(it.wholeSetPrice)} for the whole set`}${it.requiresFullSet ? ' · <strong>every part must be claimed for it to go ahead</strong>' : ''}</div></div>${meta}</div>
         ${d}<p class="sub">Press + for each part you want — you can take more than one of the same part, and each goes in a different set. If every existing set already has a part, a new set opens for you.</p>
-        <div class="opts">${it.members.map((m) => tile(it, m.name, `${priceText(m.price)} · ${it.partsClaimed[m.name] || 0} claimed`, closed)).join('')}</div>
+        <div class="opts">${it.members.map((m) => tile(it, m.name, `${priceText(m.price)} · ${it.partsClaimed[m.name] || 0} claimed${closed ? '' : ` · <span data-spot>${spotText(openIn(it, m.name))}</span>`}`, closed)).join('')}</div>
+        ${closed ? '' : setGrid(it)}
         ${closed ? '' : `<div class="btn-row"><button class="secondary" data-act="whole" data-item="${it.id}">Claim the whole set (${it.wholeSetPrice == null ? 'price TBC' : money(it.wholeSetPrice)}, all in one set)</button></div>`}
         ${count ? `<div class="sub" style="margin-top:10px"><strong>Selected:</strong> ${summary} — ${totalText(mine)}</div>
           <div class="sub"><strong>Where they'll go:</strong> ${placementText(it)} <em>(this can shift if someone else claims first)</em></div>
@@ -225,6 +239,7 @@
     home();
   }
 
+  view.addEventListener('toggle', (e) => { const d = e.target; if (d.dataset && d.dataset.setgrid) { const id = Number(d.dataset.setgrid); d.open ? openGrids.add(id) : openGrids.delete(id); } }, true);
   view.addEventListener('click', (e) => {
     const b = e.target.closest('[data-act]'); if (!b) return;
     if (b.dataset.act === 'inc' || b.dataset.act === 'dec') {

@@ -129,15 +129,16 @@ test('a stale page: acting on a set that was already decided elsewhere is explai
   p.close();
 });
 
-test('the Claims tab: set parts wait for their set, so they are not counted in "Secure all requested", and are labelled', async () => {
-  await claim('hal_s', P, 'A');
+test('the Claims tab: parts of a set still waiting for a decision wait for their set, so they are not counted in "Secure all requested", and are labelled', async () => {
+  const waitingSet = (await api('POST', `/api/admin/orders/${w.order}/items`, { type: 'set', title: 'Photocard set (waiting)', price: 8, members: ['A', 'B', 'C'] })).json.id;      // nothing secured here yet
+  await claim('hal_s', waitingSet, 'A');
   await api('POST', '/api/claims', { handle: 'hal_s', lines: [{ itemId: w.keyring }] }, undefined);
   const p = await gomPage(app, admin);
   await p.click(p.byText('#tabs button', 'Claims'));
   const text = p.text(p.byText('#tabBody .card', 'Run It GO'));
   assert.match(text, /set parts? waiting for their set \(see the Sets tab\)/);
-  const waitingNonSet = (await api('GET', '/api/admin/claims?status=requested')).json.claims.filter((c) => !c.setId).length;
-  assert.match(text, new RegExp(`Secure all requested \\(${waitingNonSet}\\)`), 'only ordinary claims are counted');
+  const secureable = (await api('GET', '/api/admin/claims?status=requested')).json.claims.filter((c) => !c.setId || c.setDecision === 'secured').length;
+  assert.match(text, new RegExp(`Secure all requested \\(${secureable}\\)`), 'ordinary claims — and requests in sets that are already secured — are counted; parts of a set still waiting are not');
   await p.click(p.q('[data-buyer="hal_s"] [data-act="toggle"]'));
   assert.match(p.text(p.byText('[data-buyer="hal_s"] tr', 'Photocard set')), /set part/);
   await p.click(p.q('[data-act="secure"]')); await press(p, 'Secure them');
