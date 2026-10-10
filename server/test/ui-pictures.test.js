@@ -94,7 +94,7 @@ test('GOM: a group order can have a cover picture, and artist groups have their 
   await choose(p, ctl, await png('#c33'));
   assert.ok((await api('GET', '/api/admin/orders')).json.orders.find((o) => o.id === orderId).cover);
   const details = p.q('#groupPics');
-  assert.match(p.text(p.q('summary', details)), /Artist \/ group pictures \(\d+\)/);
+  assert.match(p.text(p.q('summary', details)), /Artist \/ group pictures and type \(\d+\)/);
   const gctl = p.q(`.picctl[data-pic-kind="group"][data-pic-id="${groupId}"]`, details);
   assert.ok(gctl); await choose(p, gctl, await png('#3a3'));
   assert.ok((await api('GET', '/api/admin/groups')).json.groups.find((g) => g.id === groupId).cover);
@@ -145,10 +145,10 @@ test('joiners see the order\'s cover as a banner, small covers on order cards, a
   const cover = (await setPic('order', orderId, '#c33')).image, artist = (await setPic('group', groupId, '#3a3')).image;
   const p = await openPage(app, '/');
   await new Promise((r) => setTimeout(r, 80)); await p.settle();
-  assert.equal(p.q(`a.gocard[data-group="${groupId}"] img.thumb.sm`).getAttribute('src'), artist.thumb, 'the artist\'s picture is on its card on the home page');
+  assert.equal(p.q(`a.avatar-link[data-group="${groupId}"] .avatar-ring img`).getAttribute('src'), artist.thumb, 'the artist\'s picture is its round avatar on the home page');
   await go(p, `#/group/${groupId}`);
-  assert.equal(p.q(`a.gocard[href="#/order/${orderId}"] img.thumb.sm`).getAttribute('src'), cover.thumb, 'the order\'s cover is on its card on the group page');
-  assert.equal(p.q('h1 img.avatar').getAttribute('src'), artist.thumb, 'and the artist\'s picture sits beside the group\'s name');
+  assert.equal(p.q(`a.ocard[href="#/order/${orderId}"] img.cover`).getAttribute('src'), cover.thumb, 'the order\'s cover is the picture on its card on the group page');
+  assert.equal(p.q('.avatar-ring img').getAttribute('src'), artist.thumb, 'and the artist\'s picture sits beside the group\'s name');
   await go(p, `#/order/${orderId}`);
   assert.equal(p.q('#view img.banner').getAttribute('src'), cover.url);
   assert.ok(p.q('#view img.banner').getAttribute('alt').length > 0);

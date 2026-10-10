@@ -34,9 +34,9 @@ test('home: just the groups that have orders open (the orders live on each group
   const text = p.text(p.q('#view'));
   assert.match(text, /Group orders/);
   assert.match(text, /ATE1EY1 open orderStray Kids1 open order/s, 'one card per group, with how many orders are open');
-  assert.doesNotMatch(text, /Run It GO|Debut GO/, 'the orders themselves are not on the home page');
+  assert.match(text, /Run It GO/, 'open orders are picture cards on the home page now (Open now)'); assert.doesNotMatch(text, /Old GO|Off-site Weverse/);
   assert.ok(!text.includes('Off-site Weverse'), 'a private order is nowhere on the page');
-  await p.click(p.q('a.gocard[data-group]:nth-of-type(2)')); await new Promise((r) => setTimeout(r, 60)); await p.settle();
+  await p.click(p.q('a.avatar-link[data-group]:nth-of-type(2)')); await new Promise((r) => setTimeout(r, 60)); await p.settle();
   const g = p.text(p.q('#view'));
   assert.match(g, /Stray Kids.*Run It GO.*closes 05\/01\/2099.*pay by 10\/01\/2099/s, 'UK dates, on the group\'s page');
   assert.doesNotMatch(g.replace(/Closed orders.*/, ''), /Off-site Weverse|Old GO/, 'private and closed orders are not in the open list');

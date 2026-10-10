@@ -20,7 +20,7 @@ async function proxyIdFor(conn, name) {
 
 async function loadOrders(pool, whereSql, params, { admin }) {
   const [orders] = await pool.query(
-    `SELECT go.id, go.title, go.status, go.is_private, go.is_test, go.cancelled_at, go.close_date, go.payment_deadline, go.expected_ship_date,
+    `SELECT go.id, go.title, go.status, go.is_private, go.is_test, go.cancelled_at, go.created_at, go.close_date, go.payment_deadline, go.expected_ship_date,
             go.group_id, ag.name AS group_name, p.name AS proxy_name, oi.filename AS cover_file, oi.width AS cover_w, oi.height AS cover_h, gi.filename AS gcover_file, gi.width AS gcover_w, gi.height AS gcover_h
        FROM group_orders go JOIN artist_groups ag ON ag.id = go.group_id LEFT JOIN proxies p ON p.id = go.proxy_id
        LEFT JOIN images oi ON oi.id = go.cover_image_id LEFT JOIN images gi ON gi.id = ag.cover_image_id
@@ -40,7 +40,7 @@ async function loadOrders(pool, whereSql, params, { admin }) {
   const [setRows] = setItemIds.length ? await pool.query('SELECT id, item_id, set_number, admin_decision FROM item_sets WHERE item_id IN (?) ORDER BY set_number', [setItemIds]) : [[]];
   const [takenRows] = setRows.length ? await pool.query('SELECT set_id, member_name FROM set_slots WHERE set_id IN (?)', [setRows.map((s) => s.id)]) : [[]];
   return orders.map((o) => ({
-    id: o.id, title: o.title, groupId: o.group_id, group: o.group_name, cover: imageOut(o.cover_file, o.cover_w, o.cover_h), groupCover: imageOut(o.gcover_file, o.gcover_w, o.gcover_h), status: o.status, isPrivate: !!o.is_private, cancelled: !!o.cancelled_at,
+    id: o.id, title: o.title, groupId: o.group_id, group: o.group_name, cover: imageOut(o.cover_file, o.cover_w, o.cover_h), groupCover: imageOut(o.gcover_file, o.gcover_w, o.gcover_h), status: o.status, isPrivate: !!o.is_private, cancelled: !!o.cancelled_at, createdAt: o.created_at ? new Date(o.created_at).toISOString() : null,
     closeDate: o.close_date, paymentDeadline: o.payment_deadline, expectedShipDate: o.expected_ship_date,
     ...(admin ? { proxy: o.proxy_name, isTest: !!o.is_test } : {}),
     items: items.filter((i) => i.order_id === o.id).map((i) => {
@@ -117,11 +117,11 @@ export function catalogRoutes(app, { pool, cfg }) {
   // Each artist/group that is shown on the site, with how many public group orders it has open or closed (a group with none still has its page).
   app.get('/api/groups', wrap(async (req, res) => {
     const [rows] = await pool.query(
-      `SELECT g.id, g.name, im.filename AS file, im.width AS w, im.height AS h,
+      `SELECT g.id, g.name, g.kind, im.filename AS file, im.width AS w, im.height AS h,
               (SELECT COUNT(*) FROM group_orders go WHERE go.group_id = g.id AND go.is_private = 0 AND go.cancelled_at IS NULL AND go.status = 'open') AS open_orders,
               (SELECT COUNT(*) FROM group_orders go WHERE go.group_id = g.id AND go.is_private = 0 AND go.cancelled_at IS NULL AND go.status <> 'open') AS closed_orders
          FROM artist_groups g LEFT JOIN images im ON im.id = g.cover_image_id WHERE g.is_hidden = 0 ORDER BY g.sort_order, g.name`);
-    res.json({ groups: rows.map((g) => ({ id: g.id, name: g.name, cover: imageOut(g.file, g.w, g.h), openOrders: Number(g.open_orders), closedOrders: Number(g.closed_orders) })) });
+    res.json({ groups: rows.map((g) => ({ id: g.id, name: g.name, kind: g.kind || null, cover: imageOut(g.file, g.w, g.h), openOrders: Number(g.open_orders), closedOrders: Number(g.closed_orders) })) });
   }));
 
   app.get('/api/orders', wrap(async (req, res) => {
@@ -135,9 +135,9 @@ export function catalogRoutes(app, { pool, cfg }) {
 
   // ── GOM side ──
   app.get('/api/admin/groups', requireAdmin, wrap(async (req, res) => {
-    const [groups] = await pool.query('SELECT g.id, g.name, g.is_hidden AS hidden, im.filename AS file, im.width AS w, im.height AS h FROM artist_groups g LEFT JOIN images im ON im.id = g.cover_image_id ORDER BY g.sort_order, g.name');
+    const [groups] = await pool.query('SELECT g.id, g.name, g.kind, g.is_hidden AS hidden, im.filename AS file, im.width AS w, im.height AS h FROM artist_groups g LEFT JOIN images im ON im.id = g.cover_image_id ORDER BY g.sort_order, g.name');
     const [members] = await pool.query('SELECT group_id, name FROM group_members ORDER BY sort_order, id');
-    res.json({ groups: groups.map((g) => ({ id: g.id, name: g.name, cover: imageOut(g.file, g.w, g.h), hidden: !!g.hidden, members: members.filter((m) => m.group_id === g.id).map((m) => m.name) })) });
+    res.json({ groups: groups.map((g) => ({ id: g.id, name: g.name, kind: g.kind || null, cover: imageOut(g.file, g.w, g.h), hidden: !!g.hidden, members: members.filter((m) => m.group_id === g.id).map((m) => m.name) })) });
   }));
 
   app.get('/api/admin/orders', requireAdmin, wrap(async (req, res) => {
@@ -154,10 +154,17 @@ export function catalogRoutes(app, { pool, cfg }) {
     res.json({ ok: true });
   }));
 
+  const KINDS = ['boy band', 'girl group', 'solo', 'duo'];
+  app.patch('/api/admin/groups/:id', requireAdmin, wrap(async (req, res) => {
+    const b = z.object({ kind: z.enum(KINDS).nullable() }).parse(req.body);
+    const [r] = await pool.query('UPDATE artist_groups SET kind = ? WHERE id = ?', [b.kind, Number(req.params.id)]);
+    if (!r.affectedRows) throw notFound('No such group');
+    res.json({ ok: true, kind: b.kind });
+  }));
   app.post('/api/admin/groups', requireAdmin, wrap(async (req, res) => {
-    const b = z.object({ name: z.string().trim().min(1).max(80), members: z.array(z.string().trim().min(1).max(80)).max(30).optional(), hidden: z.boolean().optional() }).parse(req.body);
+    const b = z.object({ name: z.string().trim().min(1).max(80), members: z.array(z.string().trim().min(1).max(80)).max(30).optional(), hidden: z.boolean().optional(), kind: z.enum(KINDS).optional() }).parse(req.body);
     const id = await withTx(pool, async (conn) => {
-      const [r] = await conn.query('INSERT INTO artist_groups (name, is_hidden) VALUES (?, ?)', [b.name, b.hidden ? 1 : 0]);
+      const [r] = await conn.query('INSERT INTO artist_groups (name, is_hidden, kind) VALUES (?, ?, ?)', [b.name, b.hidden ? 1 : 0, b.kind || null]);
       for (const [i, m] of (b.members || []).entries()) await conn.query('INSERT INTO group_members (group_id, name, sort_order) VALUES (?,?,?)', [r.insertId, m, i]);
       return r.insertId;
     });

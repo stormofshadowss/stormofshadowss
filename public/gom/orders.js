@@ -147,7 +147,7 @@
     root.innerHTML = `
       <div class="row" style="margin:18px 0 10px"><h1 style="margin:0">Group orders</h1>
         <button data-act="toggle-new" class="${showNew ? 'secondary' : ''}">${showNew ? 'Close' : '＋ New group order'}</button></div>
-      <details class="card" id="groupPics"><summary>Artist / group pictures (${groups.length})</summary>${groups.length ? groups.map((g) => GOM.pictureControl('group', g.id, g.cover, g.name)).join('') : '<p class="muted">No artist groups yet — one is created with your first group order.</p>'}</details>
+      <details class="card" id="groupPics"><summary>Artist / group pictures and type (${groups.length})</summary>${groups.length ? '<p class="sub" style="margin:0 0 6px">The type is what the shop\'s filter chips (Boy bands, Girl groups…) use. Leave it blank and the group only shows under All.</p>' + groups.map((g) => `<div data-group-row="${g.id}">${GOM.pictureControl('group', g.id, g.cover, g.name)}<label class="sub" style="display:inline-block; margin:0 8px 0 0">Type</label><select data-kind-for="${g.id}" style="width:auto; display:inline-block"><option value="">— none —</option>${[['boy band', 'Boy band'], ['girl group', 'Girl group'], ['solo', 'Solo'], ['duo', 'Duo']].map(([v, l]) => `<option value="${v}" ${g.kind === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>`).join('') : '<p class="muted">No artist groups yet — one is created with your first group order.</p>'}</details>
       <datalist id="proxyList">${proxies.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>
       ${showNew ? `<div class="card"><h2>New group order</h2>${orderForm(null)}</div>` : ''}
       ${cancelPanel()}
@@ -328,6 +328,12 @@
   }
 
   async function onChange(e) {
+    if (e.target.dataset.kindFor) {                                                      // a group's type (Boy band / Girl group / Solo / Duo)
+      const r = await api('PATCH', `/api/admin/groups/${e.target.dataset.kindFor}`, { kind: e.target.value || null });
+      if (!r.ok) return GOM.toast(errText(r), true);
+      const g = groups.find((x) => x.id === Number(e.target.dataset.kindFor)); if (g) g.kind = e.target.value || null;
+      return GOM.toast('Saved.');
+    }
     if (e.target.name === 'type' && e.target.form) syncTypeFields(e.target.form);
   }
 

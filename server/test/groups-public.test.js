@@ -17,7 +17,7 @@ const find = async (id) => (await groups()).find((g) => g.id === id);
 test('anyone can read it (no sign-in); each group has its id, name, cover and counts of open and closed orders', async () => {
   const r = await fetch(`${app.base}/api/groups`); assert.equal(r.status, 200);
   const g = await group('Counting Crew'); await order(g); await order(g); await order(g, { status: 'closed' });
-  assert.deepEqual(await find(g), { id: g, name: 'Counting Crew', cover: null, openOrders: 2, closedOrders: 1 });
+  assert.deepEqual(await find(g), { id: g, name: 'Counting Crew', kind: null, cover: null, openOrders: 2, closedOrders: 1 });
 });
 
 test('a brand-new group appears straight away with no orders (so its page exists as soon as it is created); a cover picture shows', async () => {

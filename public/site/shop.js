@@ -62,6 +62,7 @@
   function drawHeader() {
     $('#hdr').innerHTML = SITE.header('shop');
     $('#basketPill').innerHTML = count() ? `<a href="#/basket" class="pillbtn">Basket (${count()}) · ${totalText()}</a>` : '';
+    if (SITE.refreshBottomBar) SITE.refreshBottomBar();
   }
 
   async function load() {
@@ -148,9 +149,14 @@
   const sizePill = (it, v, closed) => `<div class="sizepill${qtyOf(it.id, null, v) ? ' on' : ''}" data-opt="${esc(v)}"><span class="sz">Size ${esc(v)}</span> ${stepper(it.id, null, v, closed)}</div>`;
 
   function itemBlock(o, it) {
-    const html = itemBlockRaw(o, it);
-    return it.image ? html.replace('<div class="card">', `<div class="card">${picbox(it.image, it.title)}`) : html;
+    const html = itemBlockRaw(o, it);                                                              // one <div class="card">…</div>
+    if (!html.startsWith('<div class="card">')) return html;
+    const wide = it.type !== 'normal' || /class="(opts|pills)"/.test(html);                      // sets, member options and sizes need room; a simple item is a small card
+    const pic = it.image ? picbox(it.image, it.title) : `<div class="picbox ph" data-i="${esc(SITE.initials(it.title))}" style="--h:${SITE.hue(it.title)}" aria-hidden="true"></div>`;
+    return `<div class="card item${wide ? ' wide' : ''}" data-item-card="${it.id}">${pic}<div class="item-body">${html.slice('<div class="card">'.length, html.lastIndexOf('</div>'))}</div></div>`;
   }
+  // 1 Choose · 2 Check · 3 Claim — where you are in claiming
+  const stepsHtml = (n) => `<ol class="steps" aria-label="Claiming steps">${['Choose', 'Check', 'Claim'].map((l, i) => `<li class="${i + 1 === n ? 'on' : i + 1 < n ? 'done' : ''}" ${i + 1 === n ? 'aria-current="step"' : ''}><span class="stepno">${i + 1}</span>${l}</li>`).join('')}</ol>`;
   function itemBlockRaw(o, it) {
     const closed = o.status !== 'open';
     const d = it.description ? `<p class="itemdesc">${esc(it.description)}</p>` : '';   // the GOM's own words; line breaks kept, nothing run
@@ -162,7 +168,7 @@
       const summary = it.members.filter((m) => mine.some((l) => l.member === m.name)).map((m) => { const q = mine.find((l) => l.member === m.name).qty; return q > 1 ? `${q} × ${esc(m.name)}` : esc(m.name); }).join(', ');
       return `<div class="card"><div class="row"><div><strong>${esc(it.title)}</strong><div class="sub">${it.wholeSetPrice == null ? 'Price TBC' : `${money(it.wholeSetPrice)} for the whole set`}${it.requiresFullSet ? ' · <strong>every part must be claimed for it to go ahead</strong>' : ''}</div></div>${meta}</div>
         ${d}<p class="sub">Press + for each part you want — you can take more than one of the same part, and each goes in a different set. If every existing set already has a part, a new set opens for you.</p>
-        <div class="opts">${it.members.map((m) => tile(it, m.name, `${priceText(m.price)} · ${it.partsClaimed[m.name] || 0} claimed${closed ? '' : ` · <span data-spot>${spotText(openIn(it, m.name))}</span>`}`, closed)).join('')}</div>
+        <div class="opts">${it.members.map((m) => tile(it, m.name, `${priceText(m.price)} · ${it.partsClaimed[m.name] || 0} claimed${closed || !candidateSets(it).length ? '' : ` · <span data-spot>${spotText(openIn(it, m.name))}</span>`}`, closed)).join('')}</div>
         ${closed ? '' : setGrid(it)}
         ${closed ? '' : `<div class="btn-row"><button class="secondary" data-act="whole" data-item="${it.id}">Claim the whole set (${it.wholeSetPrice == null ? 'price TBC' : money(it.wholeSetPrice)}, all in one set)</button></div>`}
         ${count ? `<div class="sub" style="margin-top:10px"><strong>Selected:</strong> ${summary} — ${totalText(mine)}</div>
@@ -188,20 +194,21 @@
       <h1 style="margin:4px 0">${esc(o.title)}</h1>
       <p class="muted">${esc(o.group)}${o.closeDate ? ` · closes ${fmtDate(o.closeDate)}` : ''}${o.paymentDeadline ? ` · payment due ${fmtDate(o.paymentDeadline)}` : ''}</p>
       ${o.status !== 'open' ? '<div class="msg">This group order has closed, so it can\'t be claimed any more.</div>' : ''}
-      ${o.items.length ? o.items.map((it) => itemBlock(o, it)).join('') : '<div class="card"><p class="muted">No items have been added yet.</p></div>'}
+      ${o.status === 'open' ? stepsHtml(1) : ''}
+      ${o.items.length ? `<div class="itemgrid">${o.items.map((it) => itemBlock(o, it)).join('')}</div>` : '<div class="card"><p class="muted">No items have been added yet.</p></div>'}
       ${count() ? `<p><a class="pillbtn" href="#/basket">Review basket (${count()}) · ${totalText()}</a></p>` : ''}`;
   }
 
   function basketPage(message) {
     const handle = store.get('sos_handle', '');
-    view.innerHTML = `<div class="crumb"><a href="#/">← Keep browsing</a></div><h1 style="margin:4px 0 10px">Your selections</h1>
+    view.innerHTML = `<div class="crumb"><a href="#/">← Keep browsing</a></div>${basket.length ? stepsHtml(2) : ''}<h1 style="margin:4px 0 10px">Your selections</h1>
       ${basket.length ? `<div class="card">${basket.map((l) => `<div class="itemrow"><div class="grow">${esc(l.label)}<div class="sub">${esc(l.orderTitle)} · ${eachText(l.price)}</div></div>
         <span class="stepper">${l.shopId ? `<button class="secondary" data-act="shopdec" data-shop="${l.shopId}" aria-label="One fewer">−</button><span>${l.qty}</span><button data-act="shopinc" data-shop="${l.shopId}" ${l.qty >= (shopItems.find((x) => x.id === l.shopId)?.left ?? 0) ? 'disabled' : ''} aria-label="One more">+</button>` : `<button class="secondary" data-act="dec" data-item="${l.itemId}" ${l.member ? `data-member="${esc(l.member)}"` : ''} ${l.variant ? `data-variant="${esc(l.variant)}"` : ''} aria-label="One fewer">−</button><span>${l.qty}</span><button data-act="inc" data-item="${l.itemId}" ${l.member ? `data-member="${esc(l.member)}"` : ''} ${l.variant ? `data-variant="${esc(l.variant)}"` : ''} ${l.qty >= MAX_QTY ? 'disabled' : ''} aria-label="One more">+</button>`}</span>
         <strong class="nowrap" style="min-width:70px; text-align:right">${l.price == null ? 'TBC' : money(l.qty * l.price)}</strong></div>`).join('')}
         <div class="itemrow" style="font-weight:700"><div class="grow">Total</div><div>${totalText()}</div></div>
         ${tbcN(basket) ? `<p class="sub" style="margin:6px 0 0"><strong>Price TBC:</strong> the price of ${tbcN(basket) === 1 ? 'one item is' : `${tbcN(basket)} items are`} still to be confirmed. You won't owe anything for ${tbcN(basket) === 1 ? 'it' : 'them'} until the price is set and the GOM confirms your claim.</p>` : ''}
         ${[...new Set(basket.filter((l) => l.isSet).map((l) => l.itemId))].map((id) => { const f = findItem(id); return f ? `<div class="sub" style="margin-top:6px"><strong>${esc(f.item.title)} — where they'll go:</strong> ${placementText(f.item)}${together[id] ? ' <em>(kept together)</em>' : ''}</div>` : ''; }).join('')}</div>
-        <form class="card" data-form="claim"><label for="ig">Your Instagram ID</label><input id="ig" name="handle" value="${esc(handle)}" placeholder="@yourhandle" autocomplete="off" autocapitalize="none" spellcheck="false">
+        <form class="card" data-form="claim"><h2 class="stephead"><span class="stepno">3</span> Who's claiming?</h2><label for="ig">Your Instagram ID</label><input id="ig" name="handle" value="${esc(handle)}" placeholder="@yourhandle" autocomplete="off" autocapitalize="none" spellcheck="false">
         <p class="sub">No password needed. ${basket.some((l) => l.shopId) ? `Shop items are held for you straight away and you'll owe for them right away (you have ${Math.min(...basket.filter((l) => l.shopId).map((l) => l.payDays))} day${Math.min(...basket.filter((l) => l.shopId).map((l) => l.payDays)) === 1 ? '' : 's'} to pay).${basket.some((l) => !l.shopId) ? ' Group-order items are requests: nothing is owed for those until the GOM confirms them, and their price is final once they do.' : ''}` : 'These are requests: nothing is owed until the GOM confirms them, and the price is final once they do.'}</p>
         <p class="msg" data-msg ${message ? '' : 'hidden'}>${esc(message || '')}</p>
         <button type="submit">Submit claims</button></form>` : `${message ? `<div class="msg">${esc(message)}</div>` : ''}<div class="card"><p class="muted">Nothing selected yet — pick items from a group order.</p><a href="#/">Browse group orders</a></div>`}`;
@@ -220,7 +227,7 @@
     } else {
       follow = `<div class="card"><h2>See your orders</h2><p>To see your orders and pay, <a href="/my.html">sign in with your email</a>.</p></div>`;
     }
-    view.innerHTML = `<h1 style="margin:18px 0 6px">Claims submitted</h1>
+    view.innerHTML = `${stepsHtml(4)}<h1 style="margin:8px 0 6px">Claims submitted</h1>
       <div class="card"><p>Thanks, <strong>@${esc(h.name)}</strong>! Your claims are in:</p><ul style="margin:0; padding-left:20px">${d.lines.map((l) => `<li>${l.qty} × ${esc(l.label)} <span class="sub">${l.price == null ? 'Price TBC' : money(l.qty * l.price)}</span></li>`).join('')}</ul>
       ${d.placements.length ? `<p class="sub" style="margin:10px 0 0"><strong>Where your set parts went:</strong> ${d.placements.map((x) => `${esc(x.member)} — Set ${x.setNumber}`).join(' · ')}</p>` : ''}
       <p class="sub" style="margin-bottom:0">Total ${totalText(d.lines)}.${tbcN(d.lines) ? ' Items marked Price TBC cost nothing until their price is confirmed — you\'ll see it in My orders once it is.' : ''} ${d.lines.some((l) => l.shopId) ? `Your shop items are held for you — pay within ${Math.min(...d.lines.filter((l) => l.shopId).map((l) => l.payDays))} day${Math.min(...d.lines.filter((l) => l.shopId).map((l) => l.payDays)) === 1 ? '' : 's'} (you'll find how in My orders).${d.lines.some((l) => !l.shopId) ? ' The rest are requests for now — the GOM will confirm them, then you can pay.' : ''}` : "They're requests for now — the GOM will confirm them, then you'll be able to pay."}</p></div>

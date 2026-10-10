@@ -82,7 +82,7 @@ test('the styles that make it look right are in place (box grid, pills, highligh
   assert.match(rule('.opt'), /border-radius:14px/); assert.match(rule('.opt'), /border:1\.5px solid/);
   assert.match(rule('.pills'), /display:flex/); assert.match(rule('.pills'), /flex-wrap:wrap/);
   assert.match(rule('.sizepill'), /border-radius:999px/);
-  assert.match(CSS, /\.opt\.on, \.sizepill\.on \{[^}]*border-color:var\(--accent\)/, 'a picked box or pill is highlighted in the accent colour');
+  assert.match(CSS, /\.opt\.on, \.sizepill\.on \{[^}]*border-color:var\(--accent(-ink)?\)/, 'a picked box or pill is highlighted in the accent colour');
   const min = Number(/minmax\((\d+)px/.exec(rule('.opts'))[1]);
   assert.ok(min <= 160, `boxes can fit two across on a 360px phone (min ${min}px)`);
 });

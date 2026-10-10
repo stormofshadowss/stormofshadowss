@@ -23,20 +23,21 @@ const text = (p, sel = '#view') => p.text(p.q(sel));
 const go = async (p, hash) => { if (p.window.location.hash === hash) p.window.dispatchEvent(new p.window.HashChangeEvent('hashchange')); else p.window.location.hash = hash; await sleep(70); await p.settle(); };
 const shop = async () => { const p = await openPage(app, '/'); await sleep(80); await p.settle(); return p; };
 
-test('HOME: just the groups that have orders open, each a card with how many; the orders themselves are not here; quiet, new and hidden groups are left off', async () => {
+test('HOME: just the groups that have orders open, each an avatar with how many; their open orders are cards under Open now; quiet, new and hidden groups are left off', async () => {
   const p = await shop();
-  const cards = p.qa('#groupCards a.gocard');
+  const cards = p.qa('#groupCards a.avatar-link');
   assert.deepEqual(cards.map((c) => p.text(c)), ['Ateez2 open orders', 'Stray Kids1 open order'], 'Ateez has 2 open, Stray Kids 1 (its closed and private ones are not counted)');
   assert.deepEqual(cards.map((c) => c.getAttribute('href')), [`#/group/${G.ateez}-ateez`, `#/group/${G.skz}-stray-kids`]);
   const t = text(p);
   assert.match(t, /Group orders.*Pick what you want and claim it with just your Instagram handle/s);
-  for (const hidden of ['Golden Hour', 'Run It GO', 'Quiet Crew', 'Brand New Group', 'Off-site holder', 'Hidden GO', 'Secret GO']) assert.ok(!t.includes(hidden), `${hidden} is not on the home page`);
+  for (const hidden of ['Quiet Crew', 'Brand New Group', 'Off-site holder', 'Hidden GO', 'Secret GO']) assert.ok(!t.includes(hidden), `${hidden} is not on the home page`);
+  for (const shown of ['Golden Hour', 'Run It GO']) assert.ok(p.qa('#homeOrders .ocard').some((c) => p.text(c).includes(shown)), `${shown} is an order card on the home page (Open now)`);
   assert.match(t, /Shop.*Shop — on hand now.*1 item available/s, 'the shop card is still there');
   assert.deepEqual(p.errors, []); p.close();
 });
 
 test('A GROUP PAGE: its own address, a title, tabs to jump to other groups (the current one marked), its open orders, and closed ones tucked away; private ones nowhere', async () => {
-  const p = await shop(); await p.click(p.q(`a.gocard[data-group="${G.skz}"]`)); await sleep(80); await p.settle();
+  const p = await shop(); await p.click(p.q(`a.avatar-link[data-group="${G.skz}"]`)); await sleep(80); await p.settle();
   assert.equal(p.window.location.hash, `#/group/${G.skz}-stray-kids`);
   const tabs = p.qa('#groupTabs a'); assert.deepEqual(tabs.map((t) => p.text(t)), ['Ateez', 'Stray Kids'], 'tabs for the groups with orders open');
   assert.deepEqual(tabs.map((t) => t.getAttribute('aria-current')), [null, 'page'], 'the current one is marked');
@@ -46,7 +47,7 @@ test('A GROUP PAGE: its own address, a title, tabs to jump to other groups (the 
   // jump to another group with its tab
   await p.click(p.q(`#groupTabs a[data-tab="${G.ateez}"]`)); await sleep(80); await p.settle();
   assert.equal(p.window.location.hash, `#/group/${G.ateez}-ateez`); assert.match(text(p, 'h1'), /Ateez/);
-  assert.match(text(p, '.cards'), /Ateez Photobook.*Golden Hour/s, 'newest order first'); assert.equal(p.q('details'), null, 'no closed orders: no closed section');
+  assert.match(text(p, '.ordergrid'), /Ateez Photobook.*Golden Hour/s, 'newest order first'); assert.equal(p.q('details'), null, 'no closed orders: no closed section');
   assert.equal(p.q('#groupTabs a[aria-current="page"]').dataset.tab, String(G.ateez));
   // and back to the home page
   await p.click(p.q('.crumb a')); await sleep(80); await p.settle(); assert.ok(p.q('#groupCards'));
@@ -72,12 +73,12 @@ test('THE MOMENT A QUIET GROUP OPENS AN ORDER it appears on the home page and in
   const o = (await api('POST', '/api/admin/orders', { groupId: brandNew, title: 'Newest GO' })).json.id; void o;
   const o2 = (await api('POST', '/api/admin/orders', { groupId: G.quiet, title: 'Quiet comes back' })).json.id; void o2;
   const p = await shop();
-  assert.deepEqual(p.qa('#groupCards a.gocard').map((c) => p.text(c).replace(/\d open orders?/, '')), ['Ateez', 'Newest Group', 'Quiet Crew', 'Stray Kids'], 'alphabetical, and the returning and the new group are both there');
+  assert.deepEqual(p.qa('#groupCards a.avatar-link').map((c) => p.text(c).replace(/\d open orders?/, '')), ['Ateez', 'Newest Group', 'Quiet Crew', 'Stray Kids'], 'alphabetical, and the returning and the new group are both there');
   await go(p, `#/group/${brandNew}-newest-group`); assert.match(text(p), /Newest GO/);
   assert.ok(p.qa('#groupTabs a').map((t) => p.text(t)).includes('Quiet Crew'));
   // and closing it again tucks the quiet group away
   await api('PATCH', `/api/admin/orders/${o2}`, { status: 'closed' }); await api('PATCH', `/api/admin/orders/${o}`, { status: 'closed' });
-  await go(p, '#/'); const names = p.qa('#groupCards a.gocard').map((c) => p.text(c)); assert.ok(!names.join().includes('Quiet Crew') && !names.join().includes('Newest Group'));
+  await go(p, '#/'); const names = p.qa('#groupCards a.avatar-link').map((c) => p.text(c)); assert.ok(!names.join().includes('Quiet Crew') && !names.join().includes('Newest Group'));
   p.close();
 });
 
@@ -93,7 +94,7 @@ test('ROBUST LINKS: the id decides the page (a wrong or old name in the link is 
 
 test('THE ORDER PAGE LINKS BACK TO ITS GROUP (named), not just to the home page; and the item-type pills are gone', async () => {
   const p = await shop(); await go(p, `#/group/${G.ateez}`);
-  await p.click(p.q(`a.gocard[href="#/order/${O.a1}"]`)); await sleep(70); await p.settle();
+  await p.click(p.q(`a.ocard[href="#/order/${O.a1}"]`)); await sleep(70); await p.settle();
   const back = p.q('.crumb a'); assert.equal(p.text(back), '← Ateez'); assert.equal(back.getAttribute('href'), `#/group/${G.ateez}-ateez`);
   assert.equal(p.qa('#view .pill').length, 0);
   await p.click(back); await sleep(80); await p.settle(); assert.match(text(p, 'h1'), /Ateez/);
