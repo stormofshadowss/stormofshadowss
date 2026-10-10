@@ -12,12 +12,19 @@
   let moveState = null;        // the "move to another person" panel: { handle, create, preview, previewFor, error }
   const open = new Set();      // "orderId::handle" accordions that are open
   let editing = null;          // claim id being edited
+  let view = 'person';         // "By person" or "By item" (remembered in this browser)
+  try { if (localStorage.getItem('gom.claims.view') === 'item') view = 'item'; } catch { /* private window: just don't remember */ }
+  const openGroups = new Set();   // merged rows ("×5") that are expanded to their individual claims
+  const shown = new Map();        // how many people / items a group order's card lists (grows by PAGE with "Show more")
+  const PAGE = 25;
+  let truncated = false;          // the server had more claims than it sends — the screen says so
 
   async function render(el) {
     root = el;
     const [o, c, cr, cd] = await Promise.all([api('GET', '/api/admin/orders'), api('GET', `/api/admin/claims${filter.order ? `?order=${filter.order}` : ''}`), api('GET', '/api/admin/cancel-requests'), api('GET', '/api/admin/cancel-requests?status=decided')]);
     orders = o.json?.orders || []; claims = c.json?.claims || []; people = c.json?.people || {};
     cancelReqs = cr.json?.requests || []; cancelDone = cd.json?.requests || [];
+    truncated = !!c.json?.truncated;
     draw();
   }
 
@@ -25,11 +32,11 @@
   const paidOf = (c) => CATS.reduce((s, [k]) => s + (c.costs[k]?.paid || 0), 0);
   const statusPill = (s) => `<span class="pill ${s === 'confirmed' ? 'ok' : s === 'requested' ? 'warn' : 'dim'}">${s === 'requested' ? 'requested' : s}</span>`;
 
-  function visible() {
+  function visible(opts = {}) {
     const q = filter.q.trim().toLowerCase().replace(/^@/, '');
     return claims.filter((c) => {
       if (filter.status === 'active' ? c.status === 'cancelled' : filter.status !== 'all' && c.status !== filter.status) return false;
-      if (filter.stage && c.pipeline !== filter.stage) return false;
+      if (filter.stage && !opts.ignoreStage && c.pipeline !== filter.stage) return false;
       if (filter.unpaid && owedOf(c) <= 0) return false;
       return !q || c.handle.includes(q) || c.label.toLowerCase().includes(q);
     });
@@ -51,6 +58,93 @@
       <td class="nowrap">${c.priceTbc ? '<span class="pill warn">Price TBC</span>' : ''}${CATS.map(([k, name]) => (c.costs[k]?.cost || c.costs[k]?.paid) ? `<div class="sub">${name} ${money(c.costs[k].cost)} <span class="${c.costs[k].paid >= c.costs[k].cost ? '' : 'pill warn'}">paid ${money(c.costs[k].paid)}</span></div>` : '').join('')}</td>
       <td class="nowrap">${c.status === 'confirmed' ? (owed > 0 ? `<strong>${money(owed)}</strong> owed` : '<span class="pill ok">paid</span>') : '—'}</td>
       <td class="nowrap">${c.status === 'cancelled' ? '' : `<button class="sm secondary" data-act="edit" data-id="${c.id}">Edit costs</button> <button class="sm secondary" data-act="cancel" data-id="${c.id}">Cancel</button>`}</td></tr>`;
+  }
+
+
+  // ── scale: identical confirmed claims show as ONE row ("independent item — Felix ×5"); expand it for the individual claims ──
+  const costsCell = (c) => `<td class="nowrap">${c.priceTbc ? '<span class="pill warn">Price TBC</span>' : ''}${CATS.map(([k, name]) => (c.costs[k]?.cost || c.costs[k]?.paid) ? `<div class="sub">${name} ${money(c.costs[k].cost)} <span class="${c.costs[k].paid >= c.costs[k].cost ? '' : 'pill warn'}">paid ${money(c.costs[k].paid)}</span></div>` : '').join('')}</td>`;
+  const sig = (c) => CATS.map(([k]) => `${c.costs[k]?.cost || 0}/${c.costs[k]?.paid || 0}`).join(',');
+  const mergeKey = (c) => (c.status === 'confirmed' && !c.setId ? [c.label, c.pipeline, c.isFixed || c.is_fixed ? 1 : 0, c.priceTbc ? 1 : 0, sig(c)].join('|') : null);
+  function mergedRow(g) {
+    const first = g[0], ids = g.map((c) => c.id), key = `g${ids[0]}x${ids.length}`, isOpen = openGroups.has(key);
+    const owed = g.reduce((s, c) => s + owedOf(c), 0);
+    return `<tr data-group="${key}"><td><input type="checkbox" data-act="pick-person" data-ids="${ids.join(',')}" ${ids.every((i) => picked.has(i)) ? 'checked' : ''} aria-label="Select all ${ids.length} of ${esc(first.label)}"></td>
+      <td>${esc(first.label)} <span class="pill" data-times>×${ids.length}</span> <button class="ghost sm" data-act="group-toggle" data-key="${key}" style="border:0">${isOpen ? 'Hide the' : 'Show the'} ${ids.length}</button></td>
+      <td>${statusPill('confirmed')}</td>
+      <td><select data-act-change="pipeline-group" data-ids="${ids.join(',')}" aria-label="Stage for all ${ids.length}">${PIPELINE.map((p) => `<option ${p === first.pipeline ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select></td>
+      ${costsCell(first).replace('</td>', '<div class="sub">each</div></td>')}
+      <td class="nowrap">${owed > 0 ? `<strong>${money(owed)}</strong> owed` : '<span class="pill ok">paid</span>'}</td><td></td></tr>`;
+  }
+  function rowsFor(cs) {
+    const groups = new Map();
+    for (const c of cs) { const k = mergeKey(c); if (k) { if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); } }
+    const done = new Set(), out = [];
+    for (const c of cs) {
+      const k = mergeKey(c), g = k && groups.get(k);
+      if (!g || g.length < 2) { out.push(claimRow(c)); continue; }
+      if (done.has(k)) continue; done.add(k);
+      out.push(mergedRow(g));
+      if (openGroups.has(`g${g[0].id}x${g.length}`) || (editing && g.some((x) => x.id === editing))) g.forEach((x) => out.push(claimRow(x)));
+    }
+    return out.join('');
+  }
+  // "20 ready to pack / on hand · 5 ordered …" on a collapsed line, so you can see where someone's claims are without opening them
+  function stageMix(cs) {
+    const n = new Map(); for (const c of cs) if (c.status === 'confirmed') n.set(c.pipeline, (n.get(c.pipeline) || 0) + 1);
+    const top = PIPELINE.filter((p) => n.get(p)).map((p) => `<span class="pill dim" data-mix>${n.get(p)} ${esc(p)}</span>`);
+    return top.length ? ` ${top.slice(0, 3).join(' ')}${top.length > 3 ? ` <span class="sub">+${top.length - 3} more</span>` : ''}` : '';
+  }
+  // a strip of stages with counts — click one to filter to it, click again to clear
+  function strip() {
+    const base = visible({ ignoreStage: true });
+    const n = new Map(); for (const c of base) if (c.status === 'confirmed') n.set(c.pipeline, (n.get(c.pipeline) || 0) + 1);
+    const owing = base.filter((c) => owedOf(c) > 0).length, requested = base.filter((c) => c.status === 'requested').length;
+    const chip = (act, label, count, on, extra = '') => `<button class="sm ${on ? '' : 'secondary'}" data-act="${act}" ${extra} aria-pressed="${on}">${label} <strong>${count}</strong></button>`;
+    const chips = [...PIPELINE.filter((p) => n.get(p)).map((p) => chip('stage-chip', esc(p), n.get(p), filter.stage === p, `data-stage="${esc(p)}"`)),
+      owing ? chip('owing-chip', 'owing money', owing, filter.unpaid) : '', requested ? chip('requested-chip', 'waiting to be secured', requested, filter.status === 'requested') : ''].filter(Boolean);
+    return chips.length ? `<div class="card" id="stageStrip"><div class="sub" style="margin-bottom:6px">Where everything is — click one to show just those</div><div class="btn-row" style="flex-wrap:wrap; gap:6px; margin:0">${chips.join('')}</div></div>` : '';
+  }
+  const more = (total, limit, key, noun) => (total > limit ? `<div style="margin-top:10px"><button class="sm secondary" data-act="more" data-key="${key}">Show ${Math.min(PAGE, total - limit)} more ${noun} (${total - limit} not shown)</button></div>` : '');
+  const searching = () => !!filter.q.trim();
+  function allKeys() {                                            // every person (or item) currently listed, for "Expand all"
+    const keys = new Set();
+    for (const c of visible()) keys.add(view === 'item' ? `i:${c.order_id || 0}::${c.label}` : `${c.order_id || 0}::${c.handle}`);
+    return keys;
+  }
+  // ── the "By item" view: one block per item with its total, then who has it ──
+  function itemsBlock(g) {
+    const by = new Map();
+    for (const c of [...g.people.values()].flat()) { if (!by.has(c.label)) by.set(c.label, []); by.get(c.label).push(c); }
+    const entries = [...by.entries()].sort(([a], [b]) => a.localeCompare(b)), k = `i${g.id || 0}`, limit = searching() ? entries.length : (shown.get(k) || PAGE);
+    return entries.slice(0, limit).map(([label, cs]) => itemBlock(g, label, cs)).join('') + more(entries.length, limit, k, 'items');
+  }
+  function itemBlock(g, label, cs) {
+    const key = `i:${g.id || 0}::${label}`, isOpen = open.has(key) || searching();
+    const ids = confirmedIds(cs), owed = cs.reduce((s, c) => s + owedOf(c), 0), req = cs.filter((c) => c.status === 'requested').length, byWho = new Map();
+    for (const c of cs) { if (!byWho.has(c.handle)) byWho.set(c.handle, []); byWho.get(c.handle).push(c); }
+    const stageOf = (l) => { const st = [...new Set(l.map((c) => c.pipeline))]; return st.length === 1 ? esc(st[0]) : `<span class="sub">mixed: ${st.map(esc).join(', ')}</span>`; };
+    return `<div style="border-top:1px solid var(--line); margin-top:10px; padding-top:8px" data-item="${esc(label)}">
+      <div class="row"><span style="display:flex; align-items:center; gap:6px">${ids.length ? `<input type="checkbox" data-act="pick-person" data-ids="${ids.join(',')}" ${ids.every((i) => picked.has(i)) ? 'checked' : ''} aria-label="Select all confirmed claims for ${esc(label)}">` : ''}<button class="ghost sm" data-act="toggle" data-key="${esc(key)}" style="border:0">${isOpen ? '▾' : '▸'} <strong>${esc(label)}</strong></button></span>
+        <span class="sub">${cs.length} claim${cs.length === 1 ? '' : 's'} · ${byWho.size} ${byWho.size === 1 ? 'person' : 'people'}${req ? ` · <span class="pill warn">${req} requested</span>` : ''}${owed > 0 ? ` · owed <strong>${money(owed)}</strong>` : ''}</span></div>
+      <div>${stageMix(cs)}</div>
+      ${isOpen ? `<div class="scroll"><table class="grid"><thead><tr><th>Person</th><th>Claims</th><th>Stage</th><th>Owed</th></tr></thead><tbody>${[...byWho.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([h, l]) => `<tr data-who="${esc(h)}"><td>@${esc(h)}</td><td>${l.length}</td><td>${stageOf(l)}${l.some((c) => c.status === 'requested') ? ' <span class="pill warn">requested</span>' : ''}</td><td class="nowrap">${(() => { const o = l.reduce((s, c) => s + owedOf(c), 0); return o > 0 ? `<strong>${money(o)}</strong>` : '<span class="pill ok">paid</span>'; })()}</td></tr>`).join('')}</tbody></table></div>` : ''}</div>`;
+  }
+
+  // one person's block in a group order's card
+  const personBlock = (g, [handle, rawCs]) => {
+            const cs = sortClaims(rawCs);
+            const key = `${g.id || 0}::${handle}`, isOpen = open.has(key) || searching() || editing && cs.some((c) => c.id === editing);
+            const owed = cs.reduce((s, c) => s + owedOf(c), 0), req = cs.filter((c) => c.status === 'requested').length;
+            return `<div style="border-top:1px solid var(--line); margin-top:10px; padding-top:8px" data-buyer="${esc(handle)}">
+              <div class="row"><span style="display:flex; align-items:center; gap:6px">${confirmedIds(cs).length ? `<input type="checkbox" data-act="pick-person" data-ids="${confirmedIds(cs).join(',')}" ${confirmedIds(cs).every((i) => picked.has(i)) ? 'checked' : ''} aria-label="Select all of @${esc(handle)}'s confirmed claims here">` : ''}<button class="ghost sm" data-act="toggle" data-key="${esc(key)}" style="border:0">${isOpen ? '▾' : '▸'} <strong>@${esc(handle)}</strong></button></span>
+              <span class="sub">${cs.length} claim${cs.length === 1 ? '' : 's'}${req ? ` · <span class="pill warn">${req} requested</span>` : ''}${owed > 0 ? ` · owes <strong>${money(owed)}</strong>` : ''}</span></div>
+              <div>${stageMix(cs)}</div>
+              ${totalsLine(handle)}
+              ${isOpen ? `<div class="scroll"><table class="grid"><thead><tr><th></th><th>Item</th><th>Status</th><th>Stage</th><th>Costs</th><th>Owed</th><th></th></tr></thead><tbody>${rowsFor(cs)}</tbody></table></div>` : ''}</div>`;
+  };
+  function peopleBlock(g) {
+    const entries = sortPeople([...g.people.entries()]), k = `p${g.id || 0}`, limit = searching() ? entries.length : (shown.get(k) || PAGE);
+    return entries.slice(0, limit).map((e) => personBlock(g, e)).join('') + more(entries.length, limit, k, 'people');
   }
 
   const stageIdx = (p) => PIPELINE.indexOf(p);
@@ -145,7 +239,8 @@
       if (!g.people.has(c.handle)) g.people.set(c.handle, []);
       g.people.get(c.handle).push(c);
     }
-    root.innerHTML = `<h1 style="margin:18px 0 10px">Claims</h1>
+    root.innerHTML = `<div class="row" style="margin:18px 0 10px"><h1 style="margin:0">Claims</h1><div class="btn-row" style="margin:0" role="group" aria-label="How to group claims"><button class="sm ${view === 'person' ? '' : 'secondary'}" data-act="view" data-view="person" aria-pressed="${view === 'person'}">By person</button><button class="sm ${view === 'item' ? '' : 'secondary'}" data-act="view" data-view="item" aria-pressed="${view === 'item'}">By item</button></div></div>
+      ${truncated ? `<div class="card" data-truncated style="border:2px solid var(--accent)"><strong>Only the first ${claims.length.toLocaleString('en-GB')} claims are shown.</strong> There are more than that — narrow it with <em>Group order</em> above to see the rest.</div>` : ''}
       ${cancelCard()}
       <div class="card"><div class="formgrid">
         <div><label>Group order</label><select data-filter="order"><option value="">All</option>${orders.map((o) => `<option value="${o.id}" ${String(o.id) === String(filter.order) ? 'selected' : ''}>${esc(o.title)}</option>`).join('')}</select></div>
@@ -155,6 +250,8 @@
         <div><label>Sort by</label><select data-filter="sort">${SORTS.map(([v, l]) => `<option value="${v}" ${v === filter.sort ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
         <div><label class="chk" style="margin-top:24px"><input type="checkbox" data-filter="unpaid" ${filter.unpaid ? 'checked' : ''}> Only claims that still owe money</label></div></div></div>
       ${(() => { const ids = confirmedIds(list); return ids.length ? `<div class="row" style="margin:0 0 10px; justify-content:flex-start; gap:12px; align-items:center"><button class="sm secondary" data-act="pick-all" data-ids="${ids.join(',')}">${ids.every((i) => picked.has(i)) ? 'Unselect' : 'Select'} all ${ids.length} confirmed claim${ids.length === 1 ? '' : 's'} shown</button><span class="sub">Narrow with <em>Group order</em>, <em>Stage</em> or search first to select just those.</span></div>` : ''; })()}
+      ${strip()}
+      ${list.length ? `<div class="btn-row" style="margin:0 0 10px; gap:8px"><button class="sm secondary" data-act="expand-all">Expand all</button><button class="sm secondary" data-act="collapse-all">Collapse all</button></div>` : ''}
       ${picked.size ? bulkBar() : ''}
       ${byOrder.size ? [...byOrder.values()].map((g) => {
         const all = [...g.people.values()].flat();
@@ -163,16 +260,7 @@
         const setWaiting = all.filter((c) => c.status === 'requested' && c.setId).length;
         return `<div class="card"><div class="row"><div><h2 style="margin:0">${esc(g.title)}</h2><div class="sub">${all.length} claim${all.length === 1 ? '' : 's'} · ${requested} waiting to be secured${tbcWaiting ? ` · ${tbcWaiting} waiting for a price (TBC)` : ''}${setWaiting ? ` · ${setWaiting} set part${setWaiting === 1 ? '' : 's'} waiting for their set (see the Sets tab)` : ''}</div></div>
           ${requested && g.id ? `<button data-act="secure" data-id="${g.id}" data-n="${requested}" data-title="${esc(g.title)}">Secure all requested (${requested})</button>` : ''}</div>
-          ${pickRow(g)}${sortPeople([...g.people.entries()]).map(([handle, rawCs]) => {
-            const cs = sortClaims(rawCs);
-            const key = `${g.id || 0}::${handle}`, isOpen = open.has(key) || editing && cs.some((c) => c.id === editing);
-            const owed = cs.reduce((s, c) => s + owedOf(c), 0), req = cs.filter((c) => c.status === 'requested').length;
-            return `<div style="border-top:1px solid var(--line); margin-top:10px; padding-top:8px" data-buyer="${esc(handle)}">
-              <div class="row"><span style="display:flex; align-items:center; gap:6px">${confirmedIds(cs).length ? `<input type="checkbox" data-act="pick-person" data-ids="${confirmedIds(cs).join(',')}" ${confirmedIds(cs).every((i) => picked.has(i)) ? 'checked' : ''} aria-label="Select all of @${esc(handle)}'s confirmed claims here">` : ''}<button class="ghost sm" data-act="toggle" data-key="${esc(key)}" style="border:0">${isOpen ? '▾' : '▸'} <strong>@${esc(handle)}</strong></button></span>
-              <span class="sub">${cs.length} claim${cs.length === 1 ? '' : 's'}${req ? ` · <span class="pill warn">${req} requested</span>` : ''}${owed > 0 ? ` · owes <strong>${money(owed)}</strong>` : ''}</span></div>
-              ${totalsLine(handle)}
-              ${isOpen ? `<div class="scroll"><table class="grid"><thead><tr><th></th><th>Item</th><th>Status</th><th>Stage</th><th>Costs</th><th>Owed</th><th></th></tr></thead><tbody>${cs.map(claimRow).join('')}</tbody></table></div>` : ''}</div>`;
-          }).join('')}</div>`;
+          ${pickRow(g)}${view === 'item' ? itemsBlock(g) : peopleBlock(g)}</div>`;
       }).join('') : '<div class="card"><p class="muted">No claims match.</p></div>'}`;
   }
 
@@ -224,6 +312,14 @@
         break;
       }
       case 'toggle': open.has(b.dataset.key) ? open.delete(b.dataset.key) : open.add(b.dataset.key); draw(); break;
+      case 'group-toggle': openGroups.has(b.dataset.key) ? openGroups.delete(b.dataset.key) : openGroups.add(b.dataset.key); draw(); break;
+      case 'more': shown.set(b.dataset.key, (shown.get(b.dataset.key) || PAGE) + PAGE); draw(); break;
+      case 'view': view = b.dataset.view; try { localStorage.setItem('gom.claims.view', view); } catch { /* fine */ } draw(); break;
+      case 'expand-all': for (const k of allKeys()) open.add(k); for (const k of [...shown.keys()]) shown.set(k, 1e9); draw(); break;
+      case 'collapse-all': open.clear(); openGroups.clear(); shown.clear(); draw(); break;
+      case 'stage-chip': filter.stage = filter.stage === b.dataset.stage ? '' : b.dataset.stage; draw(); break;
+      case 'owing-chip': filter.unpaid = !filter.unpaid; draw(); break;
+      case 'requested-chip': filter.status = filter.status === 'requested' ? 'active' : 'requested'; draw(); break;
       case 'edit': editing = id; draw(); break;
       case 'cancel-edit': editing = null; draw(); break;
       case 'secure': {
@@ -271,6 +367,12 @@
       filter[t.dataset.filter] = t.type === 'checkbox' ? t.checked : t.value;
       if (t.dataset.filter === 'order') return render(root);   // different data
       return draw();
+    }
+    if (t.dataset.actChange === 'pipeline-group') {                              // one stage change for a whole merged row ("×5")
+      const ids = t.dataset.ids.split(',').map(Number), stage = t.value;
+      const r = await api('POST', '/api/admin/claims/pipeline', { claimIds: ids, pipeline: stage });
+      if (!r.ok) { GOM.toast(errText(r), true); return render(root); }
+      await render(root); return GOM.toast(`Moved ${r.json.changed} claim${r.json.changed === 1 ? '' : 's'} to "${stage}".${r.json.skipped.length ? ` ${r.json.skipped.length} left alone (${r.json.skipped[0].reason}).` : ''}`);
     }
     if (t.dataset.actChange === 'pipeline') {
       const r = await api('PATCH', `/api/admin/claims/${t.dataset.id}`, { pipeline: t.value });

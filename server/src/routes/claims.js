@@ -17,6 +17,8 @@ const READY = 'ready to pack / on hand';
 const PIPELINE = ['awaiting fulfillment', 'ordered via proxy / warehouse', 'arrived at proxy / warehouse', 'shipping requested',
   'enroute to GOM', 'arrived at GOM', 'checking parcel', READY, 'packed', 'shipped', 'completed'];
 
+const maxList = () => Number(process.env.CLAIMS_LIST_MAX) || 20000;          // most claims the admin list returns in one go (an env override exists for tests)
+
 export function claimRoutes(app, { pool, cfg, notifier }) {
   const claimLimiter = rateLimit({
     windowMs: 600_000, limit: cfg.rateLimits.claimsPer10MinPerIp, standardHeaders: 'draft-7', legacyHeaders: false,
@@ -132,7 +134,8 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
     if (req.query.handle) { where.push('j.instagram_handle = ?'); params.push(normalizeHandle(req.query.handle)); }
     const [rows] = await pool.query(
       `SELECT c.id, c.joiner_id AS joinerId, c.price_tbc AS priceTbc, c.label, c.status, c.pipeline, c.order_id, go.title AS orderTitle, c.set_id AS setId, c.is_direct, c.is_fixed, c.ready_to_pack_date, c.received_date, j.instagram_handle AS handle
-         FROM claims c JOIN joiners j ON j.id = c.joiner_id LEFT JOIN group_orders go ON go.id = c.order_id WHERE ${where.join(' AND ')} ORDER BY j.instagram_handle, c.id LIMIT 1000`, params);
+         FROM claims c JOIN joiners j ON j.id = c.joiner_id LEFT JOIN group_orders go ON go.id = c.order_id WHERE ${where.join(' AND ')} ORDER BY j.instagram_handle, c.id LIMIT ${maxList() + 1}`, params);
+    const truncated = rows.length > maxList(); if (truncated) rows.length = maxList();          // the screen says so, so nothing is ever cut off silently
     const costs = rows.length ? (await pool.query('SELECT claim_id, category, cost, paid, paid_date FROM claim_costs WHERE claim_id IN (?)', [rows.map((r) => r.id)]))[0] : [];
     // What each person owes, has paid, and holds as credit — across ALL their claims, not just the ones this list is showing.
     const who = [...new Set(rows.map((r) => r.joinerId))];
@@ -140,16 +143,15 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
       `SELECT c.joiner_id AS joinerId, COALESCE(SUM(CASE WHEN c.status = 'confirmed' THEN GREATEST(cc.cost - cc.paid, 0) ELSE 0 END), 0) AS owed, COALESCE(SUM(cc.paid), 0) AS paid
          FROM claims c JOIN claim_costs cc ON cc.claim_id = c.id WHERE c.joiner_id IN (?) AND c.status <> 'cancelled' GROUP BY c.joiner_id`, [who]) : [[]];
     const [cred] = who.length ? await pool.query('SELECT joiner_id AS joinerId, COALESCE(SUM(balance_effect), 0) AS credit FROM credit_ledger WHERE joiner_id IN (?) GROUP BY joiner_id', [who]) : [[]];
-    const people = {};
-    for (const r of rows) people[r.handle] ||= { owed: 0, paid: 0, credit: 0 };
-    for (const t of tot) { const h = rows.find((r) => r.joinerId === t.joinerId)?.handle; if (h) { people[h].owed = round2(t.owed); people[h].paid = round2(t.paid); } }
-    for (const k of cred) { const h = rows.find((r) => r.joinerId === k.joinerId)?.handle; if (h) people[h].credit = round2(k.credit); }
+    const people = {}, handleOf = new Map();
+    for (const r of rows) { people[r.handle] ||= { owed: 0, paid: 0, credit: 0 }; handleOf.set(r.joinerId, r.handle); }
+    for (const t of tot) { const h = handleOf.get(t.joinerId); if (h) { people[h].owed = round2(t.owed); people[h].paid = round2(t.paid); } }
+    for (const k of cred) { const h = handleOf.get(k.joinerId); if (h) people[h].credit = round2(k.credit); }
+    const costsOf = new Map();
+    for (const c of costs) { if (!costsOf.has(c.claim_id)) costsOf.set(c.claim_id, {}); costsOf.get(c.claim_id)[c.category] = { cost: c.cost, paid: c.paid, paidDate: c.paid_date }; }
     res.json({
-      people,
-      claims: rows.map((r) => ({
-        ...r, priceTbc: !!r.priceTbc, is_direct: !!r.is_direct, is_fixed: !!r.is_fixed,
-        costs: Object.fromEntries(costs.filter((c) => c.claim_id === r.id).map((c) => [c.category, { cost: c.cost, paid: c.paid, paidDate: c.paid_date }])),
-      })),
+      people, truncated,
+      claims: rows.map((r) => ({ ...r, priceTbc: !!r.priceTbc, is_direct: !!r.is_direct, is_fixed: !!r.is_fixed, costs: costsOf.get(r.id) || {} })),
     });
   }));
 

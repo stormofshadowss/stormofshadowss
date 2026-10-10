@@ -120,6 +120,9 @@ test('selecting claims: tick-boxes only on confirmed claims; per-person and per-
   const p = await openClaims();
   await p.type(p.q('[data-filter="q"]'), 'Select item'); await p.settle();
   await p.click(p.q('[data-act="toggle"]', buyerOf(p, x)));
+  assert.equal(p.qa('tr[data-group]', buyerOf(p, x)).length, 1, 'two identical confirmed claims are ONE merged row');
+  assert.equal(p.text(p.q('[data-times]', buyerOf(p, x))), '×2'); assert.equal(p.q('input[data-act="pick"]', buyerOf(p, x)), null, 'their individual boxes are inside the merged row');
+  await p.click(p.q('[data-act="group-toggle"]', buyerOf(p, x)));                      // "Show the 2"
   assert.equal(p.qa('input[data-act="pick"]', buyerOf(p, x)).length, 2);
   await p.click(p.q('[data-act="toggle"]', buyerOf(p, req)));
   assert.equal(p.q('input[data-act="pick"]', buyerOf(p, req)), null, 'a mere request has nothing to move');

@@ -2,6 +2,7 @@
 (function () {
   const { esc, money, fmtDate, api, errText, $, $$ } = GOM;
   let root = null, payments = [], methods = [], tips = 0, ledger = null;
+  let methodsOpen = null;            // null = decide from the data (open only when there are no methods yet); true/false once you've opened or saved it
   const filter = { status: 'pending', q: '' };
   let ledgerHandle = '';
 
@@ -20,11 +21,13 @@
   const KIND = { credit: 'Credit added', applied: 'Credit used', removed: 'Credit removed', tip: 'Tip', forfeited: 'Forfeited (blocked handle)' };
 
   function methodsCard() {
-    return `<div class="card"><h2>Where joiners send payment</h2>
+    const isOpen = methodsOpen ?? methods.length === 0;
+    const names = methods.map((m) => m.method).join(', ');
+    return `<details class="card" id="methodsCard" ${isOpen ? 'open' : ''}><summary style="cursor:pointer"><strong>Where joiners send payment</strong> <span class="sub" data-methods-summary>— ${methods.length ? `${methods.length} method${methods.length === 1 ? '' : 's'}: ${esc(names.length > 80 ? names.slice(0, 77) + '…' : names)} · click to edit` : 'none yet — click to add one'}</span></summary>
       <p class="sub">Joiners see these on the payment page. Remove a row to stop offering that method.</p>
       <form data-form="methods"><div id="methodRows">${methods.map(methodRow).join('')}</div>
         <p class="msg" data-msg hidden></p>
-        <div class="btn-row"><button type="button" class="sm secondary" data-act="add-method">＋ Add a method</button><button type="submit" class="sm">Save</button></div></form></div>`;
+        <div class="btn-row"><button type="button" class="sm secondary" data-act="add-method">＋ Add a method</button><button type="submit" class="sm">Save</button></div></form></details>`;
   }
   const methodRow = (m) => `<div class="formgrid" style="margin-bottom:8px" data-mrow><div><label>Method</label><input name="method" value="${esc(m.method)}" maxlength="40" placeholder="PayPal"></div>
     <div class="span2"><label>Pay to</label><input name="info" value="${esc(m.accountInfo)}" maxlength="255" placeholder="@yourname (Friends & Family)"></div>
@@ -111,6 +114,7 @@
       if (rows.some((r) => !r.method || !r.accountInfo)) return showMsg(form, 'Each method needs both a name and where to pay.');
       const r = await api('PUT', '/api/admin/payment-methods', { methods: rows });
       if (!r.ok) return showMsg(form, errText(r));
+      methodsOpen = false;                                                // saved: tuck it away again
       await render(root); GOM.toast('Saved.');
     } else if (kind === 'lookup') {
       ledgerHandle = form.elements.handle.value.trim().replace(/^@/, '').toLowerCase();
@@ -142,6 +146,6 @@
   GOM.registerTab({
     id: 'payments', label: 'Payments',
     badgeCount: async () => ((await api('GET', '/api/admin/payments?status=pending')).json?.payments || []).length,
-    async render(el) { await render(el); el.onclick = onClick; el.onsubmit = onSubmit; el.onchange = onChange; el.oninput = onInput; },
+    async render(el) { if (!el._methodsToggle) { el._methodsToggle = true; el.addEventListener('toggle', (e) => { if (e.target.id === 'methodsCard') methodsOpen = e.target.open; }, true); } await render(el); el.onclick = onClick; el.onsubmit = onSubmit; el.onchange = onChange; el.oninput = onInput; },
   });
 })();
