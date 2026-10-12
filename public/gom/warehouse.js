@@ -73,7 +73,7 @@
 
   function draw() {
     const keep = { ems: val('boxEms'), customs: val('boxCustoms'), weight: val('boxWeight'), track: val('boxTracking'), q: search };
-    root.innerHTML = `<h1 style="margin:18px 0 10px">Warehouse</h1>${candidatesCard()}${boxesCard()}`;
+    root.innerHTML = `<h1 style="margin:18px 0 10px">Warehouse</h1>${GOM.whSwitch ? GOM.whSwitch('boxes') : ''}${candidatesCard()}${boxesCard()}`;
     $('#boxEms', root).value = keep.ems; $('#boxCustoms', root).value = keep.customs; $('#boxWeight', root).value = keep.weight; $('#boxTracking', root).value = keep.track;
     $('#boxPreview', root).innerHTML = previewHtml();
   }
@@ -89,6 +89,7 @@
   async function onClick(e) {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const act = b.dataset.act, id = Number(b.dataset.id);
+    if (act === 'wh-view') { GOM.whView = b.dataset.view; return GOM.showTab('warehouse'); }
     if (act === 'cand-all' || act === 'cand-order' || act === 'cand-none') {       // tick every item, every item in one group order, or none
       for (const c of candidates) {
         if (act === 'cand-none') selected.delete(c.claimId);
@@ -149,6 +150,6 @@
   GOM.registerTab({
     id: 'warehouse', label: 'Warehouse',
     badgeCount: async () => ((await api('GET', '/api/admin/boxes/candidates')).json?.candidates || []).length,
-    async render(el) { await render(el); el.onclick = onClick; el.onchange = onChange; el.oninput = onInput; },
+    async render(el) { if (GOM.whView === 'incoming' && GOM.incoming) return GOM.incoming.render(el); await render(el); el.onclick = onClick; el.onchange = onChange; el.oninput = onInput; },
   });
 })();

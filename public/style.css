@@ -31,7 +31,7 @@ table { width:100%; border-collapse:collapse; } td { padding:5px 0; } td:last-ch
 
 /* ───── GOM screens ───── */
 .wide { max-width: 1100px; }
-.tabs { display:flex; gap:4px; flex-wrap:wrap; padding:10px 20px 0; max-width:1100px; margin:0 auto; border-bottom:1.5px solid var(--line); }
+.tabs { display:flex; gap:4px; flex-wrap:wrap; padding:10px 20px 0; max-width:1100px; margin:0 auto; border-bottom:1.5px solid var(--line); clear:both; }
 .tabs button { margin:0; background:transparent; color:var(--soft); border:0; border-bottom:3px solid transparent; border-radius:0; padding:10px 14px; }
 .tabs button.active { color:var(--accent-ink); border-bottom-color:var(--accent-ink); font-weight:600; }
 .badge { display:inline-block; min-width:18px; padding:0 6px; margin-left:6px; border-radius:99px; background:var(--accent); color:#fff; font-size:.75rem; text-align:center; }

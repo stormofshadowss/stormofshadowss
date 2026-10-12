@@ -62,7 +62,7 @@ export async function deleteTestOrder(conn, { orderId, confirm }) {
   await conn.query("DELETE FROM import_records WHERE (kind = 'claim' AND entity_id IN (?)) OR (kind = 'item' AND entity_id IN (?)) OR (kind = 'order' AND entity_id = ?)", [cids, ids, orderId]);
   if (plan.claimIds.length) await conn.query('DELETE FROM claims WHERE id IN (?)', [plan.claimIds]);
   const [pics] = await conn.query('SELECT image_id AS id FROM items WHERE id IN (?) AND image_id IS NOT NULL UNION SELECT cover_image_id FROM group_orders WHERE id = ? AND cover_image_id IS NOT NULL', [ids, orderId]);
-  if (plan.itemIds.length) await conn.query('DELETE FROM items WHERE id IN (?)', [plan.itemIds]);
+  if (plan.itemIds.length) { await conn.query('DELETE FROM store_order_lines WHERE item_id IN (?)', [plan.itemIds]); await conn.query('DELETE FROM items WHERE id IN (?)', [plan.itemIds]); }
   await conn.query('DELETE FROM group_orders WHERE id = ?', [orderId]);
   let files = [];
   if (pics.length) { [files] = await conn.query('SELECT filename FROM images WHERE id IN (?)', [pics.map((p) => p.id)]); await conn.query('DELETE FROM images WHERE id IN (?)', [pics.map((p) => p.id)]); }

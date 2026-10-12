@@ -24,6 +24,7 @@ export async function deletionPlan(conn, { itemIds, orderId = null, lock = false
             EXISTS (SELECT 1 FROM box_items WHERE claim_id = c.id) AS hasBox
        FROM claims c WHERE ${where}`, [arg]);
   const [[proxy]] = itemIds.length ? await conn.query('SELECT COUNT(DISTINCT item_id) AS n FROM proxy_payment_items WHERE item_id IN (?)', [itemIds]) : [[{ n: 0 }]];
+  const [[onStore]] = itemIds.length ? await conn.query('SELECT COUNT(DISTINCT store_order_id) AS n FROM store_order_lines WHERE item_id IN (?)', [itemIds]) : [[{ n: 0 }]];
   const people = (list) => new Set(list.map((c) => c.joinerId)).size;
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   const confirmed = claims.filter((c) => c.status === 'confirmed');
@@ -31,6 +32,7 @@ export async function deletionPlan(conn, { itemIds, orderId = null, lock = false
   const blockers = [];
   if (confirmed.length) blockers.push({ kind: 'confirmed', count: confirmed.length, message: `${plural(confirmed.length, 'confirmed claim', 'confirmed claims')} (${plural(people(confirmed), 'person', 'people')}) — those are real orders. Cancel them first on the Claims tab, then delete.` });
   if (history.length) blockers.push({ kind: 'history', count: history.length, message: `${plural(history.length, 'claim has', 'claims have')} payments, a parcel or a box behind ${history.length === 1 ? 'it' : 'them'}, and those records have to stay. Close it and make it private instead (Edit → close, tick private).` });
+  if (onStore.n) blockers.push({ kind: 'store_order', count: onStore.n, message: `${plural(onStore.n, 'store order lists', 'store orders list')} it (Warehouse → Incoming), so it can't be deleted. Remove it from there first.` });
   if (proxy.n) blockers.push({ kind: 'proxy', count: proxy.n, message: `${plural(proxy.n, 'item was', 'items were')} included in a proxy payment, so it can't be deleted. Close it and make it private instead.` });
   const [[sets]] = itemIds.length ? await conn.query('SELECT COUNT(*) AS n FROM item_sets WHERE item_id IN (?)', [itemIds]) : [[{ n: 0 }]];
   const [[fixed]] = itemIds.length ? await conn.query('SELECT COUNT(*) AS n FROM fixed_claims WHERE item_id IN (?) AND ended_at IS NULL', [itemIds]) : [[{ n: 0 }]];

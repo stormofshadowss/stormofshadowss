@@ -47,6 +47,10 @@
   const when = (iso) => `${fmtDate((iso || '').slice(0, 10))} ${(iso || '').slice(11, 16)}`;
 
   const HOW = { joiner: 'they agreed on the site', gom: 'combined by you' };
+  // Money still owing on what is in a parcel: a heads-up, never a block (people often pay the last balance together with the postage). Says whether a payment is already waiting for the GOM.
+  const CAT = { initials: 'items', ems: 'EMS', customs: 'customs', doms: 'postage', packaging: 'packaging' };
+  const owingBanner = (p) => (p.owing && p.owing.length && p.status !== 'received' ? `<div class="msg" data-owing style="background:var(--warn-bg); color:var(--warn-ink); border-color:var(--warn-line); margin:8px 0"><strong>Still owing</strong> — just a heads-up, you can still pack and ship.
+      ${p.owing.map((o) => `<div data-owing-person="${esc(o.handle)}">@${esc(o.handle)} owes <strong>${money(o.total)}</strong> (${o.categories.map((c) => `${CAT[c.category] || esc(c.category)} ${money(c.owed)}`).join(', ')})${o.pending > 0 ? ` · <span data-owing-pending>a ${money(o.pending)} payment is waiting for you to verify</span>` : ''}</div>`).join('')}</div>` : '');
   function card(p) {
     const addr = [p.deliveryName, p.deliveryAddress, p.deliveryPhone && `Tel: ${p.deliveryPhone}`].filter(Boolean).join('\n');
     const fr = friends(p), wt = waiting(p), dc = declined(p);
@@ -55,6 +59,7 @@
       <div class="row"><div><strong>${p.status === 'requested' ? `#${p.queuePosition} in the queue · ` : ''}Parcel ${p.id} — @${esc(p.handle)}</strong>${fr.length ? ` <span class="pill" data-shared-pill>shared with ${fr.map((f) => `@${esc(f.handle)}`).join(', ')}</span>` : ''}${wt.length ? ` <span class="pill warn" data-invited-pill>invited ${wt.map((f) => `@${esc(f.handle)}`).join(', ')}</span>` : ''}
         ${p.handleVerified ? '' : ` <span class="pill warn">not checked yet</span> <button class="sm secondary" data-act="verify" data-handle="${esc(p.handle)}">Mark as checked</button>`}
         <div class="sub">Requested ${when(p.requestedAt)} · ${esc(p.method)}${p.declaredValue ? ` · declared ${p.declaredValue === 'true' ? 'true value' : 'reduced value'}` : ''}</div>
+        ${owingBanner(p)}
         ${fr.length ? `<div class="sub" data-share-line>One parcel to @${esc(p.handle)}'s address, with ${fr.map((f) => `@${esc(f.handle)}'s`).join(' and ')} items${fr.length === 1 ? ` (${HOW[fr[0].how]})` : ''}. Postage and packaging are split ${splitWords(p)}.</div>` : ''}
         ${wt.length ? `<div class="sub" data-share-line>⏳ Waiting for ${names(wt.map((f) => f.handle))} to say yes to sharing this parcel — it can't be packed until ${wt.length === 1 ? 'they answer' : 'they have all answered'}.</div>` : ''}
         ${dc.length ? `<div class="sub" data-share-line>${names(dc.map((f) => f.handle))} said no to sharing${fr.length || wt.length ? '' : ', so this goes on its own'}.</div>` : ''}</div></div>
@@ -216,10 +221,11 @@
       const missing = [doms == null && 'postage', packaging == null && 'packaging fee'].filter(Boolean);
       const fr = friends(p), ppl = p.people || [];
       const sumW = ppl.reduce((t, x) => t + x.usedG, 0);
+      const owingLine = p.owing?.length ? `\n\n⚠ Still owing on what's in it: ${p.owing.map((o) => `@${o.handle} ${money(o.total)}${o.pending > 0 ? ` (a ${money(o.pending)} payment is waiting for you to verify)` : ''}`).join(', ')}. You can still pack it.` : '';
       const owes = !fr.length ? `@${p.handle} will owe ${money(total)} for these, on top of anything they already owe.`
         : p.feeSplit?.mode === 'weight' && sumW > 0 ? `Split by the weight of each person's items: ${ppl.map((x) => `@${x.handle} about ${money(total * x.usedG / sumW)}`).join(', ')} — on top of anything they already owe.`
         : `${names(ppl.map((x) => x.handle)).replace(/<[^>]*>/g, '')} will each owe about ${money(total / ppl.length)} for these (split equally per person), on top of anything they already owe.`;
-      const ok = await GOM.confirm(`Mark parcel ${id} for @${p.handle}${fr.length ? ` (shared with ${fr.map((f2) => `@${f2.handle}`).join(', ')})` : ''} as packed?\n\n${line('Postage (Doms)', doms)}\n${line('Packaging fee', packaging)}\n\n${owes}${missing.length ? `\n\nYou haven't set the ${missing.join(' or the ')}. Pack it anyway? (Fees can't be changed once it's packed.)` : ''}`, { ok: 'Mark packed', cancel: 'Not yet' });
+      const ok = await GOM.confirm(`Mark parcel ${id} for @${p.handle}${fr.length ? ` (shared with ${fr.map((f2) => `@${f2.handle}`).join(', ')})` : ''} as packed?\n\n${line('Postage (Doms)', doms)}\n${line('Packaging fee', packaging)}\n\n${owes}${owingLine}${missing.length ? `\n\nYou haven't set the ${missing.join(' or the ')}. Pack it anyway? (Fees can't be changed once it's packed.)` : ''}`, { ok: 'Mark packed', cancel: 'Not yet' });
       if (!ok) return;
       if (Object.keys(values).length) {             // save whatever was typed, then pack — nothing is saved if you say "Not yet"
         const s = await api('POST', `/api/admin/parcels/${id}/fees`, values);

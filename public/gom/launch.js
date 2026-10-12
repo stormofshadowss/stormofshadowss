@@ -24,7 +24,7 @@
   }
 
   const resetCard = () => `<div class="card" id="resetCard"><h2>Reset for launch</h2>
-    <p class="sub" style="margin-top:0">Wipes <strong>every</strong> order, item, claim, payment, parcel, box, proxy payment, shop item, picture and log — the test data. <strong>Kept:</strong> your artists/groups, payment methods, proxies and your own GOM login. Do this <em>before</em> the Notion import, and when nobody is using the site.</p>
+    <p class="sub" style="margin-top:0">Wipes <strong>every</strong> order, item, claim, payment, parcel, box, proxy payment, store order, shop item, picture and log — the test data. <strong>Kept:</strong> your artists/groups, payment methods, proxies and your own GOM login. Do this <em>before</em> the Notion import, and when nobody is using the site.</p>
     <p style="margin:8px 0 4px"><strong>1. Take a backup first.</strong> In the Unraid terminal run:</p>
     <pre data-backup-cmd style="background:var(--paper); padding:8px 12px; border-radius:8px; overflow:auto; margin:0 0 6px">docker exec -e ONCE=1 sos-backup /bin/sh /backup.sh</pre>
     <label class="chk" style="display:flex"><input type="checkbox" id="rsBackup"> I've taken a backup just now</label>

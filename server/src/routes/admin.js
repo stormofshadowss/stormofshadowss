@@ -115,7 +115,25 @@ export function adminRoutes(app, { pool, notifier }) {
     const ids = parcels.map((p) => p.id);
     const items = ids.length ? (await pool.query(
       'SELECT pi.parcel_id, c.id AS claimId, c.joiner_id AS ownerId, c.label, pi.packed_at AS packedAt, jc.instagram_handle AS owner, pi.doms_share AS doms, pi.packaging_share AS packaging, im.filename AS imgFile, im.width AS imgW, im.height AS imgH FROM parcel_items pi JOIN claims c ON c.id = pi.claim_id JOIN joiners jc ON jc.id = c.joiner_id LEFT JOIN items it ON it.id = c.item_id LEFT JOIN leftover_items lo ON lo.id = c.leftover_item_id LEFT JOIN images im ON im.id = COALESCE(it.image_id, lo.image_id) WHERE pi.parcel_id IN (?) ORDER BY c.id', [ids]))[0] : [];
-    for (const i of items) { i.image = imageOut(i.imgFile, i.imgW, i.imgH); delete i.imgFile; delete i.imgW; delete i.imgH; }      // the item's picture (or null), for the packing list
+    for (const i of items) { i.image = imageOut(i.imgFile, i.imgW, i.imgH); delete i.imgFile; delete i.imgW; delete i.imgH; }
+    // Money still owing on the claims in each parcel — a HEADS-UP for the GOM, never a block: people often pay the last balance together with the postage.
+    // Per person (a shared parcel can hold a friend's items), by cost category, plus any payment of theirs that is waiting for the GOM to verify.
+    const [owingRows] = ids.length ? await pool.query(
+      `SELECT pi.parcel_id AS parcelId, c.joiner_id AS joinerId, j.instagram_handle AS handle, cc.category, SUM(cc.cost - cc.paid) AS owed
+         FROM parcel_items pi JOIN claims c ON c.id = pi.claim_id AND c.status = 'confirmed' JOIN joiners j ON j.id = c.joiner_id
+         JOIN claim_costs cc ON cc.claim_id = c.id AND cc.cost > cc.paid
+        WHERE pi.parcel_id IN (?) GROUP BY pi.parcel_id, c.joiner_id, j.instagram_handle, cc.category ORDER BY pi.parcel_id, j.instagram_handle, FIELD(cc.category, 'initials', 'ems', 'customs', 'doms', 'packaging')`, [ids]) : [[]];
+    const owingJoiners = [...new Set(owingRows.map((r) => r.joinerId))];
+    const [pendingRows] = owingJoiners.length ? await pool.query("SELECT joiner_id AS joinerId, SUM(amount) AS pending FROM payments WHERE status = 'pending' AND joiner_id IN (?) GROUP BY joiner_id", [owingJoiners]) : [[]];
+    const pendingOf = new Map(pendingRows.map((r) => [r.joinerId, Number(r.pending)]));
+    const owingOf = (parcelId) => {
+      const by = new Map();
+      for (const r of owingRows.filter((x) => x.parcelId === parcelId)) {
+        if (!by.has(r.joinerId)) by.set(r.joinerId, { handle: r.handle, total: 0, categories: [], pending: pendingOf.get(r.joinerId) || 0 });
+        const e = by.get(r.joinerId); e.total = round2(e.total + Number(r.owed)); e.categories.push({ category: r.category, owed: round2(Number(r.owed)) });
+      }
+      return [...by.values()];
+    };      // the item's picture (or null), for the packing list
     const comps = ids.length ? (await pool.query(
       `SELECT pc.parcel_id, pc.joiner_id AS joinerId, pc.status, pc.how, pc.bias, pc.lomo_name AS lomoName, pc.lomo_source AS lomoSource, pc.notes, pc.lomo_checked_at AS lomoChecked, pc.bias_checked_at AS biasChecked, pc.weight_g AS weightG, jf.instagram_handle AS handle
          FROM parcel_companions pc JOIN joiners jf ON jf.id = pc.joiner_id WHERE pc.parcel_id IN (?) ORDER BY pc.id`, [ids]))[0] : [];
@@ -124,6 +142,7 @@ export function adminRoutes(app, { pool, notifier }) {
       p.queuePosition = await queuePosition(pool, p);
       const mine = items.filter((i) => i.parcel_id === p.id);
       p.items = mine.map((i) => ({ claimId: i.claimId, label: i.label, packed: !!i.packedAt, owner: i.owner, image: i.image }));
+      p.owing = owingOf(p.id);
       p.addressChecked = !!p.addressCheckedAt; p.lomoChecked = !!p.lomoCheckedAt; p.biasChecked = !!p.biasCheckedAt;
       p.feesSet = feesSet({ doms_total: p.domsTotal, packaging_total: p.packagingTotal });
       p.companions = comps.filter((c) => c.parcel_id === p.id).map((c) => ({ handle: c.handle, status: c.status, how: c.how, bias: c.bias, lomoName: c.lomoName, lomoSource: c.lomoSource, notes: c.notes, lomoChecked: !!c.lomoChecked, biasChecked: !!c.biasChecked }));
