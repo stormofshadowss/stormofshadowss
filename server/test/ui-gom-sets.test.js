@@ -18,14 +18,16 @@ const sets = async (itemId) => (await api('GET', '/api/admin/sets')).json.sets.f
 const claimsOf = async (h) => (await api('GET', `/api/admin/claims?handle=${h}`)).json.claims;
 const open = async (label = 'Sets') => { const p = await gomPage(app, admin); await p.click(p.byText('#tabs button', label)); return p; };
 const card = (p, id) => p.q(`[data-set="${id}"]`);
+const showParts = async (p, id) => { const c = card(p, id); if (c && !p.q('table', c)) await p.click(p.q('[data-act="toggle-set"]', c)); };     // a set is one line until you open it
+const chip = (p, label) => p.click(p.byText('#setChips .chip', label));
 
 test('the Sets tab lists each set with who holds each part, how full it is, and why it cannot be secured yet', async () => {
   await claim('amy_s', S, 'Bang Chan', 'Diary');
   const [s1] = await sets(S);
-  const p = await open();
+  const p = await open(); await showParts(p, s1.id);
   const text = p.text(card(p, s1.id));
-  assert.match(text, /Seasons Greetings — Set 1.*Run It GO/);
-  assert.match(text, /not decided.*2\/4 filled.*every part required/);
+  assert.match(p.text(p.q(`[data-item="${S}"]`)), /Seasons Greetings.*Run It GO/, 'the set sits under its item');
+  assert.match(text, /Set 1.*2\/4.*open: Han, Washi tape.*needs 2 more.*every part required/);
   assert.match(text, /Bang Chan.*£3\.00.*@amy_s requested/); assert.match(text, /Diary.*£2\.00.*@amy_s requested/);
   assert.match(text, /Han.*open.*Add someone/); assert.match(text, /Washi tape.*£1\.00.*open/);
   assert.equal(p.q('[data-act="secure"]', card(p, s1.id)).disabled, true);
@@ -37,7 +39,7 @@ test('the Sets tab lists each set with who holds each part, how full it is, and 
 
 test('putting someone into an open part by hand: the form, mistakes explained, then it appears', async () => {
   const [s1] = await sets(S);
-  const p = await open();
+  const p = await open(); await showParts(p, s1.id);
   await p.click(p.q(`[data-act="add"][data-set="${s1.id}"][data-member="Han"]`));
   const form = () => p.q('form[data-form="assign"]');
   form().elements.handle.value = 'not a handle!'; await p.submit(form());
@@ -51,7 +53,7 @@ test('putting someone into an open part by hand: the form, mistakes explained, t
   form().elements.handle.value = '@Bob_S'; await p.submit(form());
   assert.match(toast(p), /Added\./);
   assert.match(p.text(card(p, s1.id)), /Han.*@bob_s requested/);
-  assert.match(p.text(card(p, s1.id)), /3\/4 filled/);
+  assert.match(p.text(card(p, s1.id)), /3\/4/);
   p.close();
 });
 
@@ -71,8 +73,8 @@ test('securing: disabled until a must-be-full set is full; the dialog says what 
   assert.match(toast(p), /Secured — 4 claims confirmed/);
   assert.deepEqual((await claimsOf('amy_s')).map((c) => c.status), ['confirmed', 'confirmed']);
   assert.equal(card(p, s1.id), null, 'it has left the "waiting" list');
-  await p.choose(p.q('[data-filter="decision"]'), 'secured');
-  assert.match(p.text(card(p, s1.id)), /secured.*4\/4 filled/);
+  await chip(p, 'Secured');
+  assert.match(p.text(card(p, s1.id)), /secured/); assert.match(p.text(card(p, s1.id)), /4\/4/);
   assert.equal(p.q('#tabs [data-tab="sets"] .badge').hidden, true, 'the badge cleared');
   assert.deepEqual([p.errors, p.native], [[], 0]);
   p.close();
@@ -86,7 +88,8 @@ test('an ordinary set can be secured with parts open (your call): the dialog war
   await p.click(p.q('[data-act="secure"]', card(p, target.id)));
   assert.match(p.text(modal(p)), /2 parts are still open and will stay open — you can put someone into them afterwards/);
   await press(p, 'Secure it');
-  await p.choose(p.q('[data-filter="decision"]'), 'secured');
+  await chip(p, 'Secured');
+  await showParts(p, target.id);
   assert.match(p.text(card(p, target.id)), /2 parts are still open — you can put someone into them above/);
   await p.click(p.q(`[data-act="add"][data-set="${target.id}"][data-member="B"]`));
   p.q('form[data-form="assign"]').elements.handle.value = 'eve_s'; await p.submit(p.q('form[data-form="assign"]'));
@@ -104,7 +107,7 @@ test('cancelling a set: the dialog explains the money; keeping it does nothing; 
   const pay = await app.api('POST', '/api/my/payments', { method: 'PayPal', amount: 20, reference: 'F' }, c);
   await api('POST', `/api/admin/payments/${pay.json.id}/verify`, {});
   const p = await open();
-  await p.choose(p.q('[data-filter="decision"]'), 'secured');
+  await chip(p, 'Secured');
   await p.click(p.q('[data-act="cancel-set"]', card(p, s1.id)));
   assert.match(p.text(modal(p)), /Cancel Cancel set — Set 1\?.*All 2 claims in it are cancelled.*goes back to each person as credit.*parts become free/s);
   await press(p, 'Keep it');
@@ -112,8 +115,8 @@ test('cancelling a set: the dialog explains the money; keeping it does nothing; 
   await p.click(p.q('[data-act="cancel-set"]', card(p, s1.id))); await press(p, 'Cancel the set');
   assert.match(toast(p), /Set cancelled\. £20\.00 returned as credit/);
   assert.equal((await app.api('GET', '/api/my/summary', undefined, c)).json.credit, 20);
-  await p.choose(p.q('[data-filter="decision"]'), 'cancelled');
-  assert.match(p.text(card(p, s1.id)), /cancelled.*0\/2 filled/);
+  await chip(p, 'Cancelled');
+  assert.match(p.text(card(p, s1.id)), /0\/2.*cancelled/);
   assert.equal(p.q('[data-act="add"]', card(p, s1.id)), null, 'no adding people to a cancelled set');
   p.close();
 });
@@ -151,13 +154,13 @@ test('the Claims tab: parts of a set still waiting for a decision wait for their
 test('filters, empty states, and names with HTML are shown as text', async () => {
   const set = (await api('POST', `/api/admin/orders/${w.order}/items`, { type: 'set', title: '<img src=x onerror="window.pwned=1"> set', price: 1, members: ['<b>One</b>', 'Two'] })).json.id;
   await claim('ivy_s', set, '<b>One</b>');
-  const p = await open();
+  const p = await open(); await showParts(p, (await sets(set))[0].id);
   assert.equal(p.q('img[src="x"]'), null);
-  assert.match(p.text(p.q('#tabBody')), /<img src=x onerror="window\.pwned=1"> set — Set 1/);
+  assert.match(p.text(p.q('#tabBody')), /<img src=x onerror="window\.pwned=1"> set.*Set 1/s);
   assert.match(p.text(p.q('#tabBody')), /<b>One<\/b>/);
   assert.equal(p.window.pwned, undefined);
-  await p.choose(p.q('[data-filter="decision"]'), 'cancelled');
-  assert.match(p.text(p.q('#tabBody')), /Cancel set — Set 1/);
+  await chip(p, 'Cancelled');
+  assert.match(p.text(p.q('#tabBody')), /Cancel set.*Set 1/s);
   const o = (await api('GET', '/api/admin/orders')).json.orders.find((x) => x.title === 'Run It GO');
   await p.choose(p.q('[data-filter="order"]'), String(o.id));
   assert.match(p.text(p.q('#tabBody')), /Cancel set/);
@@ -186,10 +189,10 @@ test('open parts: a secured set offers "Split cost & raffle" next to "Add someon
   const undecided = (await api('POST', `/api/admin/orders/${w.order}/items`, { type: 'set', title: `Undecided ${++M}`, price: 3, members: ['P', 'Q'] })).json.id;
   await claim(`ud${M}`, undecided, 'P');
   const p = await open();
-  await p.choose(p.q('[data-filter="decision"]'), 'all');
+  await chip(p, 'All');
+  const [u] = await sets(undecided); await showParts(p, set); await showParts(p, u.id);
   const row = partRow(p, set, 'D');
   assert.ok(p.q('[data-act="add"]', row) && p.q('[data-act="split"]', row));
-  const [u] = await sets(undecided);
   assert.ok(p.q(`[data-set="${u.id}"] [data-act="add"]`));
   assert.equal(p.q(`[data-set="${u.id}"] [data-act="split"]`), null, 'an unsecured set can simply be secured, left, or filled — no split yet');
   p.close();
@@ -198,7 +201,7 @@ test('open parts: a secured set offers "Split cost & raffle" next to "Add someon
 test('splitting: the dialog explains the maths and that it is not auto-undoable; "Not yet" does nothing; confirming shows a pending raffle and who can win', async () => {
   const { item, set, people } = await securedWithOpenPart(8);
   const p = await open();
-  await p.choose(p.q('[data-filter="decision"]'), 'secured');
+  await chip(p, 'Secured'); await showParts(p, set);
   await p.click(p.q('[data-act="split"]', partRow(p, set, 'D')));
   const dialog = p.text(modal(p));
   assert.match(dialog, /Split the cost of the unclaimed D \(£8\.00\) across the 3 claims in this set\?/);
@@ -221,7 +224,7 @@ test('picking the winner: asks first, then they hold the part and the note says 
   const { set, item, people } = await securedWithOpenPart(8);
   await api('POST', `/api/admin/sets/${set}/split`, { member: 'D' });
   const p = await open();
-  await p.choose(p.q('[data-filter="decision"]'), 'secured');
+  await chip(p, 'Secured'); await showParts(p, set);
   const row = () => partRow(p, set, 'D');
   p.q('select', row()).value = people[1];
   await p.click(p.byText('[data-act="raffle"]', 'Confirm winner', row()));
@@ -231,7 +234,7 @@ test('picking the winner: asks first, then they hold the part and the note says 
   await p.click(p.byText('[data-act="raffle"]', 'Confirm winner', row())); await press(p, 'Confirm winner');
   assert.match(toast(p), new RegExp(`@${people[1]} wins the D`));
   assert.match(p.text(row()), new RegExp(`@${people[1]} confirmed raffle win`));
-  assert.match(p.text(p.q(`[data-set="${set}"]`)), /4\/4 filled/);
+  assert.match(p.text(p.q(`[data-set="${set}"]`)), /4\/4/);
   assert.match(p.text(p.q(`[data-set="${set}"]`)), /it was raffled/);
   assert.equal(p.q('[data-act="split"]', row()), null, 'nothing more to do for that part');
   p.close();
@@ -240,7 +243,7 @@ test('picking the winner: asks first, then they hold the part and the note says 
 test('a stale page: splitting a part that was already split elsewhere is explained and the screen refreshes', async () => {
   const { set } = await securedWithOpenPart();
   const p = await open();
-  await p.choose(p.q('[data-filter="decision"]'), 'secured');
+  await chip(p, 'Secured'); await showParts(p, set);
   await api('POST', `/api/admin/sets/${set}/split`, { member: 'D' });                  // done in another tab
   await p.click(p.q('[data-act="split"]', partRow(p, set, 'D'))); await press(p, 'Split the cost');
   assert.match(toast(p), /already held, or a split is already under way/);

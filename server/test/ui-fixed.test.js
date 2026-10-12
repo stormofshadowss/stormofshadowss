@@ -123,7 +123,8 @@ test('GOM: requests from regulars whose set is secured appear on the Sets tab wi
 test('GOM: the Sets tab marks reserved parts as fixed', async () => {
   const item = await newItem('Marked set'); await addFixed(item, `mk${N}`, 'Han');
   const p = await gomPage(app, admin); await p.click(p.byText('#tabs button', 'Sets'));
-  assert.match(text(p, `[data-set="${(await setsOf(item))[0].id}"]`), new RegExp(`Han.*@mk${N} requested fixed`));
+  const sid = (await setsOf(item))[0].id; if (!p.q('table', p.q(`[data-set="${sid}"]`))) await p.click(p.q('[data-act="toggle-set"]', p.q(`[data-set="${sid}"]`)));      // a set is one line until opened
+  assert.match(text(p, `[data-set="${sid}"]`), new RegExp(`Han.*@mk${N} requested fixed`));
   p.close();
 });
 

@@ -82,10 +82,11 @@ test('FOR THE GOM: a new request that filled a spot in a secured set shows on th
   const { go, item } = await scenario();
   const h = u('new'); await claim(item, h, ['C']);                                                           // fills the open C in the secured Set 1
   const p = await gomPage(app, admin); await p.click(p.byText('#tabs button', 'Sets')); await sleep(80); await p.settle();
-  await p.choose(p.q('[data-filter="decision"]'), 'secured'); await sleep(60);
+  await p.click(p.byText('#setChips .chip', 'Secured')); await sleep(60);
   const card = () => p.q(`[data-set="${(sets_.find((x) => x.number === 1)).id}"]`);
   var sets_ = await sets(item);
-  assert.match(p.text(card()), /1 new request waiting/); assert.match(p.text(card()), new RegExp(`C.*@${h}.*requested`, 's'));
+  assert.match(p.text(card()), /1 new request waiting/);
+  if (!p.q('table', card())) await p.click(p.q('[data-act="toggle-set"]', card())); assert.match(p.text(card()), new RegExp(`C.*@${h}.*requested`, 's'));
   assert.match(p.text(p.byText('#tabs button', 'Sets')), /\d/, 'the tab badge counts it');
   await p.click(p.q('[data-act="confirm-new"]', card()));
   assert.match(p.text(modal(p)), /Confirm 1 new request in Photocard set — Set 1\?.*already secured.*becomes? a confirmed claim|each becomes a confirmed claim/s);

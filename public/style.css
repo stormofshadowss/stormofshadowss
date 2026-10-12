@@ -178,3 +178,16 @@ body.admin button { padding:9px 16px; font-size:.92rem; } body.admin button.sm, 
 body.admin .tabs { border-bottom:1px solid var(--line); } body.admin .tabs button { padding:9px 12px; }
 body.admin .chip { box-shadow:none; border:1px solid var(--line); }
 body.admin table.grid td { padding:7px 8px; }
+
+/* Sets: each set is one line (number, dots for its parts, count, what is open, status, quick buttons); its parts open underneath */
+.setrow { border-top:1px solid var(--line); padding:8px 2px; } .setrow:first-child { border-top:0; }
+.setline { display:flex; align-items:center; gap:8px 10px; flex-wrap:wrap; }
+.setline .grow { flex:1; min-width:4px; }
+.setbtn { margin:0 !important; border:0 !important; background:transparent !important; padding:4px 8px !important; }
+.setbody { margin:4px 0 6px 28px; }
+.dots { display:inline-flex; gap:3px; flex-wrap:wrap; }
+.dot { width:11px; height:11px; border-radius:50%; border:1.5px solid var(--soft); display:inline-block; opacity:.8; }
+.dot.held { background:var(--accent); border-color:var(--accent); opacity:1; } .dot.ok { background:var(--ok-ink); border-color:var(--ok-ink); opacity:1; }
+
+/* in the GOM pages the filter chips wrap (nothing hidden off to the side) */
+body.admin .chips { flex-wrap:wrap; overflow:visible; }

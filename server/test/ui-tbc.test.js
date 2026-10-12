@@ -97,7 +97,8 @@ test('GOM Sets: splitting an open part whose price is TBC says why instead of sh
   await api('POST', `/api/admin/sets/${sid}/secure`, {});
   await api('PATCH', `/api/admin/items/${set}`, { priceTbc: true });
   const p = await gomPage(app, admin); await p.click(p.byText('#tabs button', 'Sets'));
-  await p.choose(p.q('[data-filter="decision"]'), 'secured');
+  await p.click(p.byText('#setChips .chip', 'Secured'));
+  if (!p.q('table', p.q(`[data-set="${sid}"]`))) await p.click(p.q('[data-act="toggle-set"]', p.q(`[data-set="${sid}"]`)));
   await p.click(p.q('[data-act="split"]', p.q(`[data-set="${sid}"] tr[data-part="C"]`)));
   assert.match(p.text(p.q('.ui-modal')), /That part's price is still TBC, so its cost can't be shared out yet/);
   p.close();
