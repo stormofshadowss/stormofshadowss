@@ -34,7 +34,7 @@
     return `<details class="setgrid" data-setgrid="${it.id}" style="margin-top:10px" ${openGrids.has(it.id) ? 'open' : ''}><summary>See where the open spots are (${room.length} set${room.length === 1 ? '' : 's'} with room)</summary>
       ${room.length ? `<div class="scroll"><table class="grid"><thead><tr><th>Set</th>${names.map((n) => `<th>${esc(n)}</th>`).join('')}</tr></thead><tbody>${rows.map((x) => `<tr data-set="${x.number}"><td>Set ${x.number}${x.decision === 'secured' ? ' <span class="pill ok">secured</span>' : ''}</td>${names.map((n) => (x.taken.includes(n) ? '<td class="sub">taken</td>' : '<td><strong>open</strong></td>')).join('')}</tr>`).join('')}</tbody></table></div>` : ''}
       ${room.length > rows.length ? `<p class="sub">…and ${room.length - rows.length} more sets with room.</p>` : ''}${full ? `<p class="sub">${full} full set${full === 1 ? '' : 's'} not shown.</p>` : ''}
-      <p class="sub">A part you claim goes in the earliest set where it's open. Sets marked <em>secured</em> are already bought — a spot there is confirmed by the GOM after you claim it.</p></details>`;
+      <p class="sub">Your claim goes in the earliest set where it's open. Sets marked <em>secured</em> are already bought — a spot there is confirmed by the GOM after you claim it.</p></details>`;
   }
   function placementText(it) {
     const lines = basket.filter((l) => l.itemId === it.id);
