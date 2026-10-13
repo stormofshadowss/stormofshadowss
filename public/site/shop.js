@@ -167,7 +167,7 @@
       const multi = mine.some((l) => l.qty > 1);
       const summary = it.members.filter((m) => mine.some((l) => l.member === m.name)).map((m) => { const q = mine.find((l) => l.member === m.name).qty; return q > 1 ? `${q} × ${esc(m.name)}` : esc(m.name); }).join(', ');
       return `<div class="card"><div class="row"><div><strong>${esc(it.title)}</strong><div class="sub">${it.wholeSetPrice == null ? 'Price TBC' : `${money(it.wholeSetPrice)} for the whole set`}${it.requiresFullSet ? ' · <strong>every part must be claimed for it to go ahead</strong>' : ''}</div></div>${meta}</div>
-        ${d}<p class="sub">Press + for each part you want — you can take more than one of the same part, and each goes in a different set. If every existing set already has a part, a new set opens for you.</p>
+        ${d}<p class="sub">Press + on the members you want. Each goes in the first available set with a free space for it, or a new set starts if there isn’t one. You can also choose to keep your members in the same set but this may affect if your claim goes through or not.</p>
         <div class="opts">${it.members.map((m) => tile(it, m.name, `${priceText(m.price)} · ${it.partsClaimed[m.name] || 0} claimed${closed || !candidateSets(it).length ? '' : ` · <span data-spot>${spotText(openIn(it, m.name))}</span>`}`, closed)).join('')}</div>
         ${closed ? '' : setGrid(it)}
         ${closed ? '' : `<div class="btn-row"><button class="secondary" data-act="whole" data-item="${it.id}">Claim the whole set (${it.wholeSetPrice == null ? 'price TBC' : money(it.wholeSetPrice)}, all in one set)</button></div>`}
