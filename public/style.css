@@ -147,7 +147,7 @@ a.ocard .meta { padding:9px 12px 12px; } a.ocard strong { display:block; line-he
 .item:not(.wide) .item-body { padding:0; flex:1; min-width:0; }
 .item:not(.wide) .row { flex-direction:column; align-items:flex-start; gap:1px; } .item:not(.wide) .stepper { margin-top:8px; }
 .item.wide { grid-column:1 / -1; }
-.item.wide > .picbox { margin:14px 0 0 14px; } .item.wide > .picbox.ph { width:76px; height:76px; border-radius:14px; display:flex; font-size:1.3rem; }
+.item.wide > .picbox { margin:14px 14px 8px 14px; }                          /* room on the right, so the title never touches the picture */ .item.wide > .picbox.ph { width:76px; height:76px; border-radius:14px; display:flex; font-size:1.3rem; }
 .item.wide .opts, .item.wide .pills, .item.wide .setgrid, .item.wide .btn-row { clear:both; }
 @media (min-width: 700px) { .itemgrid { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
 .steps { display:flex; gap:6px; align-items:center; list-style:none; margin:4px 0 14px; padding:0; font-size:.8rem; font-weight:700; color:var(--soft); }
