@@ -191,3 +191,17 @@ body.admin table.grid td { padding:7px 8px; }
 
 /* in the GOM pages the filter chips wrap (nothing hidden off to the side) */
 body.admin .chips { flex-wrap:wrap; overflow:visible; }
+
+/* overdue is RED, not yellow: the pill, the item's left edge, the "was due" date, the dashboard notice */
+.pill.err { background:var(--err-bg); color:var(--err-ink); border:1px solid var(--err-line); font-weight:700; }
+.itemrow.overdue { border-left:4px solid var(--err-ink); padding-left:12px; }
+.late-text { color:var(--err-ink); font-weight:700; }
+.card.overdue-notice { background:var(--err-bg); color:var(--err-ink); border:2px solid var(--err-ink); }
+.card.has-overdue { border-left:4px solid var(--err-ink); }
+/* a group order you can fold away (joiner lists and the admin Claims screen) */
+button.gohead, button.gotoggle { background:transparent !important; border:0 !important; padding:0 !important; margin:0 !important; font:inherit; font-weight:inherit; color:inherit !important; text-align:left; cursor:pointer; box-shadow:none; }
+button.gohead:hover, button.gotoggle:hover { filter:none; text-decoration:underline; }
+.gobadges { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+
+/* the second button in the overdue notice: outlined, in the notice's own red (the plain button forces white text, which is unreadable here) */
+.card.overdue-notice a.pillbtn.alt { background:transparent; color:var(--err-ink) !important; border:1.5px solid var(--err-ink); }

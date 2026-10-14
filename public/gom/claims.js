@@ -12,9 +12,13 @@
   let moveState = null;        // the "move to another person" panel: { handle, create, preview, previewFor, error }
   const open = new Set();      // "orderId::handle" accordions that are open
   let editing = null;          // claim id being edited
+  // "Add a claim for someone": a panel for the GOM to enter a claim on a person's behalf (a gap in an import, or an order that came by DM, often on a private group order)
+  let addOpen = false, addMsg = null, addLook = { for: '', exact: false, blocked: false, matches: [] }, lookTimer = null;     // addLook: what the server said about the handle typed so far
+  const addS = { handle: '', create: false, orderId: '', itemId: '', qty: '1', variant: '', parts: {}, together: false, status: '', stage: 'awaiting fulfillment' };
   let view = 'person';         // "By person" or "By item" (remembered in this browser)
   try { if (localStorage.getItem('gom.claims.view') === 'item') view = 'item'; } catch { /* private window: just don't remember */ }
   const openGroups = new Set();   // merged rows ("×5") that are expanded to their individual claims
+  const goChosen = new Map();     // group order id → true/false once you've opened or closed it yourself; otherwise a short list (3 orders or fewer), or any search/filter, opens by itself
   const shown = new Map();        // how many people / items a group order's card lists (grows by PAGE with "Show more")
   const PAGE = 25;
   let truncated = false;          // the server had more claims than it sends — the screen says so
@@ -106,6 +110,7 @@
   }
   const more = (total, limit, key, noun) => (total > limit ? `<div style="margin-top:10px"><button class="sm secondary" data-act="more" data-key="${key}">Show ${Math.min(PAGE, total - limit)} more ${noun} (${total - limit} not shown)</button></div>` : '');
   const searching = () => !!filter.q.trim();
+  const goOpen = (key, n) => (goChosen.has(key) ? goChosen.get(key) : (searching() || !!filter.stage || !!filter.unpaid || n <= 3));
   function allKeys() {                                            // every person (or item) currently listed, for "Expand all"
     const keys = new Set();
     for (const c of visible()) keys.add(view === 'item' ? `i:${c.order_id || 0}::${c.label}` : `${c.order_id || 0}::${c.handle}`);
@@ -226,6 +231,92 @@
     GOM.toast(res.ok ? `Cancelled — ${money(res.json.refunded)} returned as credit${res.json.kept > 0 ? `, ${money(res.json.kept)} kept` : ''}.` : errText(res), !res.ok);
   }
 
+  // ── Add a claim for someone ──
+  const addItems = () => (orders.find((o) => String(o.id) === String(addS.orderId))?.items || []).filter((i) => !i.cancelled);
+  const addItem = () => addItems().find((i) => String(i.id) === String(addS.itemId));
+  const cleanHandle = (h) => String(h || '').trim().replace(/^@+/, '').toLowerCase();
+  function addDetail(it) {
+    if (!it) return '';
+    const tbc = it.priceTbc ? '<p class="sub" data-tbc>The price is still TBC — you can add this as a request, but it can\'t be confirmed until the price is set.</p>' : '';
+    const num = (name, val, lab) => `<label class="sub" style="display:inline-flex; align-items:center; gap:6px; margin:0 12px 6px 0">${lab}<input type="number" min="0" max="20" ${name} value="${esc(val)}" style="width:70px; padding:5px 8px"></label>`;
+    if (it.type === 'set') return `${tbc}<div class="sub" style="margin:8px 0 4px; font-weight:600">Which parts, and how many of each</div><div>${it.members.map((m) => num(`data-part="${esc(m.name)}"`, addS.parts[m.name] || '', esc(m.name))).join('')}</div>
+      ${it.members.length > 1 ? `<label class="chk"><input type="checkbox" name="together" ${addS.together ? 'checked' : ''}> Keep these together in the same set</label>` : ''}<p class="sub">They are placed exactly as when a joiner claims: the first set with room, or a new one. A set's parts only confirm once their set is secured (Sets tab).</p>`;
+    if (it.type === 'independent') return `${tbc}<div class="sub" style="margin:8px 0 4px; font-weight:600">Which members, and how many of each</div><div>${it.members.map((m) => num(`data-part="${esc(m.name)}"`, addS.parts[m.name] || '', esc(m.name))).join('')}</div>`;
+    if (it.type === 'size') return `${tbc}<div class="formgrid"><div><label>Size</label><select name="variant"><option value="">Choose a size…</option>${(it.variants || []).map((v) => `<option ${v === addS.variant ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div><div><label>How many</label><input name="qty" type="number" min="1" max="20" value="${esc(addS.qty)}"></div></div>`;
+    return `${tbc}<div class="formgrid"><div><label>How many</label><input name="qty" type="number" min="1" max="20" value="${esc(addS.qty)}"></div></div>`;
+  }
+  function addCard() {
+    if (!addOpen) return '';
+    const live = orders.filter((o) => !o.cancelled), it = addItem();
+    return `<form class="card" id="addClaim" data-form="add-claim"><div class="row"><h2 style="margin:0">Add a claim for someone</h2><button type="button" class="sm secondary" data-act="add-close">Close</button></div>
+      <p class="sub" style="margin:4px 0 10px">For a gap in an import, or an order that came by message. It follows the same rules as when a joiner claims — but you can add to private and closed group orders. They'll see it in My orders; no email is sent.</p>
+      ${addMsg ? `<div class="msg ${addMsg.ok ? '' : 'err'}" data-add-msg style="${addMsg.ok ? 'background:var(--ok-bg); color:var(--ok-ink); border-color:var(--ok-line)' : ''}">${esc(addMsg.text)}${addMsg.ok && addMsg.handle ? ` <button type="button" class="sm secondary" data-act="add-show" data-handle="${esc(addMsg.handle)}">Show @${esc(addMsg.handle)}'s claims</button>` : ''}</div>` : ''}
+      <div class="formgrid"><div><label>Person (Instagram handle)</label><input name="handle" list="knownHandles" value="${esc(addS.handle)}" placeholder="@handle" autocomplete="off" required><datalist id="knownHandles">${addLook.matches.map((x) => `<option value="${esc(x)}">`).join('')}</datalist>
+          <label class="chk" style="margin-top:6px"><input type="checkbox" name="createHandle" ${addS.create ? 'checked' : ''}> New person — create this handle</label><div class="sub" data-unknown hidden></div></div>
+        <div><label>Group order</label><select name="orderId"><option value="">Choose…</option>${live.map((o) => `<option value="${o.id}" ${String(o.id) === String(addS.orderId) ? 'selected' : ''}>${esc(o.title)}${o.isPrivate ? ' (private)' : ''}${o.status && o.status !== 'open' ? ` (${esc(o.status)})` : ''}</option>`).join('')}</select></div>
+        <div><label>Item</label><select name="itemId" ${addS.orderId ? '' : 'disabled'}><option value="">${addS.orderId ? 'Choose…' : 'Choose a group order first'}</option>${addItems().map((i) => `<option value="${i.id}" ${String(i.id) === String(addS.itemId) ? 'selected' : ''}>${esc(i.title)}${i.priceTbc ? ' (price TBC)' : i.price != null ? ` — ${money(i.price)}` : ''}</option>`).join('')}</select></div></div>
+      <div data-add-detail>${addDetail(it)}</div>
+      <div class="sub" style="margin:12px 0 4px; font-weight:600">Status — you choose each time</div>
+      <label class="chk"><input type="radio" name="status" value="requested" ${addS.status === 'requested' ? 'checked' : ''}> <strong>Requested</strong> — waits for you to secure it, like a joiner's claim</label>
+      <label class="chk"><input type="radio" name="status" value="confirmed" ${addS.status === 'confirmed' ? 'checked' : ''}> <strong>Confirmed</strong> — counts as owed now (any credit they hold is used straight away)</label>
+      ${addS.status === 'confirmed' ? `<div style="margin-top:8px" data-add-stage><label>Where is it now? <span class="sub">(for something already ordered or arrived)</span></label><select name="stage">${BULK_STAGES.map((p) => `<option ${p === addS.stage ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select></div>` : ''}
+      <p class="msg err" data-add-error hidden></p><div class="btn-row"><button type="submit">Add the claim</button></div></form>`;
+  }
+  // read the panel back into addS (typing doesn't redraw, so nothing is lost or loses focus)
+  function addHint() {                                                                    // updated IN PLACE: redrawing while you type would move the cursor
+    const el = $('#addClaim [data-unknown]', root); if (!el) return;
+    const h = cleanHandle(addS.handle), fresh = h && addLook.for === h;                     // only once the server has answered for exactly what is typed
+    const text = fresh && addLook.blocked ? `@${h} is blocked — unblock them on the People tab first.` : fresh && !addLook.exact && !addS.create ? `There's no @${h} on the site yet — tick “New person” if that's right.` : '';
+    el.hidden = !text; el.textContent = text;
+    const dl = $('#knownHandles', root); if (dl) dl.innerHTML = addLook.matches.map((x) => `<option value="${esc(x)}">`).join('');
+  }
+  function lookupLater() { clearTimeout(lookTimer); lookTimer = setTimeout(lookup, 160); }
+  async function lookup() {
+    const h = cleanHandle(addS.handle);
+    if (!h) { addLook = { for: '', exact: false, blocked: false, matches: [] }; return addHint(); }
+    const r = await api('GET', `/api/admin/joiners/lookup?q=${encodeURIComponent(h)}`);
+    if (!r.ok || cleanHandle(addS.handle) !== h) return;                                    // the answer is for something no longer typed
+    addLook = { for: h, exact: !!r.json.exact, blocked: !!r.json.blocked, matches: r.json.matches || [] }; addHint();
+  }
+  function readAdd(t) {
+    if (t.name === 'handle') { addS.handle = t.value; addHint(); lookupLater(); }
+    else if (t.name === 'createHandle') { addS.create = t.checked; addHint(); }
+    else if (t.name === 'orderId') { addS.orderId = t.value; addS.itemId = ''; addS.parts = {}; addS.variant = ''; addS.qty = '1'; addS.together = false; }
+    else if (t.name === 'itemId') { addS.itemId = t.value; addS.parts = {}; addS.variant = ''; addS.qty = '1'; addS.together = false; }
+    else if (t.name === 'qty') addS.qty = t.value;
+    else if (t.name === 'variant') addS.variant = t.value;
+    else if (t.name === 'together') addS.together = t.checked;
+    else if (t.name === 'status') addS.status = t.value;
+    else if (t.name === 'stage') addS.stage = t.value;
+    else if (t.dataset?.part !== undefined) addS.parts[t.dataset.part] = t.value;
+  }
+  async function submitAdd(form) {
+    const err = (text) => { const m = $('[data-add-error]', form); m.textContent = text; m.hidden = !text; };
+    err('');
+    const handle = cleanHandle(addS.handle), it = addItem(); let lines;
+    if (!handle) return err('Enter the person\'s Instagram handle.');
+    if (!addS.orderId || !it) return err('Choose the group order and the item.');
+    const q = Number(addS.qty);
+    if (it.type === 'set' || it.type === 'independent') {
+      const asked = it.members.map((m) => ({ member: m.name, qty: Number(addS.parts[m.name] || 0) })).filter((p) => p.qty > 0);
+      if (!asked.length) return err(it.type === 'set' ? 'Enter how many of at least one part.' : 'Enter how many of at least one member.');
+      if (asked.some((p) => !Number.isInteger(p.qty) || p.qty > 20)) return err('Each number must be a whole number from 1 to 20.');
+      lines = it.type === 'set' ? [{ itemId: it.id, parts: asked, together: !!addS.together }] : asked.map((p) => ({ itemId: it.id, member: p.member, qty: p.qty }));
+    } else {
+      if (!Number.isInteger(q) || q < 1 || q > 20) return err('How many: a whole number from 1 to 20.');
+      if (it.type === 'size' && !addS.variant) return err('Choose a size.');
+      lines = [{ itemId: it.id, qty: q, ...(it.type === 'size' ? { variant: addS.variant } : {}) }];
+    }
+    if (!addS.status) return err('Choose Requested or Confirmed — there is no default.');            // checked last, so problems are reported top to bottom, in the order of the form
+    const r = await api('POST', '/api/admin/claims/add', { handle, createHandle: addS.create, status: addS.status, ...(addS.status === 'confirmed' ? { pipeline: addS.stage } : {}), lines });
+    if (!r.ok) return err(errText(r));
+    const j = r.json, n = j.claimIds.length, left = j.leftAsRequests;
+    const how = addS.status === 'requested' ? (n === 1 ? 'as a request' : 'as requests') : `${j.confirmed} confirmed${left ? `, ${left} left as request${left === 1 ? '' : 's'}` : ''}`;
+    addMsg = { ok: true, handle: j.handle, text: `Added ${n} claim${n === 1 ? '' : 's'} for @${j.handle}${j.newHandle ? ' (a new person was created)' : ''} — ${how}.${j.placements.length ? ` Placed: ${j.placements.map((p) => `${p.member} → Set ${p.setNumber}`).join(', ')}.` : ''}${addS.status === 'confirmed' && j.skippedTbc ? ` ${j.skippedTbc} still need the price set (TBC).` : ''}${addS.status === 'confirmed' && left - j.skippedTbc > 0 ? ' Set parts stay requests until their set is secured (Sets tab).' : ''}` };
+    Object.assign(addS, { itemId: '', qty: '1', variant: '', parts: {}, together: false, create: false });
+    await render(root);
+  }
+
   function draw() {
     if (moveState) { const h = $('#moveHandle', root), cr = $('#moveCreate', root); if (h) moveState.handle = h.value; if (cr) moveState.create = cr.checked; }
     const list = visible();
@@ -239,9 +330,11 @@
       if (!g.people.has(c.handle)) g.people.set(c.handle, []);
       g.people.get(c.handle).push(c);
     }
-    root.innerHTML = `<div class="row" style="margin:18px 0 10px"><h1 style="margin:0">Claims</h1><div class="btn-row" style="margin:0" role="group" aria-label="How to group claims"><button class="sm ${view === 'person' ? '' : 'secondary'}" data-act="view" data-view="person" aria-pressed="${view === 'person'}">By person</button><button class="sm ${view === 'item' ? '' : 'secondary'}" data-act="view" data-view="item" aria-pressed="${view === 'item'}">By item</button></div></div>
+    const goCount = byOrder.size;
+    root.innerHTML = `<div class="row" style="margin:18px 0 10px"><h1 style="margin:0">Claims</h1><div class="btn-row" style="margin:0"><button class="sm" data-act="add-open" aria-expanded="${addOpen}">+ Add a claim</button><span role="group" aria-label="How to group claims" style="display:inline-flex; gap:8px"><button class="sm ${view === 'person' ? '' : 'secondary'}" data-act="view" data-view="person" aria-pressed="${view === 'person'}">By person</button><button class="sm ${view === 'item' ? '' : 'secondary'}" data-act="view" data-view="item" aria-pressed="${view === 'item'}">By item</button></span></div></div>
       ${truncated ? `<div class="card" data-truncated style="border:2px solid var(--accent)"><strong>Only the first ${claims.length.toLocaleString('en-GB')} claims are shown.</strong> There are more than that — narrow it with <em>Group order</em> above to see the rest.</div>` : ''}
       ${cancelCard()}
+      ${addCard()}
       <div class="card"><div class="formgrid">
         <div><label>Group order</label><select data-filter="order"><option value="">All</option>${orders.map((o) => `<option value="${o.id}" ${String(o.id) === String(filter.order) ? 'selected' : ''}>${esc(o.title)}</option>`).join('')}</select></div>
         <div><label>Show</label><select data-filter="status">${[['active', 'Active (requested + confirmed)'], ['requested', 'Requested only'], ['confirmed', 'Confirmed only'], ['cancelled', 'Cancelled'], ['all', 'Everything']].map(([v, l]) => `<option value="${v}" ${filter.status === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
@@ -258,9 +351,10 @@
         const requested = all.filter((c) => c.status === 'requested' && (!c.setId || c.setDecision === 'secured') && !c.priceTbc).length;
         const tbcWaiting = all.filter((c) => c.status === 'requested' && c.priceTbc).length;
         const setWaiting = all.filter((c) => c.status === 'requested' && c.setId && c.setDecision !== 'secured').length;
-        return `<div class="card"><div class="row"><div><h2 style="margin:0">${esc(g.title)}</h2><div class="sub">${all.length} claim${all.length === 1 ? '' : 's'} · ${requested} waiting to be secured${tbcWaiting ? ` · ${tbcWaiting} waiting for a price (TBC)` : ''}${setWaiting ? ` · ${setWaiting} set part${setWaiting === 1 ? '' : 's'} waiting for their set (see the Sets tab)` : ''}</div></div>
+        const gOpen = goOpen(g.id || 0, goCount), gOwed = all.reduce((n, c) => n + owedOf(c), 0);
+        return `<div class="card" data-go="${g.id || 0}"><div class="row"><div><h2 style="margin:0"><button class="ghost gotoggle" data-act="toggle-go" data-go="${g.id || 0}" aria-expanded="${gOpen}" aria-label="${gOpen ? 'Hide' : 'Show'} the claims in ${esc(g.title)}"><span aria-hidden="true">${gOpen ? '▾' : '▸'}</span> ${esc(g.title)}</button></h2><div class="sub">${all.length} claim${all.length === 1 ? '' : 's'} · ${requested} waiting to be secured${tbcWaiting ? ` · ${tbcWaiting} waiting for a price (TBC)` : ''}${setWaiting ? ` · ${setWaiting} set part${setWaiting === 1 ? '' : 's'} waiting for their set (see the Sets tab)` : ''}${gOwed > 0 ? ` · owed <strong>${money(gOwed)}</strong>` : ''}</div></div>
           ${requested && g.id ? `<button data-act="secure" data-id="${g.id}" data-n="${requested}" data-title="${esc(g.title)}">Secure all requested (${requested})</button>` : ''}</div>
-          ${pickRow(g)}${view === 'item' ? itemsBlock(g) : peopleBlock(g)}</div>`;
+          ${gOpen ? `${pickRow(g)}${view === 'item' ? itemsBlock(g) : peopleBlock(g)}` : ''}</div>`;
       }).join('') : '<div class="card"><p class="muted">No claims match.</p></div>'}`;
   }
 
@@ -315,8 +409,12 @@
       case 'group-toggle': openGroups.has(b.dataset.key) ? openGroups.delete(b.dataset.key) : openGroups.add(b.dataset.key); draw(); break;
       case 'more': shown.set(b.dataset.key, (shown.get(b.dataset.key) || PAGE) + PAGE); draw(); break;
       case 'view': view = b.dataset.view; try { localStorage.setItem('gom.claims.view', view); } catch { /* fine */ } draw(); break;
-      case 'expand-all': for (const k of allKeys()) open.add(k); for (const k of [...shown.keys()]) shown.set(k, 1e9); draw(); break;
-      case 'collapse-all': open.clear(); openGroups.clear(); shown.clear(); draw(); break;
+      case 'add-open': addOpen = true; addMsg = null; draw(); $('#addClaim input[name="handle"]', root)?.focus(); if (addS.handle) lookupLater(); break;
+      case 'add-close': addOpen = false; draw(); break;
+      case 'add-show': filter.q = b.dataset.handle; goChosen.clear(); draw(); break;
+      case 'toggle-go': { const k = Number(b.dataset.go); goChosen.set(k, b.getAttribute('aria-expanded') !== 'true'); draw(); break; }
+      case 'expand-all': for (const x of visible()) goChosen.set(x.order_id || 0, true); for (const k of allKeys()) open.add(k); for (const k of [...shown.keys()]) shown.set(k, 1e9); draw(); break;
+      case 'collapse-all': for (const x of visible()) goChosen.set(x.order_id || 0, false); open.clear(); openGroups.clear(); shown.clear(); draw(); break;
       case 'stage-chip': filter.stage = filter.stage === b.dataset.stage ? '' : b.dataset.stage; draw(); break;
       case 'owing-chip': filter.unpaid = !filter.unpaid; draw(); break;
       case 'requested-chip': filter.status = filter.status === 'requested' ? 'active' : 'requested'; draw(); break;
@@ -345,6 +443,7 @@
 
   async function onSubmit(e) {
     e.preventDefault();
+    if (e.target.dataset.form === 'add-claim') return submitAdd(e.target);
     const form = e.target, id = Number(form.dataset.id), claim = claims.find((c) => c.id === id);
     const costs = {};
     for (const [k] of CATS) {
@@ -362,9 +461,11 @@
 
   async function onChange(e) {
     const t = e.target;
+    if (t.closest?.('#addClaim')) { readAdd(t); if (['orderId', 'itemId', 'status'].includes(t.name)) draw(); return; }
     if (t.id === 'moveCreate') { moveState.create = t.checked; return draw(); }
     if (t.dataset.filter) {
       filter[t.dataset.filter] = t.type === 'checkbox' ? t.checked : t.value;
+      if (['stage', 'unpaid'].includes(t.dataset.filter)) goChosen.clear();            // a filter always shows what it found
       if (t.dataset.filter === 'order') return render(root);   // different data
       return draw();
     }
@@ -382,13 +483,14 @@
   }
   // typing in the search box filters as you go without losing focus
   function onInput(e) {
+    if (e.target.closest?.('#addClaim')) return readAdd(e.target);
     if (e.target.matches?.('[data-keep]')) {                                          // what they'd get back, as you type the fee
       const row = e.target.closest('[data-cancel-req]'), paid = Number(row.dataset.paid), keep = Number(e.target.value || 0), box = $('[data-keep-preview]', row);
       box.textContent = Number.isNaN(keep) || keep < 0 ? 'Enter a fee of £0 or more.' : keep > paid + 0.004 ? `They have only paid ${money(paid)}.` : `They'd get ${money(Math.round((paid - keep) * 100) / 100)} back as credit${keep > 0 ? `; you keep ${money(keep)}` : ''}.`;
       return;
     }
     if (e.target.dataset.filter === 'q') {
-      filter.q = e.target.value; const pos = e.target.selectionStart; draw();
+      filter.q = e.target.value; goChosen.clear(); const pos = e.target.selectionStart; draw();
       const q = $('[data-filter="q"]', root); q.focus(); q.setSelectionRange?.(pos, pos);
     }
   }

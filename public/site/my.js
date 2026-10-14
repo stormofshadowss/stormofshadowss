@@ -47,7 +47,7 @@
     if (c.priceTbc) return '<span class="pill">Price TBC — nothing to pay yet</span>';          // never shown as £0.00
     return CATS.filter(([k]) => c.costs[k] && (c.costs[k].cost || c.costs[k].paid)).map(([k, name]) => {
       const x = c.costs[k], owed = Math.max(0, x.cost - x.paid);
-      return `<span class="pill ${owed > 0 && c.status === 'confirmed' ? 'warn' : 'ok'}">${name} ${money(x.cost)}${k === 'initials' && c.splitShare > 0 ? ` (includes ${money(c.splitShare)} for an unclaimed part)` : ''}${c.status !== 'confirmed' ? '' : owed > 0 ? ` · ${money(owed)} to pay` : x.paidDate ? ` · paid ${fmtDate(x.paidDate)}` : ' · paid'}</span>`;
+      return `<span class="pill ${owed > 0 && c.status === 'confirmed' ? (c.overdue ? 'err' : 'warn') : 'ok'}">${name} ${money(x.cost)}${k === 'initials' && c.splitShare > 0 ? ` (includes ${money(c.splitShare)} for an unclaimed part)` : ''}${c.status !== 'confirmed' ? '' : owed > 0 ? ` · ${money(owed)} to pay` : x.paidDate ? ` · paid ${fmtDate(x.paidDate)}` : ' · paid'}</span>`;
     }).join(' ');
   }
 
@@ -57,11 +57,13 @@
     const claims = S.allClaims();
     const ongoing = claims.filter((c) => c.pipeline !== 'completed'), completed = claims.filter((c) => c.pipeline === 'completed');
     const ready = S.readyItems().length;
+    const late = claims.filter((c) => c.overdue && c.owed > 0), lateTotal = late.reduce((n, c) => n + c.owed, 0), lateGos = [...new Set(late.map((c) => c.orderTitle))];
     const tile = (label, n, cls = '') => `<div class="tile ${cls}"><div class="sub" style="color:inherit">${label}</div><div class="n">${money(n)}</div></div>`;
     const card = (href, title, hint) => `<a class="gocard" href="${href}"><strong>${title}</strong><span class="sub">${hint}</span></a>`;
     const settingsCard = card('#/settings', 'My settings', m.pending.length ? `${m.pending.length} handle${m.pending.length === 1 ? '' : 's'} waiting for the GOM` : 'handles, email & preferences');
     view.innerHTML = `<div class="row" style="margin:18px 0 8px"><h1 style="margin:0">My orders</h1><span class="muted">${handles.length === 1 ? `<strong>@${esc(handles[0])}</strong> · ` : ''}${esc(m.account.email)} · <a href="#" data-act="logout">Sign out</a></span></div>
       ${handles.length > 1 ? `<div class="card"><label for="sw">Viewing</label><select id="sw" data-act="switch">${handles.map((h) => `<option value="${esc(h)}" ${h === S.handle ? 'selected' : ''}>@${esc(h)}</option>`).join('')}</select></div>` : ''}
+      ${late.length ? `<div class="card overdue-notice" data-overdue-notice role="alert"><strong>You have overdue payments</strong><div>${money(lateTotal)} is overdue across ${late.length} item${late.length === 1 ? '' : 's'} (${lateGos.slice(0, 3).map(esc).join(', ')}${lateGos.length > 3 ? ` and ${lateGos.length - 3} more` : ''}).</div><div class="btn-row" style="margin-top:10px"><a class="pillbtn" href="#/pay">Pay now</a><a class="pillbtn alt" href="#/ongoing">See which items</a></div></div>` : ''}
       ${S.invites.length ? `<div class="card" data-invite-notice style="background:var(--paper)"><strong>${S.invites.length === 1 ? `@${esc(S.invites[0].fromHandle)} has asked` : `${S.invites.length} people have asked`} to ship a parcel together with yours</strong><div class="sub">One parcel, one address — you choose which of your items go in. Nothing happens unless you say yes.</div><a class="pillbtn" href="#/ship" style="margin-top:8px">Have a look</a></div>` : ''}
       ${shippedBanner()}
       ${sum ? `<div class="card"><h2>What you owe</h2><div class="tiles">${CATS.map(([k, n]) => tile(n, o[k])).join('')}${tile('Total to pay', o.total, 'total')}</div>
@@ -110,11 +112,21 @@
         <p class="msg" data-msg hidden></p><div class="btn-row"><button type="submit">Send request</button><button type="button" class="secondary" data-act="cancel-close">Never mind</button></div></form>`;
       return `${cr?.status === 'declined' ? `<div class="sub" data-cancel-state="declined">Your request to cancel this was declined${cr.note ? `: “${esc(cr.note)}”` : ''}.</div>` : ''}<button class="sm secondary" data-act="cancel-ask" data-id="${c.id}" style="margin-top:4px">${cr?.status === 'declined' ? 'Ask again' : 'Ask to cancel'}</button>`;
     };
+    // one card per group order, which you can fold away; the ones with something overdue stay open, and a short list opens by itself
+    S.listKind = kind; S.goChosen ||= new Map();
+    const goOpen = (title, cs) => { const k = `${kind}:${title}`; return S.goChosen.has(k) ? S.goChosen.get(k) : (cs.some((c) => c.overdue && c.owed > 0) || byGo.size <= 3); };
+    const goCard = (title, cs) => {
+      const open = goOpen(title, cs), late = cs.filter((c) => c.overdue && c.owed > 0), lateTotal = late.reduce((n, c) => n + c.owed, 0), toPay = cs.reduce((n, c) => n + (c.owed > 0 ? c.owed : 0), 0);
+      return `<div class="card gosec ${late.length ? 'has-overdue' : ''}" data-go="${esc(title)}"><div class="row"><h2 style="margin:0"><button class="ghost gohead" data-act="toggle-go" data-go="${esc(title)}" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} the items in ${esc(title)}"><span aria-hidden="true">${open ? '▾' : '▸'}</span> ${esc(title)}</button></h2>
+        <div class="gobadges">${late.length ? `<span class="pill err" data-go-overdue>${late.length} overdue · ${money(lateTotal)}</span>` : toPay > 0 && !done ? `<span class="pill warn">${money(toPay)} to pay</span>` : ''}<span class="sub">${cs.length} item${cs.length === 1 ? '' : 's'}</span></div></div>
+        ${open ? cs.map((c) => `<div class="itemrow ${c.overdue && c.owed > 0 ? 'overdue' : ''}"><div class="grow">${esc(c.label)} ${c.isFixed ? '<span class="pill">fixed</span>' : ''}
+        <div class="sub">${esc(stage(c))}${c.payBy && c.owed > 0 ? ` · <span class="${c.overdue ? 'late-text' : ''}">${c.overdue ? 'was due' : 'pay by'} ${fmtDate(c.payBy)}</span>` : ''}</div><div style="margin-top:4px">${costChips(c)}</div>${cancelUi(c)}</div>
+        <div>${c.overdue ? '<span class="pill err">overdue</span>' : ''}</div></div>`).join('') : ''}</div>`;
+    };
     view.innerHTML = `${S.crumb}<h1 style="margin:4px 0 10px">${done ? 'Completed orders' : 'Ongoing orders'}</h1>
       ${!done ? shippedBanner() : ''}
-      ${byGo.size ? [...byGo.entries()].map(([title, cs]) => `<div class="card"><h2>${esc(title)}</h2>${cs.map((c) => `<div class="itemrow"><div class="grow">${esc(c.label)} ${c.isFixed ? '<span class="pill">fixed</span>' : ''}
-        <div class="sub">${esc(stage(c))}${c.payBy && c.owed > 0 ? ` · pay by ${fmtDate(c.payBy)}` : ''}</div><div style="margin-top:4px">${costChips(c)}</div>${cancelUi(c)}</div>
-        <div>${c.overdue ? '<span class="pill warn">overdue</span>' : ''}</div></div>`).join('')}</div>`).join('')
+      ${byGo.size > 1 ? `<div class="btn-row" style="margin:0 0 8px"><button class="sm secondary" data-act="open-all-go">Open all</button><button class="sm secondary" data-act="close-all-go">Close all</button></div>` : ''}
+      ${byGo.size ? [...byGo.entries()].map(([title, cs]) => goCard(title, cs)).join('')
       : `<div class="card"><p class="muted">${done ? 'Nothing has been received yet.' : 'No ongoing orders. <a href="#/completed">See completed orders</a>'}</p></div>`}`;
   }
   function shippedBanner() {
@@ -136,6 +148,8 @@
   view.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-act]'); if (!b) return;
     if (b.dataset.act === 'logout') { e.preventDefault(); await api('POST', '/api/auth/logout', {}); S.me = null; location.hash = '#/'; return signedOut(); }
+    if (b.dataset.act === 'toggle-go') { const k = `${S.listKind}:${b.dataset.go}`, was = b.getAttribute('aria-expanded') === 'true'; S.goChosen.set(k, !was); return ordersList(S.listKind); }
+    if (b.dataset.act === 'open-all-go' || b.dataset.act === 'close-all-go') { for (const c of view.querySelectorAll('[data-act="toggle-go"]')) S.goChosen.set(`${S.listKind}:${c.dataset.go}`, b.dataset.act === 'open-all-go'); return ordersList(S.listKind); }
     if (b.dataset.act === 'cancel-ask') { S.cancelOpen = Number(b.dataset.id); return route(); }
     if (b.dataset.act === 'cancel-close') { S.cancelOpen = null; return route(); }
     if (b.dataset.act === 'cancel-withdraw') {

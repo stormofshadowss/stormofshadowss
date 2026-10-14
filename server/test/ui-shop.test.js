@@ -59,7 +59,7 @@ test('an order page shows every kind of item with prices, claimed counts and pay
   assert.match(text, /Random card/);
   assert.match(text, /Seasons Greetings.*£9\.00 for the whole set.*every part must be claimed/);
   assert.match(text, /Diary £2\.00 · 0 claimed.*Washi tape £1\.00 · 0 claimed/, 'each part shows its own price and how many are claimed');
-  assert.match(text, /you can take more than one of the same part, and each goes in a different set/);
+  assert.match(text, /Press \+ on the members you want\. Each goes in the first available set with a free space for it/);
   assert.ok(p.byText('button', 'Claim the whole set (£9.00, all in one set)'));
   p.close();
 });

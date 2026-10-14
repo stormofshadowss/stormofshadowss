@@ -61,11 +61,13 @@
   }).join('')}</div>` : '';
 
   // Invitations from a friend to share THEIR parcel: pick your own items, give your own bias / Lomo name, or say no.
+  // a little "Select all / Clear" for a checklist of items (only worth showing when there are two or more)
+  const pickAll = (n) => (n < 2 ? '' : `<div class="btn-row" style="margin:2px 0 4px"><button type="button" class="sm secondary" data-act="ship-all">Select all ${n}</button><button type="button" class="sm secondary" data-act="ship-none">Clear</button></div>`);
   const invitesHtml = (S, ready, a) => {
     const here = S.invites.filter((i) => i.forHandle === S.handle), elsewhere = S.invites.filter((i) => i.forHandle !== S.handle);
     return here.map((i) => `<form class="card" data-form="accept" data-parcel="${i.parcelId}" style="border:2px solid var(--accent)"><h2>@${esc(i.fromHandle)} has asked to ship together with you</h2>
       <p>@${esc(i.fromHandle)} is posting a parcel to <strong>their own address</strong> and would like your items in the same box. It's one parcel, and the postage and packaging are shared out <strong>${/^ww\b/i.test(i.method) ? "by the weight of each person's items" : 'equally per person'}</strong>${/^ww\b/i.test(i.method) ? '' : ' (not by how many items each has)'} — there may be more than two of you. @${esc(i.fromHandle)} will confirm when it arrives. It's your choice — you can say no.</p>
-      ${ready.length ? `<label>Which of your items should go in?</label>${ready.map((c) => `<label class="chk" style="margin:6px 0"><input type="checkbox" name="claim" value="${c.id}"> ${esc(c.label)} <span class="sub">${esc(c.orderTitle)}</span></label>`).join('')}
+      ${ready.length ? `<label>Which of your items should go in?</label>${pickAll(ready.length)}${ready.map((c) => `<label class="chk" style="margin:6px 0"><input type="checkbox" name="claim" value="${c.id}"> ${esc(c.label)} <span class="sub">${esc(c.orderTitle)}</span></label>`).join('')}
         <div class="formgrid" style="margin-top:10px"><div><label>Your bias (for your thank-you card 💌)</label><input name="bias" maxlength="80" value="${esc(S.defaults?.bias || '')}" placeholder="e.g. Felix"></div>
         <div><label>Personalised Lomo name</label><input name="lomoName" maxlength="80" value="${esc(S.defaults?.lomoName || '')}" placeholder="${a?.fullName ? `Leave blank to use ${esc(a.fullName.trim())}` : 'optional'}"></div></div>
         <label style="margin-top:10px">Packing notes (optional)</label><textarea name="notes" rows="2" maxlength="1000" style="width:100%; padding:10px 12px; border:1.5px solid var(--line); border-radius:8px; font:inherit"></textarea>`
@@ -86,7 +88,7 @@
     } else {
       const name = a.fullName.trim();
       body = `<form class="card" data-form="ship"><h2>Request shipping</h2>
-        <label>Which items would you like sent?</label>${ready.map((c) => `<label class="chk" style="margin:6px 0"><input type="checkbox" name="claim" value="${c.id}"> ${esc(c.label)} <span class="sub">${esc(c.orderTitle)}</span></label>`).join('')}
+        <label>Which items would you like sent?</label>${pickAll(ready.length)}${ready.map((c) => `<label class="chk" style="margin:6px 0"><input type="checkbox" name="claim" value="${c.id}"> ${esc(c.label)} <span class="sub">${esc(c.orderTitle)}</span></label>`).join('')}
         <div class="formgrid" style="margin-top:12px"><div><label>Shipping method (for a price quote)</label><select name="method"><option value="">Choose a method…</option>${METHODS.map((x) => `<option>${esc(x)}</option>`).join('')}</select></div></div>
         <div data-declared hidden style="margin-top:10px"><label>Declared value for customs</label>
           <label class="chk"><input type="radio" name="declaredValue" value="true"> True value</label><label class="chk"><input type="radio" name="declaredValue" value="reduced"> Reduced value</label>
@@ -108,6 +110,8 @@
       if (e.target.name === 'method') $('[data-declared]', view).hidden = !/^ww\b/i.test(e.target.value);
     };
     view.onclick = async (e) => {                                          // answering an invitation, withdrawing one, or leaving a shared parcel
+      const sel = e.target.closest('[data-act="ship-all"], [data-act="ship-none"]');
+      if (sel) { for (const c of sel.closest('form').querySelectorAll('input[name="claim"]')) c.checked = sel.dataset.act === 'ship-all'; return; }
       const b = e.target.closest('[data-act]'); if (!b || !['decline', 'withdraw', 'leave'].includes(b.dataset.act)) return;
       const id = b.dataset.id, ask = {
         decline: [`Say no to sharing with @${b.dataset.from}?\n\nTheir parcel will be posted on its own.`, 'No thanks', 'POST', `/api/my/parcels/${id}/companion/decline`, 'You said no.'],

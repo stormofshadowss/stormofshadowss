@@ -101,7 +101,7 @@ test('LONG LISTS ARE PAGED: 25 people at a time with "Show 25 more", and searchi
   const p = await claims(); await p.choose(p.q('[data-filter="order"]'), String(go)); await sleep(120); await p.settle();
   assert.equal(p.qa('[data-buyer]').length, 25); const m = p.byText('button', 'Show 5 more people'); assert.ok(m, p.text(p.q('#tabBody')).slice(0, 200)); assert.match(p.text(m), /Show 5 more people \(5 not shown\)/);
   await p.click(m); assert.equal(p.qa('[data-buyer]').length, 30); assert.equal(p.byText('button', 'Show'), undefined, 'no more button once everyone is listed');
-  await p.click(p.byText('button', 'Collapse all')); assert.equal(p.qa('[data-buyer]').length, 25, 'collapse all starts the paging over');
+  await p.click(p.byText('button', 'Collapse all')); assert.equal(p.qa('[data-buyer]').length, 0, 'collapse all folds the group order away'); await p.click(p.q('[data-act="toggle-go"]')); assert.equal(p.qa('[data-buyer]').length, 25, 'and opening it again starts the paging over');
   await p.type(p.q('[data-filter="q"]'), 'mp'); await p.settle(); assert.ok(p.qa('[data-buyer]').length >= 30, 'a search is never cut off at 25');
   p.close();
 });

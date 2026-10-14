@@ -343,3 +343,18 @@ There's a **Launch** tab (at the end of the tab row) for the move from testing t
 - **Grouped under their item,** with counts (sets / ready / to fill / secured), 12 sets at a time with *Show more*.
 - **Chips:** *To decide* (the default), *Ready to secure*, *Secured*, *Cancelled*, *All* — each with a count. **Find a handle, member or item** searches (with or without the @) and opens whatever matches. **Open all / Close all.**
 - **Secure all N…** (when sets are *ready*: every part held, no price TBC, no pending cancel request): confirms them one after another and tells you if any couldn't be secured. A set that can't be secured yet says why under its line.
+
+### Folding, overdue and Select all (found while importing real data)
+- **My orders (joiners):** *Ongoing* and *Completed orders* are one card per group order that **folds away** (click its name; **Open all / Close all**). A short list (three or fewer) opens by itself; with more, they start folded — **except any group order with something overdue, which stays open**. The header says how many items and what's owed (*£X to pay*) or, in red, *N overdue · £X*.
+- **Overdue is red** everywhere: the pill, the item's left edge, "was due 20/09/2026", the cost chip, the order's badge — and the **dashboard** shows a red *You have overdue payments* notice at the very top (the total, how many items, which orders, *Pay now* and *See which items*). It only counts what is still owed and clears once it's paid.
+- **Request shipping** has **Select all N** and **Clear** above the item list (also when joining a friend's parcel), shown when there are two or more items.
+- **GOM → Claims:** each group order is **one line** (its name, claim counts, what's owed, and *Secure all requested*) until you click it open. Three group orders or fewer open by themselves; **Expand all / Collapse all** work on everything; **searching or choosing a stage / "still owes money" always opens what it found**. Works in *By person* and *By item*.
+
+### Adding a claim for someone (Claims tab → **+ Add a claim**)
+For **a gap in an import** (a person who's missing a claim) and for **orders that come by message** (often on a *private* group order). It follows exactly the same rules as when a joiner claims — same prices, same TBC rule, same placement into member sets — except that **you can add to private and closed group orders**.
+- **Person:** type their handle (suggestions appear as you type — including people who have no claims yet). If they're not on the site at all, tick **New person** to create them.
+- **Group order → item → how many.** A size item asks for the size; a member item asks which members and how many of each; a member set asks which parts (and *keep together*), and says afterwards which set each part went into.
+- **Status — you choose every time, there's no default:** **Requested** waits for you to secure it, like a joiner's claim. **Confirmed** counts as owed straight away and uses any credit they hold; it also asks *where it is now* (e.g. already arrived at the warehouse). A set part can't be confirmed until its set is secured, and a TBC-priced item can't be confirmed until the price is set — those stay as requests and the message says so.
+- **They see it in My orders like any other claim. No email is sent.** After adding, **Show @handle's claims** takes you to them; you can then record anything already paid with *Edit costs*.
+- A **new person** you create has no account yet; when they sign in and add that handle, it asks for your approval (because the handle already has claims) — the usual safety.
+- *Not included:* on-hand **Shop** items (those are claimed from the Shop page).

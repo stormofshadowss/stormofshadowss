@@ -185,7 +185,7 @@ test('you can never move a claim you cannot see: changing the filter drops hidde
 test('names with HTML in them are shown as text in the new controls', async () => {
   const o = await order('<img src=x onerror="window.pwned=1"> bulk'); const h = fresh('xs');
   await claimAndSecure(app, admin, h, o.item);
-  const p = await openClaims();
+  const p = await openClaims(); for (let b; (b = p.q('[data-act="toggle-go"][aria-expanded="false"]'));) await p.click(b);       // a group order is one line until opened
   await p.click(p.q('[data-act="toggle"]', buyerOf(p, h)));
   await p.click(p.q('input[data-act="pick"]', buyerOf(p, h)));
   assert.equal(p.q('#tabBody img'), null); assert.equal(p.window.pwned, undefined);

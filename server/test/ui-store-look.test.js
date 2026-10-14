@@ -144,3 +144,14 @@ test('THE GOM: a Type selector for each group (saved straight away, feeds the ch
   assert.equal((await fetch(`${app.base}/api/groups`).then((r) => r.json())).groups.find((g) => g.id === G.none).kind, 'duo');
   assert.deepEqual([p.errors, p.native], [[], 0]); p.close();
 });
+
+test('THE MEMBER-SET EXPLANATION uses the GOM\'s wording, and the "keep together" choice it mentions really appears once two members are chosen', async () => {
+  const p = await shop(`#/order/${G.soon}`); const card = () => p.q(`[data-item-card="${G.set}"]`);
+  const line = p.qa('.sub', card()).find((x) => /^Press \+/.test(p.text(x)));
+  assert.equal(p.text(line), 'Press + on the members you want. Each goes in the first available set with a free space for it, or a new set starts if there isn’t one. You can also choose to keep your members in the same set but this may affect if your claim goes through or not.');
+  assert.doesNotMatch(p.text(card()), /Press \+ for each part|each goes in a different set|a new set opens for you/, 'the old wording is gone');
+  assert.equal(p.q('[data-act="together"]', card()), null, 'one member: no choice to make yet');
+  await p.click(p.q('[data-act="inc"][data-member="A"]', card())); await p.click(p.q('[data-act="inc"][data-member="B"]', card()));
+  assert.match(p.text(p.q('label.chk', card())), /Keep these together in the same set/, 'two members: the choice the sentence mentions');
+  p.close();
+});

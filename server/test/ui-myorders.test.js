@@ -271,7 +271,7 @@ test('ongoing orders: grouped by order, each item shows its stage, cost lines wi
   assert.match(text(p), /Initials £6\.00 · paid \d\d\/\d\d\/\d{4}/);
   assert.match(text(p), /EMS £2\.00 · £2\.00 to pay/);
   assert.match(text(p), /Album.*Initials £26\.00 · £26\.00 to pay/);
-  assert.ok(p.qa('.pill.warn').some((x) => x.textContent === 'overdue'), 'overdue is flagged');
+  assert.ok(p.qa('.pill.err').some((x) => x.textContent === 'overdue'), 'overdue is flagged — in red');
   await api('PATCH', `/api/admin/orders/${w.order}`, { paymentDeadline: '2099-01-10' });
   p.close();
 });

@@ -9,6 +9,7 @@ import { addClaimCosts, lockJoiner, setCost, sweepCredit } from '../lib/ledger.j
 import { cancelClaim } from '../lib/cancel.js';
 import { ensureDevice, deviceHasProof, grantProof } from '../lib/device.js';
 import { placeSetParts } from '../lib/sets.js';
+import { placeItemLine, lockLineItems } from '../lib/claim-create.js';
 import { moveClaims } from '../lib/move-claims.js';
 import { HttpError } from '../errors.js';
 import { CATS, round2 } from '../lib/money.js';
@@ -17,7 +18,38 @@ const READY = 'ready to pack / on hand';
 const PIPELINE = ['awaiting fulfillment', 'ordered via proxy / warehouse', 'arrived at proxy / warehouse', 'shipping requested',
   'enroute to GOM', 'arrived at GOM', 'checking parcel', READY, 'packed', 'shipped', 'completed'];
 
+// the stages the GOM can set by hand (the others — shipping requested, packed, shipped — follow from a parcel)
+const BULK_STAGES = ['awaiting fulfillment', 'ordered via proxy / warehouse', 'arrived at proxy / warehouse', 'arrived at GOM', 'checking parcel', READY];
+
 const maxList = () => Number(process.env.CLAIMS_LIST_MAX) || 20000;          // most claims the admin list returns in one go (an env override exists for tests)
+
+// Confirm requested claims (a GO's, or just the listed ones) and start what they owe. Used by the Secure buttons AND when the GOM adds a claim for someone as "confirmed",
+// so both follow exactly the same rules (TBC prices and pending cancel requests are left alone; set parts wait for their set; credit is applied).
+export async function secureClaims(conn, b, accountId) {
+  // set parts are secured a whole set at a time (Sets tab) — except a new request that joined a set ALREADY secured, which is confirmed here like any other claim
+  const where = ["status = 'requested'", "(set_id IS NULL OR set_id IN (SELECT id FROM item_sets WHERE admin_decision = 'secured'))"]; const params = [];
+  if (b.orderId) { where.push('order_id = ?'); params.push(b.orderId); }
+  if (b.claimIds?.length) { where.push('id IN (?)'); params.push(b.claimIds); }
+  // A claim whose price is still TBC can't be confirmed — leave those alone, and say how many.
+  const [[tbc]] = await conn.query(`SELECT COUNT(*) AS n FROM claims WHERE ${where.join(' AND ')} AND price_tbc = 1`, params);
+  where.push('price_tbc = 0');
+  // Something a joiner has asked to cancel isn't confirmed behind their back — leave those too, and say how many.
+  const ASKED = "EXISTS (SELECT 1 FROM cancel_requests cr WHERE cr.claim_id = claims.id AND cr.status = 'pending')";
+  const [[asked]] = await conn.query(`SELECT COUNT(*) AS n FROM claims WHERE ${where.join(' AND ')} AND ${ASKED}`, params);
+  where.push(`NOT ${ASKED}`);
+  // Lock order matters: people first (lowest id first), claims second. Every
+  // flow that touches someone's money does the same, so none can wait on each other in a circle.
+  const [who] = await conn.query(`SELECT DISTINCT joiner_id FROM claims WHERE ${where.join(' AND ')} ORDER BY joiner_id`, params);
+  for (const { joiner_id } of who) await lockJoiner(conn, joiner_id);
+  const [rows] = await conn.query(`SELECT id, joiner_id FROM claims WHERE ${where.join(' AND ')} FOR UPDATE`, params);
+  if (rows.length) await conn.query("UPDATE claims SET status = 'confirmed' WHERE id IN (?)", [rows.map((r) => r.id)]);
+  // Newly confirmed costs can now be met by any credit the joiner already has.
+  for (const joinerId of [...new Set(rows.map((r) => r.joiner_id))].sort((a, b2) => a - b2)) {
+    await sweepCredit(conn, joinerId);
+  }
+  await audit(conn, accountId, 'claims.secure', 'order', b.orderId || null, { count: rows.length, skippedTbc: tbc.n, skippedCancel: asked.n });
+  return { ids: rows.map((r) => r.id), skippedTbc: tbc.n, skippedCancel: asked.n };
+}
 
 export function claimRoutes(app, { pool, cfg, notifier }) {
   const claimLimiter = rateLimit({
@@ -57,8 +89,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
       // nobody else is placed into these items' sets, so two people can't take the same part of the same set.
       // Every item named in the request is locked (lowest id first, so two requests can never wait on each other in a circle). That also stops a price
       // edit from landing between us reading the price and saving the claim — an unsecured claim must always carry the price listed at the time.
-      const lockIds = [...new Set(b.lines.filter((l) => l.itemId).map((l) => l.itemId))].sort((x, y) => x - y);
-      if (lockIds.length) await conn.query('SELECT id FROM items WHERE id IN (?) ORDER BY id FOR UPDATE', [lockIds]);
+      await lockLineItems(conn, b.lines);
       // Shop (on hand) stock: lock each shop item (lowest id first) so the last unit can't be sold to two people at once.
       const shopLocks = [...new Set(b.lines.filter((l) => l.leftoverId).map((l) => l.leftoverId))].sort((x, y) => x - y);
       if (shopLocks.length) await conn.query('SELECT id FROM leftover_items WHERE id IN (?) ORDER BY id FOR UPDATE', [shopLocks]);
@@ -79,42 +110,8 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
           }
           continue;
         }
-        const [[item]] = await conn.query(
-          `SELECT i.id, i.order_id, i.item_type, i.title, i.price, i.price_tbc, i.size_bucket, i.cancelled_at, go.status, go.is_private
-             FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id = ?`, [line.itemId]);
-        // Private orders look exactly like orders that don't exist.
-        if (!item || item.is_private) throw notFound('That item isn\'t available');
-        if (item.status !== 'open') throw bad('That order has closed', 'order_closed');
-        if (item.cancelled_at) throw bad("That item isn't available any more", 'item_cancelled');
-        if (item.item_type === 'set') {
-          const asked = {};
-          for (const p of line.parts || []) asked[p.member] = (asked[p.member] || 0) + p.qty;
-          if (!Object.keys(asked).length) throw bad(`Choose at least one part of "${item.title}"`);
-          const [roster] = await conn.query('SELECT name FROM item_members WHERE item_id = ?', [item.id]);
-          const known = new Set(roster.map((r) => r.name));
-          for (const m of Object.keys(asked)) if (!known.has(m)) throw bad(`"${m}" isn't part of "${item.title}"`);
-          if (Object.values(asked).some((n) => n > 20)) throw bad('That\'s more of one part than we can take in one go');
-          for (const p of await placeSetParts(conn, { joinerId, item, qtyByMember: asked, together: !!line.together })) { ids.push(p.claimId); placements.push(p); }
-          continue;
-        }
-        let member = null, variant = null;
-        if (item.item_type === 'independent') {
-          const [[m]] = await conn.query('SELECT name FROM item_members WHERE item_id = ? AND name = ?', [item.id, line.member || '']);
-          if (!m) throw bad(`Choose a member for "${item.title}"`);
-          member = m.name;
-        } else if (item.item_type === 'size') {
-          const [[v]] = await conn.query('SELECT label FROM item_variants WHERE item_id = ? AND label = ?', [item.id, line.variant || '']);
-          if (!v) throw bad(`Choose a size for "${item.title}"`);
-          variant = v.label;
-        }
-        const label = `${item.title}${member ? ` — ${member}` : ''}${variant ? ` (${variant})` : ''}`;
-        for (let n = 0; n < (line.qty || 1); n++) {
-          const [r] = await conn.query(
-            `INSERT INTO claims (joiner_id, order_id, item_id, label, member_name, variant_label, size_bucket, price_tbc)
-             VALUES (?,?,?,?,?,?,?,?)`, [joinerId, item.order_id, item.id, label, member, variant, item.size_bucket, item.price_tbc ? 1 : 0]);
-          await addClaimCosts(conn, r.insertId, item.price_tbc ? 0 : item.price);        // a TBC price costs nothing yet, and the claim can't be secured until it's set
-          ids.push(r.insertId);
-        }
+        const r = await placeItemLine(conn, { joinerId, line });
+        ids.push(...r.ids); placements.push(...r.placements);
       }
       return { ids, placements, shopIds };
     });
@@ -160,32 +157,62 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
     const b = z.object({ orderId: z.number().int().positive().optional(), claimIds: z.array(z.number().int().positive()).max(500).optional() })
       .refine((v) => v.orderId || v.claimIds?.length, 'Give an orderId or claimIds').parse(req.body);
     const out = await withTx(pool, async (conn) => {
-      // set parts are secured a whole set at a time (Sets tab) — except a new request that joined a set ALREADY secured, which is confirmed here like any other claim
-      const where = ["status = 'requested'", "(set_id IS NULL OR set_id IN (SELECT id FROM item_sets WHERE admin_decision = 'secured'))"]; const params = [];
-      if (b.orderId) { where.push('order_id = ?'); params.push(b.orderId); }
-      if (b.claimIds?.length) { where.push('id IN (?)'); params.push(b.claimIds); }
-      // A claim whose price is still TBC can't be confirmed — leave those alone, and say how many.
-      const [[tbc]] = await conn.query(`SELECT COUNT(*) AS n FROM claims WHERE ${where.join(' AND ')} AND price_tbc = 1`, params);
-      where.push('price_tbc = 0');
-      // Something a joiner has asked to cancel isn't confirmed behind their back — leave those too, and say how many.
-      const ASKED = "EXISTS (SELECT 1 FROM cancel_requests cr WHERE cr.claim_id = claims.id AND cr.status = 'pending')";
-      const [[asked]] = await conn.query(`SELECT COUNT(*) AS n FROM claims WHERE ${where.join(' AND ')} AND ${ASKED}`, params);
-      where.push(`NOT ${ASKED}`);
-      // Lock order matters: people first (lowest id first), claims second. Every
-      // flow that touches someone's money does the same, so none can wait on each other in a circle.
-      const [who] = await conn.query(`SELECT DISTINCT joiner_id FROM claims WHERE ${where.join(' AND ')} ORDER BY joiner_id`, params);
-      for (const { joiner_id } of who) await lockJoiner(conn, joiner_id);
-      const [rows] = await conn.query(`SELECT id, joiner_id FROM claims WHERE ${where.join(' AND ')} FOR UPDATE`, params);
-      if (rows.length) await conn.query("UPDATE claims SET status = 'confirmed' WHERE id IN (?)", [rows.map((r) => r.id)]);
-      // Newly confirmed costs can now be met by any credit the joiner already has.
-      for (const joinerId of [...new Set(rows.map((r) => r.joiner_id))].sort((a, b2) => a - b2)) {
-        await sweepCredit(conn, joinerId);
-      }
-      await audit(conn, req.account.id, 'claims.secure', 'order', b.orderId || null, { count: rows.length, skippedTbc: tbc.n, skippedCancel: asked.n });
-      return { ids: rows.map((r) => r.id), skippedTbc: tbc.n, skippedCancel: asked.n };
+      return secureClaims(conn, b, req.account.id);
     });
     notifier.claimsSecured(out.ids);
     res.json({ ok: true, secured: out.ids.length, skippedTbc: out.skippedTbc, skippedCancel: out.skippedCancel });
+  }));
+
+  // Who exists? (for the "Add a claim" panel: suggestions as you type, and whether the exact handle is already on the site). Prefix match; '_' and '%' are literal characters.
+  app.get('/api/admin/joiners/lookup', requireAdmin, wrap(async (req, res) => {
+    const q = normalizeHandle(String(req.query.q || ''));
+    if (!q) return res.json({ matches: [], exact: false, blocked: false });
+    const [rows] = await pool.query("SELECT instagram_handle AS handle, is_blocked AS blocked FROM joiners WHERE instagram_handle LIKE ? ESCAPE '\\\\' ORDER BY (instagram_handle = ?) DESC, instagram_handle LIMIT 15", [`${q.replace(/[\\%_]/g, '\\$&')}%`, q]);
+    const me = rows.find((r) => r.handle === q);
+    res.json({ matches: rows.map((r) => r.handle), exact: !!me, blocked: !!me?.blocked });
+  }));
+
+  // The GOM adds a claim FOR someone: to fill a gap in an import, or to take an order that came by DM (often on a PRIVATE group order). It goes through exactly the
+  // same placement as a joiner's own claim (lib/claim-create.js) — same prices, same TBC rule, same set placement — but the GOM may add to a private or a closed order.
+  // The status is CHOSEN EVERY TIME (no default): "requested" waits for a Secure like any request; "confirmed" goes through the ordinary secure logic, so what they
+  // owe starts and any credit they hold is applied. The person sees it in My orders like any other claim. No email is sent.
+  app.post('/api/admin/claims/add', requireAdmin, wrap(async (req, res) => {
+    const b = z.object({
+      handle: z.string().min(1).max(40), createHandle: z.boolean().optional(),
+      status: z.enum(['requested', 'confirmed']),
+      pipeline: z.enum(BULK_STAGES).optional(),
+      lines: z.array(z.object({
+        itemId: z.number().int().positive(), qty: z.number().int().min(1).max(20).optional(),
+        member: z.string().max(80).optional(), variant: z.string().max(40).optional(),
+        parts: z.array(z.object({ member: z.string().max(80), qty: z.number().int().min(1).max(20) })).max(40).optional(), together: z.boolean().optional(),
+      })).min(1).max(30),
+    }).parse(req.body);
+    const handle = normalizeHandle(b.handle);
+    if (!isValidHandle(handle)) throw bad('Instagram handles use letters, numbers, full stops and underscores (up to 30 characters).');
+    if (b.pipeline && b.status !== 'confirmed') throw bad('A stage only makes sense for a confirmed claim.', 'stage_needs_confirmed');
+    const out = await withTx(pool, async (conn) => {
+      await lockLineItems(conn, b.lines);                                                  // items first, then the person — the same order every other flow uses
+      const [[existing]] = await conn.query('SELECT id, is_blocked FROM joiners WHERE instagram_handle = ?', [handle]);
+      if (existing?.is_blocked) throw conflict(`@${handle} is blocked — unblock them on the People tab first.`, 'handle_blocked');
+      if (!existing && !b.createHandle) throw bad(`There's no @${handle} on the site yet — tick “New person” to create them.`, 'unknown_handle');
+      let joinerId = existing?.id;
+      if (!existing) joinerId = (await conn.query('INSERT INTO joiners (instagram_handle) VALUES (?)', [handle]))[0].insertId;
+      await lockJoiner(conn, joinerId);
+      const ids = [], placements = [];
+      for (const line of b.lines) { const r = await placeItemLine(conn, { joinerId, line, asAdmin: true }); ids.push(...r.ids); placements.push(...r.placements); }
+      let confirmed = [], skippedTbc = 0;
+      if (b.status === 'confirmed') {
+        const sec = await secureClaims(conn, { claimIds: ids }, req.account.id);
+        confirmed = sec.ids; skippedTbc = sec.skippedTbc;
+        if (b.pipeline && confirmed.length) {
+          await conn.query(`UPDATE claims SET pipeline = ?${b.pipeline === READY ? ', ready_to_pack_date = COALESCE(ready_to_pack_date, CURDATE())' : ''} WHERE id IN (?)`, [b.pipeline, confirmed]);
+        }
+      }
+      await audit(conn, req.account.id, 'claims.add', 'joiner', joinerId, { count: ids.length, status: b.status, confirmed: confirmed.length, newHandle: !existing, stage: b.pipeline || null });
+      return { ids, placements, confirmed, skippedTbc, newHandle: !existing };
+    });
+    res.status(201).json({ ok: true, handle, newHandle: out.newHandle, claimIds: out.ids, confirmed: out.confirmed.length, leftAsRequests: out.ids.length - out.confirmed.length, skippedTbc: out.skippedTbc,
+      placements: out.placements.map(({ claimId, member, setNumber, label, price }) => ({ claimId, member, setNumber, label, price })) });
   }));
 
   // Edit one claim: cost lines, pipeline stage, size, or cancel it.
@@ -234,7 +261,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
 
   // Move many claims to a new stage in one go (e.g. a whole order to "ordered via proxy"). Safer than changing them one at a time: it only
   // touches confirmed claims, and leaves alone anything whose stage is driven by another screen (boxes, packing), saying so for each one.
-  const BULK_STAGES = ['awaiting fulfillment', 'ordered via proxy / warehouse', 'arrived at proxy / warehouse', 'arrived at GOM', 'checking parcel', READY];
+
   app.post('/api/admin/claims/pipeline', requireAdmin, wrap(async (req, res) => {
     const b = z.object({ claimIds: z.array(z.number().int().positive()).min(1).max(500), pipeline: z.enum(BULK_STAGES) }).parse(req.body);
     const ids = [...new Set(b.claimIds)].sort((x, y) => x - y);

@@ -69,3 +69,14 @@ test('the dark look overrides every colour token the light (default) look define
   for (const k of ['ink', 'soft', 'paper', 'surface', 'surface-2', 'line', 'accent', 'accent-ink', 'accent-soft', 'ok-bg', 'ok-ink', 'ok-line', 'warn-bg', 'warn-ink', 'warn-line', 'err-bg', 'err-ink', 'err-line']) { assert.ok(k in base, `${k} missing from the default look`); assert.ok(k in dark, `${k} not overridden for dark`); }
   for (const k of Object.keys(dark)) if (k !== 'page') assert.ok(k in base, `${k} is defined for dark but not for the default look`);        // ('page' is a gradient in the default look, a plain colour in dark)
 });
+
+// ── spacing: a picture on an item card must never touch the title next to it (this once shipped with NO right margin, so the text sat against the picture) ──
+const rule = (sel) => { const i = css.indexOf(sel); assert.ok(i >= 0, `${sel} rule is missing`); return css.slice(css.indexOf('{', i) + 1, css.indexOf('}', i)); };
+const px = (v) => parseFloat(v);
+test('ITEM CARDS: the picture has room on its right (wide cards) and a gap (compact rows), so the title never touches it', () => {
+  const m = /margin:\s*([^;]+);/.exec(rule('.item.wide > .picbox {')); assert.ok(m, 'the picture on a wide card sets its margins');
+  const [top, right, bottom, left] = m[1].replace(/\/\*.*$/, '').trim().split(/\s+/).map(px);
+  assert.ok(right >= 10, `right margin is ${right}px — the title would touch the picture`); assert.ok(left >= 10 && top >= 0 && bottom >= 0);
+  const g = /gap:\s*([\d.]+)px/.exec(rule('.item:not(.wide) {')); assert.ok(g && px(g[1]) >= 10, 'the compact row keeps a gap between picture and text');
+  const base = /margin:\s*([^;]+);/.exec(rule('.card > a.picbox, .card > .picbox {')); assert.ok(base && px(base[1].trim().split(/\s+/)[1]) >= 10, 'and so does a plain picture on any other card');
+});

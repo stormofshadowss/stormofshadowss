@@ -109,6 +109,7 @@ test('GOM Claims: TBC claims are labelled, counted separately, left out of "secu
   await app.api('POST', '/api/claims', { handle: 'tbc_c1', lines: [{ itemId: priced }, { itemId: tbc }] });
   const p = await gomPage(app, admin); await p.click(p.byText('#tabs button', 'Claims'));
   const card = () => p.byText('#tabBody .card', `Claims ${N}`);
+  if (!p.q('table', card())) await p.click(p.q('[data-act="toggle-go"]', card()));                      // a group order is one line until opened
   assert.match(p.text(card()), /2 claims · 1 waiting to be secured · 1 waiting for a price \(TBC\)/);
   assert.match(p.text(card()), /Secure all requested \(1\)/, 'only the priced claim is counted');
   await p.click(p.q('[data-act="toggle"]', card()));
