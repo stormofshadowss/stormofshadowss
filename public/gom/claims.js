@@ -12,6 +12,9 @@
   let moveState = null;        // the "move to another person" panel: { handle, create, preview, previewFor, error }
   const open = new Set();      // "orderId::handle" accordions that are open
   let editing = null;          // claim id being edited
+  // "Fix…" on a claim row: change WHAT it is (item / size / member, with the price question asked each time), delete it outright (when nothing has been paid), or turn a filler line into credit
+  let fixing = null;
+  const fixS = { mode: 'change', plan: null, orderId: '', itemId: '', member: '', variant: '', pricing: '', amount: '', reason: '' };
   // "Add a claim for someone": a panel for the GOM to enter a claim on a person's behalf (a gap in an import, or an order that came by DM, often on a private group order)
   let addOpen = false, addMsg = null, addLook = { for: '', exact: false, blocked: false, matches: [] }, lookTimer = null;     // addLook: what the server said about the handle typed so far
   const addS = { handle: '', create: false, orderId: '', itemId: '', qty: '1', variant: '', parts: {}, together: false, status: '', stage: 'awaiting fulfillment' };
@@ -46,7 +49,47 @@
     });
   }
 
+  function fixPanel(c) {
+    const p = fixS.plan, btn = (m, l) => `<button type="button" class="sm ${fixS.mode === m ? '' : 'secondary'}" data-act="fix-mode" data-mode="${m}" aria-pressed="${fixS.mode === m}">${l}</button>`;
+    const head = `<div class="row"><strong>Fix “${esc(c.label)}” — @${esc(c.handle)}${c.orderTitle ? ` · ${esc(c.orderTitle)}` : ''}</strong><button type="button" class="sm secondary" data-act="fix-close">Close</button></div>`;
+    if (!p || p.id !== c.id) return `<tr><td colspan="7"><div data-form="fix" data-id="${c.id}">${head}<p class="sub">Checking what can be done…</p></div></td></tr>`;
+    const blocked = (reasons, hint) => `<div class="msg err" data-fix-blocked>${reasons.map((r) => `<div>${esc(r)}</div>`).join('')}${hint ? `<div style="margin-top:6px">${hint}</div>` : ''}</div>`;
+    let body = '';
+    if (fixS.mode === 'change') {
+      if (!p.change.ok) body = blocked(p.change.reasons);
+      else {
+        const live = orders.filter((o) => !o.cancelled), items = (orders.find((o) => String(o.id) === String(fixS.orderId))?.items || []).filter((i) => !i.cancelled && i.type !== 'set'), it = items.find((i) => String(i.id) === String(fixS.itemId));
+        const changedItem = it && String(it.id) !== String(p.itemId), askPrice = changedItem && (it.priceTbc || Number(it.price) !== Number(p.cost));
+        body = `<div class="formgrid"><div><label>Group order</label><select name="orderId">${live.map((o) => `<option value="${o.id}" ${String(o.id) === String(fixS.orderId) ? 'selected' : ''}>${esc(o.title)}${o.isPrivate ? ' (private)' : ''}${o.status && o.status !== 'open' ? ` (${esc(o.status)})` : ''}</option>`).join('')}</select></div>
+          <div><label>Item</label><select name="itemId"><option value="">Choose…</option>${items.map((i) => `<option value="${i.id}" ${String(i.id) === String(fixS.itemId) ? 'selected' : ''}>${esc(i.title)}${i.priceTbc ? ' (price TBC)' : i.price != null ? ` — ${money(i.price)}` : ''}</option>`).join('')}</select></div>
+          ${it?.type === 'independent' ? `<div><label>Member</label><select name="member"><option value="">Choose…</option>${it.members.map((m) => `<option ${m.name === fixS.member ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>` : ''}
+          ${it?.type === 'size' ? `<div><label>Size</label><select name="variant"><option value="">Choose…</option>${(it.variants || []).map((v) => `<option ${v === fixS.variant ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>` : ''}</div>
+          ${askPrice ? `<div class="sub" style="margin:10px 0 4px; font-weight:600" data-ask-price>What should happen to its price? — you choose each time</div>
+            <label class="chk"><input type="radio" name="pricing" value="reprice" ${fixS.pricing === 'reprice' ? 'checked' : ''}> <strong>Re-price it</strong> — set it to the new item's price (${it.priceTbc ? 'TBC' : money(it.price)}). What's already paid is kept, so any difference shows as owed or as credit.</label>
+            <label class="chk"><input type="radio" name="pricing" value="keep" ${fixS.pricing === 'keep' ? 'checked' : ''}> <strong>Keep the old price</strong> (${money(p.cost)}) — only what it's called changes.</label>` : ''}
+          ${changedItem ? '<p class="sub">If you have already recorded a payment to a proxy for the old item, check the Proxy tab.</p>' : ''}
+          <p class="msg err" data-fix-error hidden></p><div class="btn-row"><button type="button" class="sm" data-act="fix-change">Change it…</button></div>`;
+      }
+    } else if (fixS.mode === 'delete') {
+      body = !p.delete.ok ? blocked(p.delete.reasons)
+        : `<p class="sub" style="margin:6px 0">Removes it completely, as if it had never been added — it isn't kept anywhere, and it can't be undone. They stay on the site; nothing else changes.</p><p class="msg err" data-fix-error hidden></p><div class="btn-row"><button type="button" class="sm" data-act="fix-delete">Delete it…</button></div>`;
+    } else {
+      body = !p.credit.ok ? blocked(p.credit.reasons)
+        : `<p class="sub" style="margin:6px 0">For a line that stood for credit rather than a real item: adds this credit to @${esc(c.handle)}'s account (it's used on anything they owe) and removes the line.</p>
+          <div class="formgrid"><div><label>Credit (£)</label><input name="amount" type="number" step="0.01" min="0.01" value="${esc(fixS.amount)}"></div><div class="span2"><label>Reason (they can see this)</label><input name="reason" maxlength="255" value="${esc(fixS.reason)}"></div></div>
+          <p class="msg err" data-fix-error hidden></p><div class="btn-row"><button type="button" class="sm" data-act="fix-credit">Turn into credit…</button></div>`;
+    }
+    return `<tr><td colspan="7"><div data-form="fix" data-id="${c.id}">${head}<div class="btn-row" style="margin:8px 0" role="group" aria-label="What to do">${btn('change', 'Change what it is')}${btn('delete', 'Delete it')}${btn('credit', 'Turn into credit')}</div>${body}</div></td></tr>`;
+  }
+  function readFix(t) {
+    if (t.name === 'orderId') { fixS.orderId = t.value; fixS.itemId = ''; fixS.member = ''; fixS.variant = ''; fixS.pricing = ''; }
+    else if (t.name === 'itemId') { fixS.itemId = t.value; fixS.member = ''; fixS.variant = ''; fixS.pricing = ''; }
+    else if (t.name === 'member') fixS.member = t.value; else if (t.name === 'variant') fixS.variant = t.value; else if (t.name === 'pricing') fixS.pricing = t.value;
+    else if (t.name === 'amount') fixS.amount = t.value; else if (t.name === 'reason') fixS.reason = t.value;
+  }
+  const fixErr = (text) => { const m = $('[data-form="fix"] [data-fix-error]', root); if (m) { m.textContent = text; m.hidden = !text; } else GOM.toast(text, true); };
   function claimRow(c) {
+    if (fixing === c.id) return fixPanel(c);
     if (editing === c.id) {
       return `<tr><td colspan="7"><form data-form="edit-costs" data-id="${c.id}"><strong>${esc(c.label)}</strong>
         <div class="cost-edit" style="margin:10px 0"><span></span><span class="sub">Cost (£)</span><span class="sub">Paid (£)</span>
@@ -61,7 +104,7 @@
       <td>${c.status === 'cancelled' ? '<span class="sub">—</span>' : `<select data-act-change="pipeline" data-id="${c.id}">${PIPELINE.map((p) => `<option ${p === c.pipeline ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>`}</td>
       <td class="nowrap">${c.priceTbc ? '<span class="pill warn">Price TBC</span>' : ''}${CATS.map(([k, name]) => (c.costs[k]?.cost || c.costs[k]?.paid) ? `<div class="sub">${name} ${money(c.costs[k].cost)} <span class="${c.costs[k].paid >= c.costs[k].cost ? '' : 'pill warn'}">paid ${money(c.costs[k].paid)}</span></div>` : '').join('')}</td>
       <td class="nowrap">${c.status === 'confirmed' ? (owed > 0 ? `<strong>${money(owed)}</strong> owed` : '<span class="pill ok">paid</span>') : '—'}</td>
-      <td class="nowrap">${c.status === 'cancelled' ? '' : `<button class="sm secondary" data-act="edit" data-id="${c.id}">Edit costs</button> <button class="sm secondary" data-act="cancel" data-id="${c.id}">Cancel</button>`}</td></tr>`;
+      <td class="nowrap">${c.status === 'cancelled' ? '' : `<button class="sm secondary" data-act="edit" data-id="${c.id}">Edit costs</button> <button class="sm secondary" data-act="fix" data-id="${c.id}">Fix…</button> <button class="sm secondary" data-act="cancel" data-id="${c.id}">Cancel</button>`}</td></tr>`;
   }
 
 
@@ -190,7 +233,7 @@
   }
   const bulkBar = () => `<div class="card" id="bulkBar" style="position:sticky; top:0; z-index:5; background:var(--paper)"><div class="row"><strong>${picked.size} claim${picked.size === 1 ? '' : 's'} selected</strong>
       <div class="btn-row" style="margin:0; align-items:center"><label for="bulkStage" class="sub" style="margin:0">Move to</label><select id="bulkStage">${BULK_STAGES.map((s) => `<option>${esc(s)}</option>`).join('')}</select>
-        <button class="sm" data-act="bulk-apply">Move them</button><button class="sm secondary" data-act="move-open">Move to another person…</button><button class="sm secondary" data-act="bulk-clear">Clear</button></div></div>${movePanel()}</div>`;
+        <button class="sm" data-act="bulk-apply">Move them</button><button class="sm secondary" data-act="move-open">Move to another person…</button><button class="sm secondary" data-act="bulk-delete">Delete…</button><button class="sm secondary" data-act="bulk-clear">Clear</button></div></div>${movePanel()}</div>`;
 
   // Joiners' requests to cancel an item. You decide each one, and choose how much of what they paid to KEEP as a cancellation fee.
   const asked = (iso) => `${fmtDate((iso || '').slice(0, 10))} ${(iso || '').slice(11, 16)}`;
@@ -418,7 +461,46 @@
       case 'stage-chip': filter.stage = filter.stage === b.dataset.stage ? '' : b.dataset.stage; draw(); break;
       case 'owing-chip': filter.unpaid = !filter.unpaid; draw(); break;
       case 'requested-chip': filter.status = filter.status === 'requested' ? 'active' : 'requested'; draw(); break;
-      case 'edit': editing = id; draw(); break;
+      case 'edit': editing = id; fixing = null; draw(); break;
+      case 'fix': {
+        fixing = id; editing = null; Object.assign(fixS, { mode: 'change', plan: null, orderId: '', itemId: '', member: '', variant: '', pricing: '', amount: '', reason: '' }); draw();
+        const r = await api('GET', `/api/admin/claims/${id}/fix-plan`); if (fixing !== id) break;
+        if (!r.ok) { fixing = null; draw(); return GOM.toast(errText(r), true); }
+        const p = r.json; Object.assign(fixS, { plan: p, orderId: String(p.orderId || ''), itemId: String(p.itemId || ''), member: p.member || '', variant: p.variant || '', amount: p.credit.amount ? String(p.credit.amount) : '', reason: `Credit (was a filler line: “${p.label}”)` }); draw(); break;
+      }
+      case 'fix-close': fixing = null; draw(); break;
+      case 'fix-mode': fixS.mode = b.dataset.mode; draw(); break;
+      case 'fix-change': {
+        const cid = fixing, p = fixS.plan, it = (orders.find((o) => String(o.id) === String(fixS.orderId))?.items || []).find((i) => String(i.id) === String(fixS.itemId));
+        if (!it) return fixErr('Choose the item.');
+        const changedItem = String(it.id) !== String(p.itemId), askPrice = changedItem && (it.priceTbc || Number(it.price) !== Number(p.cost));
+        if (it.type === 'independent' && !fixS.member) return fixErr('Choose a member.'); if (it.type === 'size' && !fixS.variant) return fixErr('Choose a size.');
+        if (askPrice && !fixS.pricing) return fixErr('Choose whether to re-price it or keep the old price — there is no default.');
+        const pricing = changedItem ? (askPrice ? fixS.pricing : 'keep') : undefined, now = `${it.title}${it.type === 'independent' ? ` — ${fixS.member}` : ''}${it.type === 'size' ? ` (${fixS.variant})` : ''}`;
+        const ok = await GOM.confirm(`Change “${p.label}” to “${now}” for @${p.handle}?${changedItem ? `\n\n${pricing === 'reprice' ? `Its price becomes ${it.priceTbc ? 'TBC (0)' : money(it.price)}; what's paid is kept, so any difference shows as owed or credit.` : `It keeps its price (${money(p.cost)}).`}` : ''}`, { ok: 'Change it', cancel: 'Not yet' });
+        if (!ok) return;
+        const r = await api('POST', `/api/admin/claims/${cid}/change`, { itemId: it.id, ...(it.type === 'independent' ? { member: fixS.member } : {}), ...(it.type === 'size' ? { variant: fixS.variant } : {}), ...(pricing ? { pricing } : {}) });
+        if (!r.ok) return fixErr(errText(r)); fixing = null; await render(root); GOM.toast(`Changed to “${r.json.label}”${r.json.repriced ? ' and re-priced' : ''}.`); break;
+      }
+      case 'fix-delete': {
+        const cid = fixing, p = fixS.plan; const ok = await GOM.confirm(`Delete “${p.label}” for @${p.handle} completely?\n\nIt is removed as if it had never been added. This can't be undone.`, { ok: 'Delete it', cancel: 'Not yet' }); if (!ok) return;
+        const r = await api('POST', '/api/admin/claims/delete', { claimIds: [cid] }); if (!r.ok) return fixErr(errText(r));
+        if (!r.json.deleted) return fixErr(r.json.refused[0].reasons.join(' ')); fixing = null; picked.delete(cid); await render(root); GOM.toast('Deleted.'); break;
+      }
+      case 'fix-credit': {
+        const cid = fixing, p = fixS.plan, amount = Number(fixS.amount), reason = (fixS.reason || '').trim();
+        if (!(amount > 0)) return fixErr('Enter the credit amount.'); if (!reason) return fixErr('Enter a reason — they can see it.');
+        const ok = await GOM.confirm(`Add ${money(amount)} credit to @${p.handle} and remove “${p.label}”?\n\nThe credit is used on anything they owe straight away. This can't be undone.`, { ok: 'Turn into credit', cancel: 'Not yet' }); if (!ok) return;
+        const r = await api('POST', `/api/admin/claims/${cid}/to-credit`, { amount, reason }); if (!r.ok) return fixErr(errText(r));
+        fixing = null; picked.delete(cid); await render(root); GOM.toast(`Added ${money(amount)} credit for @${p.handle}.`); break;
+      }
+      case 'bulk-delete': {
+        const ids = [...picked]; const d = await api('POST', '/api/admin/claims/delete', { claimIds: ids, dryRun: true }); if (!d.ok) return GOM.toast(errText(d), true);
+        const j = d.json; if (!j.deleted) return GOM.toast(`None of the ${ids.length} can be deleted — ${j.refused[0].reasons[0]}`, true);
+        const ok = await GOM.confirm(`Delete ${j.deleted} claim${j.deleted === 1 ? '' : 's'} completely?\n\n${j.refused.length ? `${j.refused.length} can't be deleted and will be left alone (for example “${j.refused[0].label}” for @${j.refused[0].handle}: ${j.refused[0].reasons[0]})\n\n` : ''}They are removed as if they had never been added. This can't be undone.`, { ok: `Delete ${j.deleted}`, cancel: 'Not yet' }); if (!ok) return;
+        const r = await api('POST', '/api/admin/claims/delete', { claimIds: ids }); if (!r.ok) return GOM.toast(errText(r), true);
+        picked.clear(); moveState = null; await render(root); GOM.toast(`Deleted ${r.json.deleted}.${r.json.refused.length ? ` ${r.json.refused.length} left alone.` : ''}`); break;
+      }
       case 'cancel-edit': editing = null; draw(); break;
       case 'secure': {
         const ok = await GOM.confirm(`Secure ${b.dataset.n} requested claim${b.dataset.n === '1' ? '' : 's'} in "${b.dataset.title}"?\n\nThey become confirmed, and what each person owes starts to count (any credit they hold is used straight away).`, { ok: 'Secure them' });
@@ -443,6 +525,7 @@
 
   async function onSubmit(e) {
     e.preventDefault();
+    if (e.target.dataset.form === 'fix') return;
     if (e.target.dataset.form === 'add-claim') return submitAdd(e.target);
     const form = e.target, id = Number(form.dataset.id), claim = claims.find((c) => c.id === id);
     const costs = {};
@@ -461,6 +544,7 @@
 
   async function onChange(e) {
     const t = e.target;
+    if (t.closest?.('[data-form="fix"]')) { readFix(t); if (['orderId', 'itemId', 'pricing'].includes(t.name)) draw(); return; }
     if (t.closest?.('#addClaim')) { readAdd(t); if (['orderId', 'itemId', 'status'].includes(t.name)) draw(); return; }
     if (t.id === 'moveCreate') { moveState.create = t.checked; return draw(); }
     if (t.dataset.filter) {
@@ -483,6 +567,7 @@
   }
   // typing in the search box filters as you go without losing focus
   function onInput(e) {
+    if (e.target.closest?.('[data-form="fix"]')) return readFix(e.target);
     if (e.target.closest?.('#addClaim')) return readAdd(e.target);
     if (e.target.matches?.('[data-keep]')) {                                          // what they'd get back, as you type the fee
       const row = e.target.closest('[data-cancel-req]'), paid = Number(row.dataset.paid), keep = Number(e.target.value || 0), box = $('[data-keep-preview]', row);

@@ -68,14 +68,23 @@
     return '';
   }
 
+  const ukToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London' }).format(new Date());
+  // when does this item stop taking claims? (its own date, or closed by hand; otherwise it follows its group order)
+  function closesCell(it) {
+    if (it.cancelled) return '—';
+    if (it.closedByHand) return `<span class="pill dim" data-item-state="hand">Closed by hand</span><div><button class="sm secondary" data-act="item-reopen" data-id="${it.id}">Reopen</button></div>`;
+    if (it.closed) return `<span class="pill dim" data-item-state="date">Closed ${fmtDate(it.closeDate)}</span><div><button class="sm secondary" data-act="item-reopen" data-id="${it.id}">Reopen</button></div>`;
+    return `${it.closeDate ? `<span data-item-state="dated">${fmtDate(it.closeDate)}</span>` : '<span class="sub">with the order</span>'}<div><button class="sm secondary" data-act="item-close" data-id="${it.id}">Close now</button></div>`;
+  }
   function itemRow(it) {
     if (editingItem === it.id) {
-      return `<tr><td colspan="8"><form data-form="edit-item" data-id="${it.id}"><div class="formgrid">
+      return `<tr><td colspan="9"><form data-form="edit-item" data-id="${it.id}"><div class="formgrid">
         <div class="span2"><label>Title</label><input name="title" value="${esc(it.title)}" maxlength="160" required></div>
         <div><label>Price (£)</label><input name="price" type="number" step="0.01" min="0" value="${it.priceTbc ? '' : it.price}" ${it.priceTbc ? 'disabled' : 'required'}><label class="chk" style="display:flex; margin-top:6px"><input type="checkbox" name="priceTbc" ${it.priceTbc ? 'checked' : ''}> Price to be confirmed (TBC)</label><div class="sub" data-price-note>Claims that haven't been secured yet will switch to the new price. Anything already secured keeps the price it was secured at. Tick TBC if the price isn't final yet: people can still claim, but nothing can be secured until you set a price.</div></div>
         <div class="full"><label>Description (optional)</label><textarea name="description" rows="3" maxlength="2000" style="width:100%; padding:10px 12px; border:1.5px solid var(--line); border-radius:8px; font:inherit" placeholder="Anything joiners should know…">${esc(it.description || '')}</textarea></div>
         <div class="full">${GOM.pictureControl('item', it.id, it.image, 'Item picture')}</div>
         ${dateInput('paymentDeadline', it.ownPaymentDeadline, "Pay by (blank = the GO's date)")}
+        <div>${dateInput('closeDate', it.closeDate, "Closes (blank = when the group order closes)")}<div class="sub">Claims on this item stop after this day (UK time).${currentOrder().closeDate ? ` It can't be later than the group order's ${fmtDate(currentOrder().closeDate)}.` : ''}</div></div>
         <div><label>Proxy (blank = the GO's)</label><input name="proxy" list="proxyList" value="${esc(it.proxy && it.proxy !== currentOrder().proxy ? it.proxy : '')}"></div>
       </div>
       <p class="sub">Changing the price only affects future claims — existing claims keep the price they were made at.</p>
@@ -83,17 +92,24 @@
       <div class="btn-row"><button type="submit" class="sm">Save</button><button type="button" class="sm secondary" data-act="cancel-item-edit">Cancel</button></div></form></td></tr>`;
     }
     return `<tr><td>${it.image ? `<img class="thumb sm" src="${esc(it.image.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}${esc(it.title)}${it.description ? `<div class="sub" style="white-space:pre-line">${esc(it.description.length > 140 ? it.description.slice(0, 140) + '…' : it.description)}</div>` : ''}</td><td>${esc(typeName[it.type])}</td><td class="nowrap">${it.priceTbc ? '<span class="pill warn">TBC</span>' : money(it.price)}</td>
-      <td class="nowrap">${fmtDate(it.payBy)}${it.ownPaymentDeadline ? ' <span class="sub">(own)</span>' : ''}</td><td>${esc(it.proxy || '—')}</td>
+      <td class="nowrap">${fmtDate(it.payBy)}${it.ownPaymentDeadline ? ' <span class="sub">(own)</span>' : ''}</td>
+      <td class="nowrap" data-closes>${closesCell(it)}</td><td>${esc(it.proxy || '—')}</td>
       <td>${itemSummary(it)}</td><td>${it.claimed}</td><td><button class="sm secondary" data-act="edit-item" data-id="${it.id}">Edit</button> <button class="sm secondary danger" data-act="delete-item" data-id="${it.id}">Delete</button>${it.cancelled ? ' <span class="pill warn" data-cancelled>Cancelled</span>' : ` <button class="sm secondary danger" data-act="cancel-item" data-id="${it.id}">Cancel…</button>`}${it.type === 'set' ? ` <button class="sm secondary" data-act="fixed" data-id="${it.id}">Fixed claimers</button>` : ''}</td></tr>`;
   }
 
   const currentOrder = () => orders.find((o) => o.id === itemsFor) || {};
+  // open group orders whose closing date has passed no longer take claims — easy to miss for imported ones, so say so
+  function dateNotice() {
+    const late = orders.filter((o) => !o.cancelled && o.closedByDate); if (!late.length) return '';
+    return `<div class="card" data-date-notice style="border:2px solid var(--warn-line); background:var(--warn-bg); color:var(--warn-ink)"><strong>${late.length} open group order${late.length === 1 ? ' is' : 's are'} past ${late.length === 1 ? 'its' : 'their'} closing date, so ${late.length === 1 ? 'it no longer takes' : 'they no longer take'} claims</strong>
+      <div style="color:inherit">${late.map((o) => `${esc(o.title)} (${fmtDate(o.closeDate)})`).join(' · ')}</div><div class="sub" style="color:inherit">To reopen one, edit it and change or clear its closing date. Or set its status to Closed to tidy it up.</div></div>`;
+  }
 
   function itemsPanel() {
     const o = currentOrder();
     return `<div class="card" id="itemsPanel"><div class="row"><h2 style="margin:0">Items — ${esc(o.title)}</h2><button class="sm secondary" data-act="close-items">Close</button></div>
-      <div class="scroll"><table class="grid"><thead><tr><th>Item</th><th>Type</th><th>Price</th><th>Pay by</th><th>Proxy</th><th>Parts / sizes</th><th>Claimed</th><th></th></tr></thead>
-      <tbody>${o.items.length ? o.items.map(itemRow).join('') : '<tr><td colspan="8" class="muted">No items yet — add the first one below.</td></tr>'}</tbody></table></div>
+      <div class="scroll"><table class="grid"><thead><tr><th>Item</th><th>Type</th><th>Price</th><th>Pay by</th><th>Closes</th><th>Proxy</th><th>Parts / sizes</th><th>Claimed</th><th></th></tr></thead>
+      <tbody>${o.items.length ? o.items.map(itemRow).join('') : '<tr><td colspan="9" class="muted">No items yet — add the first one below.</td></tr>'}</tbody></table></div>
       <h2 style="margin-top:20px">Add an item</h2>
       <form data-form="new-item" data-id="${o.id}"><div class="formgrid">
         <div class="span2"><label>Type</label><select name="type">${TYPES.map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select></div>
@@ -102,6 +118,7 @@
         <div class="full"><label>Description (optional — shown to joiners on the item)</label><textarea name="description" rows="3" maxlength="2000" style="width:100%; padding:10px 12px; border:1.5px solid var(--line); border-radius:8px; font:inherit" placeholder="Contents, size, edition, release notes, anything joiners should know…"></textarea></div>
         <div data-only="size,normal,random,independent,set"><label>Size (for postage)</label><select name="sizeBucket"><option>XS</option><option>S</option><option selected>M</option><option>L</option><option>XL</option></select></div>
         ${dateInput('paymentDeadline', '', "Pay by (blank = the GO's date)")}
+        <div>${dateInput('closeDate', '', "Closes (blank = when the group order closes)")}<div class="sub">Claims on this item stop after this day (UK time) — use it when an item closes before the rest of the order.</div></div>
         <div><label>Proxy (blank = the GO's)</label><input name="proxy" list="proxyList" maxlength="80"></div>
         <div class="full" data-extra hidden><label data-extra-label></label><input name="extra"><div class="btn-row" style="margin-top:6px"><button type="button" class="sm secondary" data-act="fill-members">Use the group's members</button></div></div>
         <div class="full" data-setonly hidden><label class="chk"><input type="checkbox" name="requiresFullSet"> Every part must be claimed — a set that doesn't fill can't go ahead</label></div>
@@ -150,10 +167,11 @@
       <details class="card" id="groupPics"><summary>Artist / group pictures and type (${groups.length})</summary>${groups.length ? '<p class="sub" style="margin:0 0 6px">The type is what the shop\'s filter chips (Boy bands, Girl groups…) use. Leave it blank and the group only shows under All.</p>' + groups.map((g) => `<div data-group-row="${g.id}">${GOM.pictureControl('group', g.id, g.cover, g.name)}<label class="sub" style="display:inline-block; margin:0 8px 0 0">Type</label><select data-kind-for="${g.id}" style="width:auto; display:inline-block"><option value="">— none —</option>${[['boy band', 'Boy band'], ['girl group', 'Girl group'], ['solo', 'Solo'], ['duo', 'Duo']].map(([v, l]) => `<option value="${v}" ${g.kind === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>`).join('') : '<p class="muted">No artist groups yet — one is created with your first group order.</p>'}</details>
       <datalist id="proxyList">${proxies.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>
       ${showNew ? `<div class="card"><h2>New group order</h2>${orderForm(null)}</div>` : ''}
+      ${dateNotice()}
       ${cancelPanel()}
       <div class="card"><div class="scroll"><table class="grid"><thead><tr><th>Title</th><th>Group</th><th>Status</th><th>Listing</th><th>Closes</th><th>Payment due</th><th>Proxy</th><th></th></tr></thead><tbody>
       ${orders.length ? orders.map((o) => `<tr data-order="${o.id}"><td>${o.cover ? `<img class="thumb sm" src="${esc(o.cover.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}<strong>${esc(o.title)}</strong></td><td>${esc(o.group)}</td>
-        <td>${o.cancelled ? '<span class="pill warn" data-cancelled>Cancelled</span>' : `<span class="pill ${o.status === 'open' ? 'ok' : 'dim'}">${o.status === 'open' ? 'Open' : 'Closed'}</span>`}</td>
+        <td>${o.cancelled ? '<span class="pill warn" data-cancelled>Cancelled</span>' : o.closedByDate ? '<span class="pill warn" data-closed-by-date title="Its closing date has passed, so it no longer takes claims">Closed (date passed)</span>' : `<span class="pill ${o.status === 'open' ? 'ok' : 'dim'}">${o.status === 'open' ? 'Open' : 'Closed'}</span>`}</td>
         <td>${o.isPrivate ? '<span class="pill warn">Private</span>' : 'Public'}${o.isTest ? ' <span class="pill" data-test>Test</span>' : ''}</td><td>${fmtDate(o.closeDate)}</td><td>${fmtDate(o.paymentDeadline)}</td><td>${esc(o.proxy || '—')}</td>
         <td class="nowrap"><button class="sm secondary" data-act="edit-order" data-id="${o.id}">Edit</button> <button class="sm" data-act="open-items" data-id="${o.id}">Items (${o.items.length})</button> <button class="sm secondary danger" data-act="delete-order" data-id="${o.id}">Delete</button>${o.cancelled ? '' : ` <button class="sm secondary danger" data-act="cancel-order" data-id="${o.id}">Cancel…</button>`}</td></tr>
         ${editingId === o.id ? `<tr><td colspan="8">${orderForm(o)}</td></tr>` : ''}`).join('') : '<tr><td colspan="8" class="muted">No group orders yet. Create your first one above.</td></tr>'}
@@ -246,7 +264,7 @@
       try { extra = parseExtra(type, val(form, 'extra')); } catch (err) { return showMsg(form, err.message); }
       const body = {
         type, title: val(form, 'title'), description: val(form, 'description'), ...priceBody(form), sizeBucket: val(form, 'sizeBucket'),
-        paymentDeadline: val(form, 'paymentDeadline') || null, proxy: val(form, 'proxy') || null, ...extra,
+        paymentDeadline: val(form, 'paymentDeadline') || null, closeDate: val(form, 'closeDate') || null, proxy: val(form, 'proxy') || null, ...extra,
       };
       if (type === 'set') body.requiresFullSet = form.elements.requiresFullSet.checked;
       const r = await api('POST', `/api/admin/orders/${form.dataset.id}/items`, body);
@@ -266,7 +284,7 @@
       if (!form.elements.priceTbc.checked && val(form, 'price') === '') return showMsg(form, 'Enter a price, or tick "price to be confirmed".');
       const r = await api('PATCH', `/api/admin/items/${form.dataset.id}`, {
         title: val(form, 'title'), ...priceBody(form), description: val(form, 'description'),
-        paymentDeadline: val(form, 'paymentDeadline') || null, proxy: val(form, 'proxy') || null,
+        paymentDeadline: val(form, 'paymentDeadline') || null, closeDate: val(form, 'closeDate') || null, proxy: val(form, 'proxy') || null,
       });
       if (!r.ok) return showMsg(form, errText(r));
       editingItem = null; await reload(true);
@@ -315,6 +333,16 @@
       case 'delete-item': await deleteIt('items', id, currentOrder().items?.find((x) => x.id === id)?.title); break;
       case 'delete-order': await deleteIt('orders', id, orders.find((x) => x.id === id)?.title); break;
       case 'edit-item': editingItem = id; draw(); break;
+      case 'item-close': {
+        const it = currentOrder().items.find((i) => i.id === id);
+        if (!(await GOM.confirm(`Close “${it.title}” for claims now?\n\nJoiners will see it greyed out, saying “Closed for claims”. The rest of the group order stays open, anything already claimed is untouched, and you can reopen it any time.`, { ok: 'Close it', cancel: 'Not yet' }))) break;
+        const r = await api('PATCH', `/api/admin/items/${id}`, { closed: true }); if (!r.ok) return GOM.toast(errText(r), true); await reload(true); GOM.toast('Closed for claims.'); break;
+      }
+      case 'item-reopen': {
+        const it = currentOrder().items.find((i) => i.id === id), clears = !!it.closeDate && it.closeDate < ukToday();           // its own date has passed: reopening clears it too
+        if (!(await GOM.confirm(`Reopen “${it.title}” for claims?${clears ? `\n\nIts closing date (${fmtDate(it.closeDate)}) has passed, so that date is cleared as well — it will then follow the group order.` : ''}`, { ok: 'Reopen it', cancel: 'Not yet' }))) break;
+        const r = await api('PATCH', `/api/admin/items/${id}`, { closed: false }); if (!r.ok) return GOM.toast(errText(r), true); await reload(true); GOM.toast('Reopened.'); break;
+      }
       case 'cancel-item-edit': editingItem = null; draw(); break;
       case 'fill-members': {
         const form = b.closest('form');

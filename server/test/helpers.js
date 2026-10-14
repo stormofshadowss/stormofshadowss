@@ -24,6 +24,7 @@ import { cancelRequestRoutes } from '../src/routes/cancel-requests.js';
 import { settingsRoutes } from '../src/routes/settings.js';
 import { launchRoutes } from '../src/routes/launch.js';
 import { incomingRoutes } from '../src/routes/incoming.js';
+import { claimFixRoutes } from '../src/routes/claim-fix.js';
 import { createAdmin } from '../src/lib/admins.js';
 
 export const ADMIN = { username: 'boss', email: 'boss@example.com', password: 'correct horse battery staple' };
@@ -46,7 +47,7 @@ export async function startApp(overrides = {}) {
   await migrate(cfg, () => {});
   const pool = createPool(cfg);
   const mailer = createMailer(cfg);
-  const app = createApp({ cfg, pool, mailer, extraRoutes: [catalogRoutes, claimRoutes, meRoutes, adminRoutes, setRoutes, fixedRoutes, boxRoutes, proxyRoutes, shopRoutes, imageRoutes, importRoutes, inviteRoutes, cancelRequestRoutes, settingsRoutes, launchRoutes, incomingRoutes] });
+  const app = createApp({ cfg, pool, mailer, extraRoutes: [catalogRoutes, claimRoutes, meRoutes, adminRoutes, setRoutes, fixedRoutes, boxRoutes, proxyRoutes, shopRoutes, imageRoutes, importRoutes, inviteRoutes, cancelRequestRoutes, settingsRoutes, launchRoutes, incomingRoutes, claimFixRoutes] });
   const server = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   const base = `http://127.0.0.1:${server.address().port}`;
   const cookies = {};

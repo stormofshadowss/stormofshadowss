@@ -69,7 +69,9 @@
     const [r, s] = await Promise.all([api('GET', '/api/orders'), api('GET', '/api/shop')]);
     orders = r.json?.orders || []; shopItems = s.json?.items || []; loaded = true;
     // forget basket lines for things that no longer exist or whose order has closed; shop lines are trimmed to what's still in stock
-    const live = new Map(orders.filter((o) => o.status === 'open').flatMap((o) => o.items.map((i) => [i.id, i])));
+    const live = new Map(orders.filter((o) => o.status === 'open').flatMap((o) => o.items.filter((i) => !i.closed).map((i) => [i.id, i])));
+    const closedNow = new Set(orders.flatMap((o) => o.items.filter((i) => i.closed || o.status !== 'open').map((i) => i.id)));
+    const droppedClosed = basket.filter((l) => !l.shopId && closedNow.has(l.itemId)).length;
     const liveShop = new Map(shopItems.map((i) => [i.id, i]));
     const before = JSON.stringify(basket);
     basket = basket.filter((l) => (l.shopId ? liveShop.has(l.shopId) : live.has(l.itemId)))
@@ -79,6 +81,7 @@
         return { ...l, price: l.member ? (it.members?.find((m) => m.name === l.member)?.price ?? it.price) : it.price };
       }).filter((l) => l.qty > 0);
     if (JSON.stringify(basket) !== before) saveBasket();
+    if (droppedClosed) setTimeout(() => SITE.toast(`${droppedClosed} item${droppedClosed === 1 ? '' : 's'} in your basket ${droppedClosed === 1 ? 'has' : 'have'} closed for claims, so ${droppedClosed === 1 ? 'it was' : 'they were'} taken out.`, true), 50);
   }
 
   const findItem = (id) => { for (const o of orders) for (const i of o.items) if (i.id === id) return { order: o, item: i }; return null; };
@@ -153,14 +156,14 @@
     if (!html.startsWith('<div class="card">')) return html;
     const wide = it.type !== 'normal' || /class="(opts|pills)"/.test(html);                      // sets, member options and sizes need room; a simple item is a small card
     const pic = it.image ? picbox(it.image, it.title) : `<div class="picbox ph" data-i="${esc(SITE.initials(it.title))}" style="--h:${SITE.hue(it.title)}" aria-hidden="true"></div>`;
-    return `<div class="card item${wide ? ' wide' : ''}" data-item-card="${it.id}">${pic}<div class="item-body">${html.slice('<div class="card">'.length, html.lastIndexOf('</div>'))}</div></div>`;
+    return `<div class="card item${wide ? ' wide' : ''}${it.closed ? ' closed' : ''}" data-item-card="${it.id}">${pic}<div class="item-body">${html.slice('<div class="card">'.length, html.lastIndexOf('</div>'))}</div></div>`;
   }
   // 1 Choose · 2 Check · 3 Claim — where you are in claiming
   const stepsHtml = (n) => `<ol class="steps" aria-label="Claiming steps">${['Choose', 'Check', 'Claim'].map((l, i) => `<li class="${i + 1 === n ? 'on' : i + 1 < n ? 'done' : ''}" ${i + 1 === n ? 'aria-current="step"' : ''}><span class="stepno">${i + 1}</span>${l}</li>`).join('')}</ol>`;
   function itemBlockRaw(o, it) {
-    const closed = o.status !== 'open';
+    const closed = o.status !== 'open' || it.closed;
     const d = it.description ? `<p class="itemdesc">${esc(it.description)}</p>` : '';   // the GOM's own words; line breaks kept, nothing run
-    const meta = `<span class="sub">${it.claimed} claimed${it.payBy ? ` · pay by ${fmtDate(it.payBy)}` : ''}</span>`;
+    const meta = `<span class="sub">${it.claimed} claimed${it.payBy ? ` · pay by ${fmtDate(it.payBy)}` : ''}${!it.closed && it.closeDate ? ` · closes ${fmtDate(it.closeDate)}` : ''}</span>${it.closed ? ' <span class="pill dim" data-item-closed>Closed for claims</span>' : ''}`;
     if (it.type === 'set') {
       const mine = basket.filter((l) => l.itemId === it.id && l.qty);
       const count = mine.reduce((s, l) => s + l.qty, 0);
@@ -280,7 +283,7 @@
         lines.push({ itemId: id, parts: basket.filter((l) => l.itemId === id).map((l) => ({ member: l.member, qty: l.qty })), together: !!together[id] });
       }
       const r = await api('POST', '/api/claims', { handle, lines });
-      if (!r.ok) { if (r.status === 404 || ['order_closed', 'sold_out'].includes(r.json?.code)) await load(); return basketPage(errText(r)); }
+      if (!r.ok) { if (r.status === 404 || ['order_closed', 'item_closed', 'sold_out'].includes(r.json?.code)) await load(); return basketPage(errText(r)); }
       store.set('sos_handle', handle);
       done = { handle: r.json.handle, lines: basket.slice(), total: total(), placements: r.json.placements || [] };
       basket = []; together = {}; saveBasket();

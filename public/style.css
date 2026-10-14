@@ -205,3 +205,7 @@ button.gohead:hover, button.gotoggle:hover { filter:none; text-decoration:underl
 
 /* the second button in the overdue notice: outlined, in the notice's own red (the plain button forces white text, which is unreadable here) */
 .card.overdue-notice a.pillbtn.alt { background:transparent; color:var(--err-ink) !important; border:1.5px solid var(--err-ink); }
+
+/* an item that has closed for claims: visible, but the picture and part tiles are dimmed (the words stay at full contrast) */
+.item.closed .picbox, .item.closed .tile, .item.closed .sizepill { opacity:.5; filter:grayscale(1); }
+.item.closed { background:var(--surface-2); }

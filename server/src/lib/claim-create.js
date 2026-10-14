@@ -1,9 +1,10 @@
 import { bad, notFound } from '../errors.js';
 import { addClaimCosts } from './ledger.js';
 import { placeSetParts } from './sets.js';
+import { closedReason } from './closing.js';
 
 // Making claims for ITEMS of a group order — one place, used both by a joiner claiming for themselves and by the GOM adding a claim for someone.
-// The only difference is `asAdmin`: the GOM may add to a PRIVATE group order and to one that has CLOSED (a joiner may do neither).
+// The only difference is `asAdmin`: the GOM may add to a PRIVATE group order and to anything that has CLOSED — an order, or just one item (a joiner may do neither).
 
 // Lock every item a request names (lowest id first, so two requests can never wait on each other in a circle). That also stops a price edit
 // from landing between us reading the price and saving the claim — an unsecured claim must always carry the price listed at the time.
@@ -16,11 +17,15 @@ export async function lockLineItems(conn, lines) {
 export async function placeItemLine(conn, { joinerId, line, asAdmin = false }) {
   const ids = [], placements = [];
   const [[item]] = await conn.query(
-    `SELECT i.id, i.order_id, i.item_type, i.title, i.price, i.price_tbc, i.size_bucket, i.cancelled_at, go.status, go.is_private
+    `SELECT i.id, i.order_id, i.item_type, i.title, i.price, i.price_tbc, i.size_bucket, i.cancelled_at, i.close_date AS item_close_date, i.closed_by_hand, go.status, go.close_date AS go_close_date, go.is_private
        FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id = ?`, [line.itemId]);
   // Private orders look exactly like orders that don't exist.
   if (!item || (item.is_private && !asAdmin)) throw notFound('That item isn\'t available');
-  if (item.status !== 'open' && !asAdmin) throw bad('That order has closed', 'order_closed');
+  if (!asAdmin) {                                                                                  // closed by hand or by date — the order, or just this item
+    const why = closedReason({ orderStatus: item.status, orderCloseDate: item.go_close_date, itemCloseDate: item.item_close_date, itemClosedByHand: item.closed_by_hand });
+    if (why?.startsWith('order')) throw bad('That order has closed', 'order_closed');
+    if (why) throw bad('That item has closed for claims', 'item_closed');
+  }
   if (item.cancelled_at) throw bad("That item isn't available any more", 'item_cancelled');
   if (item.item_type === 'set') {
     const asked = {};
