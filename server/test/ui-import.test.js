@@ -177,3 +177,34 @@ test('a guessed handle only counts once you confirm it: Save alone confirms noth
   assert.deepEqual((await api('GET', `/api/admin/import/batches/${(await app.q('SELECT MAX(id) AS id FROM import_batches'))[0].id}`)).json.people.map((x) => x.mapped).sort(), [a.replace(/ /g, ''), 'my_own_choice', c.replace(/ /g, '')].sort());
   p.close();
 });
+
+// ───────── "Imports so far": folded away, a one-line summary, correct counts and plurals ─────────
+const upload = async (name, rows) => { const r = await fetch(`${app.base}/api/admin/import/notion?filename=${encodeURIComponent(name)}`, { method: 'POST', headers: { cookie: admin, 'X-Requested-With': 'sos', 'Content-Type': 'text/csv' }, body: csv(rows) }); return { status: r.status, json: await r.json() }; };
+const asImported = (id, claims, people) => app.q("UPDATE import_batches SET status = 'imported', imported_at = NOW(), summary = ? WHERE id = ?", [JSON.stringify({ counts: { claims, people: { total: people } } }), id]);
+const drafts = async () => (await api('GET', '/api/admin/import/batches')).json.batches.filter((b) => b.status === 'draft').length;
+
+test('IMPORTS SO FAR is folded away by default, with a one-line summary: how many, when the last was, and what it brought in', async () => {
+  const a = await upload(`${u('first')}.csv`, [row({ joiner: u('h'), item: 'A' })]); assert.equal(a.status, 201, JSON.stringify(a.json)); await asImported(a.json.id, 1, 1);
+  const b = await upload(`${u('second')}.csv`, [row({ joiner: u('h'), item: 'B' }), row({ joiner: u('h'), item: 'C' })]); await asImported(b.json.id, 25, 3);
+  const p = await open(); await sleep(100); await p.settle(); const d = p.q('#pastImports');
+  assert.ok(d && d.tagName === 'DETAILS'); assert.equal(d.open, false, 'folded away until you open it');
+  assert.match(p.text(p.q('summary', d)), /^Imports so far \(\d+\) — last \d\d\/\d\d\/\d{4}, \d\d:\d\d: 25 claims for 3 people/, 'the latest one is described on the summary line');
+  assert.ok(p.q('[data-batch]', d), 'the list is inside it'); assert.deepEqual([p.errors, p.native], [[], 0]); p.close();
+});
+
+test('THE LIST SAYS THE RIGHT THINGS: a real row count (never "undefined"), and "1 claim for 1 person" / "2 rows" / "25 claims for 3 people"', async () => {
+  const one = (await upload(`${u('single')}.csv`, [row({ joiner: u('h'), item: 'Only' })])).json.id; await asImported(one, 1, 1);
+  const many = (await upload(`${u('many')}.csv`, [row({ joiner: u('h'), item: 'X' }), row({ joiner: u('h'), item: 'Y' })])).json.id; await asImported(many, 25, 3);
+  const list = (await api('GET', '/api/admin/import/batches')).json.batches; assert.deepEqual([list.find((x) => x.id === one).rowCount, list.find((x) => x.id === many).rowCount], [1, 2], 'the list endpoint sends rowCount');
+  const p = await open(); await sleep(100); await p.settle(); const sub = (id) => p.text(p.q('.sub', p.q(`[data-batch="${id}"]`)));
+  assert.match(sub(one), /· 1 row · 1 claim for 1 person · imported/); assert.match(sub(many), /· 2 rows · 25 claims for 3 people · imported/); assert.doesNotMatch(p.text(p.q('#pastImports')), /undefined|NaN/); p.close();
+});
+
+test('OPENING IT STAYS OPEN: discarding something redraws the screen without folding it away again; an unfinished upload is called out on the summary, and the count follows', async () => {
+  const draft = (await upload(`${u('draft')}.csv`, [row({ joiner: u('h'), item: 'D' })])).json.id; const n = await drafts();
+  const p = await open(); await sleep(100); await p.settle(); const sum = () => p.text(p.q('#pastImports summary'));
+  assert.match(sum(), new RegExp(`${n} unfinished uploads? — open to resume`)); assert.equal(p.q('#pastImports').open, false);
+  p.q('#pastImports').open = true; await p.click(p.q(`[data-batch="${draft}"] [data-act="discard"]`)); await press(p, 'Discard it'); await sleep(300); await p.settle();
+  const after = p.q('#pastImports'); assert.ok(after, 'the list is still there'); assert.equal(after.open, true, 'and still open'); assert.equal(await drafts(), n - 1);
+  assert.equal(p.q(`[data-batch="${draft}"]`), null, 'the discarded upload is gone from the list'); p.close();
+});

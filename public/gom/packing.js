@@ -46,7 +46,7 @@
 
   const when = (iso) => `${fmtDate((iso || '').slice(0, 10))} ${(iso || '').slice(11, 16)}`;
 
-  const HOW = { joiner: 'they agreed on the site', gom: 'combined by you' };
+  const HOW = { joiner: 'they agreed on the site', gom: 'combined by you', own: 'their other handle' };
   // Money still owing on what is in a parcel: a heads-up, never a block (people often pay the last balance together with the postage). Says whether a payment is already waiting for the GOM.
   const CAT = { initials: 'items', ems: 'EMS', customs: 'customs', doms: 'postage', packaging: 'packaging' };
   const owingBanner = (p) => (p.owing && p.owing.length && p.status !== 'received' ? `<div class="msg" data-owing style="background:var(--warn-bg); color:var(--warn-ink); border-color:var(--warn-line); margin:8px 0"><strong>Still owing</strong> — just a heads-up, you can still pack and ship.

@@ -20,7 +20,7 @@ export function adminRoutes(app, { pool, notifier }) {
     const [rows] = await pool.query(
       `SELECT p.id, j.instagram_handle AS handle, go.title AS orderTitle, p.amount, p.method, p.reference, p.payer_name AS payerName,
               p.payer_is_address_name AS payerIsAddressName, p.address_name_snapshot AS addressName,
-              p.overpay_amount AS overpayAmount, p.overpay_choice AS overpayChoice, p.overpay_note AS overpayNote, p.status, p.created_at AS createdAt
+              p.overpay_amount AS overpayAmount, p.overpay_choice AS overpayChoice, p.overpay_note AS overpayNote, p.status, p.batch_key AS batchKey, p.created_at AS createdAt
          FROM payments p JOIN joiners j ON j.id = p.joiner_id LEFT JOIN group_orders go ON go.id = p.order_id
         ${status ? 'WHERE p.status = ?' : ''} ORDER BY p.id DESC LIMIT 500`, status ? [status] : []);
     res.json({ payments: rows.map((r) => ({ ...r, payerIsAddressName: r.payerIsAddressName === null ? null : !!r.payerIsAddressName })) });
@@ -29,23 +29,30 @@ export function adminRoutes(app, { pool, notifier }) {
   // Verifying splits the payment across whatever's owing (no category needed),
   // records exactly which lines it settled, and handles any extra the way the
   // JOINER said when they paid. Then any credit they hold is applied.
+  // Verifying is two steps so a combined payment can do the first step for EVERY part before the second: 1) mark it received and apply it to what that handle owes;
+  // 2) record any extra the way the person chose, then use any credit they hold. (Doing step 2 between the parts would spend one part's extra on another handle's debt too early.)
+  async function applyPayment(conn, id, adminId) {
+    const [[who]] = await conn.query('SELECT joiner_id FROM payments WHERE id = ?', [id]);
+    if (!who) throw notFound('No such payment');
+    await lockJoiner(conn, who.joiner_id);                    // person first, then the payment
+    const [[p]] = await conn.query('SELECT * FROM payments WHERE id = ? FOR UPDATE', [id]);
+    if (p.status !== 'pending') throw conflict('That payment has already been dealt with', 'not_pending');
+    await conn.query("UPDATE payments SET status = 'confirmed', verified_at = NOW(3), verified_by = ? WHERE id = ?", [adminId, p.id]);
+    const leftover = await distribute(conn, p.joiner_id, p.order_id, p.amount, p.id);
+    return { p, leftover };
+  }
+  async function settlePayment(conn, { p, leftover }, adminId) {
+    if (leftover > 0.004) {
+      await recordOverpayment(conn, { joinerId: p.joiner_id, amount: leftover, choice: p.overpay_choice, note: p.overpay_note, source: 'Payment verification overpayment', paymentId: p.id });
+    }
+    const spent = await sweepCredit(conn, p.joiner_id);
+    await audit(conn, adminId, 'payment.verify', 'payment', p.id, { leftover });
+    return { applied: round2(p.amount - leftover), leftover, creditApplied: spent, creditBalance: await creditBalance(conn, p.joiner_id) };
+  }
+  const verifyPaymentTx = async (conn, id, adminId) => settlePayment(conn, await applyPayment(conn, id, adminId), adminId);
+
   app.post('/api/admin/payments/:id/verify', admin, wrap(async (req, res) => {
-    const out = await withTx(pool, async (conn) => {
-      const id = Number(req.params.id);
-      const [[who]] = await conn.query('SELECT joiner_id FROM payments WHERE id = ?', [id]);
-      if (!who) throw notFound('No such payment');
-      await lockJoiner(conn, who.joiner_id);                    // person first, then the payment
-      const [[p]] = await conn.query('SELECT * FROM payments WHERE id = ? FOR UPDATE', [id]);
-      if (p.status !== 'pending') throw conflict('That payment has already been dealt with', 'not_pending');
-      await conn.query("UPDATE payments SET status = 'confirmed', verified_at = NOW(3), verified_by = ? WHERE id = ?", [req.account.id, p.id]);
-      const leftover = await distribute(conn, p.joiner_id, p.order_id, p.amount, p.id);
-      if (leftover > 0.004) {
-        await recordOverpayment(conn, { joinerId: p.joiner_id, amount: leftover, choice: p.overpay_choice, note: p.overpay_note, source: 'Payment verification overpayment', paymentId: p.id });
-      }
-      const spent = await sweepCredit(conn, p.joiner_id);
-      await audit(conn, req.account.id, 'payment.verify', 'payment', p.id, { leftover });
-      return { applied: round2(p.amount - leftover), leftover, creditApplied: spent, creditBalance: await creditBalance(conn, p.joiner_id) };
-    });
+    const out = await withTx(pool, (conn) => verifyPaymentTx(conn, Number(req.params.id), req.account.id));
     notifier.paymentDecided(Number(req.params.id));          // after it's saved; never holds up or breaks the response
     res.json({ ok: true, ...out });
   }));
@@ -55,6 +62,26 @@ export function adminRoutes(app, { pool, notifier }) {
     if (r.affectedRows !== 1) throw conflict('That payment has already been dealt with', 'not_pending');
     notifier.paymentDecided(Number(req.params.id));
     res.json({ ok: true });
+  }));
+
+  // A combined payment (one transfer covering several of a person's handles) is several rows with one batch key: verify or reject them all at once.
+  app.post('/api/admin/payments/batch/:key/verify', admin, wrap(async (req, res) => {
+    const out = await withTx(pool, async (conn) => {
+      const [rows] = await conn.query("SELECT id FROM payments WHERE batch_key = ? AND status = 'pending' ORDER BY id", [req.params.key]);
+      if (!rows.length) throw conflict('That payment has already been dealt with', 'not_pending');
+      const applied = []; for (const r of rows) applied.push(await applyPayment(conn, r.id, req.account.id));      // every part first…
+      const results = []; for (const a of applied) results.push({ id: a.p.id, ...(await settlePayment(conn, a, req.account.id)) });   // …then the extras and credit
+      return results;
+    });
+    notifier.paymentDecided(out[0].id);                       // once, for the whole payment
+    res.json({ ok: true, verified: out.length, parts: out });
+  }));
+  app.post('/api/admin/payments/batch/:key/reject', admin, wrap(async (req, res) => {
+    const [rows] = await pool.query("SELECT id FROM payments WHERE batch_key = ? AND status = 'pending' ORDER BY id", [req.params.key]);
+    const [r] = await pool.query("UPDATE payments SET status = 'rejected', verified_at = NOW(3), verified_by = ? WHERE batch_key = ? AND status = 'pending'", [req.account.id, req.params.key]);
+    if (!r.affectedRows) throw conflict('That payment has already been dealt with', 'not_pending');
+    notifier.paymentDecided(rows[0].id);
+    res.json({ ok: true, rejected: r.affectedRows });
   }));
 
   // ── credit ──

@@ -8,6 +8,7 @@ import { normalizeHandle, isValidHandle } from '../lib/handles.js';
 import { readDevice, deviceHasProof } from '../lib/device.js';
 import { linkJoiner } from '../lib/linking.js';
 import { deleteAccount, deletionCheck, unlinkHandle } from '../lib/delete-account.js';
+import { shareAddress } from '../lib/address-share.js';
 
 // Does this handle already have anything attached to it (orders, money, an address…)?
 // If so, a new sign-in can't just take it over — the GOM has to say yes once.
@@ -35,6 +36,7 @@ export default function handleRoutes({ pool }) {
       let [[joiner]] = await conn.query('SELECT id, account_id FROM joiners WHERE instagram_handle = ? FOR UPDATE', [handle]).then(([rows]) => [rows]);
       if (!joiner) {
         const [ins] = await conn.query("INSERT INTO joiners (instagram_handle, account_id, linked_at, linked_via) VALUES (?, ?, NOW(3), 'self_new')", [handle, req.account.id]);
+        await shareAddress(conn, req.account.id);                                                   // a person's new handle gets the address they already have
         return { status: 'linked', handle, joinerId: ins.insertId };
       }
       if (joiner.account_id === req.account.id) return { status: 'already_linked', handle, joinerId: joiner.id };

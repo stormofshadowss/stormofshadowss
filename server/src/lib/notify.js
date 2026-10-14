@@ -52,12 +52,19 @@ export function createNotifier({ pool, mailer, cfg }) {
 
   // 2. A payment was verified or rejected.
   const paymentDecided = safe(async (paymentId) => {
-    const [[p]] = await pool.query('SELECT joiner_id AS joinerId, amount, method, reference, status FROM payments WHERE id = ?', [paymentId]);
+    const [[p]] = await pool.query('SELECT joiner_id AS joinerId, amount, method, reference, status, batch_key AS batchKey FROM payments WHERE id = ?', [paymentId]);
     if (!p || !['confirmed', 'rejected'].includes(p.status)) return;
     const to = await recipient(p.joinerId, 'paymentDecided'); if (!to) return;
-    const what = `${pounds(p.amount)} via ${p.method}${p.reference ? ` (ref: ${p.reference})` : ''}`;
+    // one payment covering several of a person's handles is stored as several rows: say it ONCE, with the whole amount, when the last of them has been decided
+    let total = Number(p.amount), owedIds = [p.joinerId];
+    if (p.batchKey) {
+      const [parts] = await pool.query('SELECT joiner_id AS joinerId, amount, status FROM payments WHERE batch_key = ?', [p.batchKey]);
+      if (parts.some((x) => x.status === 'pending')) return;
+      if (parts.every((x) => x.status === p.status)) { total = parts.reduce((t, x) => t + Number(x.amount), 0); owedIds = [...new Set(parts.map((x) => x.joinerId))]; }
+    }
+    const what = `${pounds(total)} via ${p.method}${p.reference ? ` (ref: ${p.reference})` : ''}`;
     if (p.status === 'confirmed') {
-      const [owed, credit] = [await owedNow(p.joinerId), await creditNow(p.joinerId)];
+      const [owed, credit] = [(await Promise.all(owedIds.map((id) => owedNow(id)))).reduce((t, x) => t + x, 0), (await Promise.all(owedIds.map((id) => creditNow(id)))).reduce((t, x) => t + x, 0)];
       await deliver(to.email, `Payment received — thank you (@${to.handle})`,
         `Hi @${to.handle},\n\nYour payment of ${what} has been verified — thank you!\n\n${owed > 0 ? `You still owe ${pounds(owed)}.` : "You're all paid up."}${credit > 0 ? ` You have ${pounds(credit)} credit on your account.` : ''}\n\nSee your orders: ${myOrders}`);
     } else {

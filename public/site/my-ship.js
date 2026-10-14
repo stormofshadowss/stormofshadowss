@@ -64,7 +64,7 @@
   // a little "Select all / Clear" for a checklist of items (only worth showing when there are two or more)
   const pickAll = (n) => (n < 2 ? '' : `<div class="btn-row" style="margin:2px 0 4px"><button type="button" class="sm secondary" data-act="ship-all">Select all ${n}</button><button type="button" class="sm secondary" data-act="ship-none">Clear</button></div>`);
   const invitesHtml = (S, ready, a) => {
-    const here = S.invites.filter((i) => i.forHandle === S.handle), elsewhere = S.invites.filter((i) => i.forHandle !== S.handle);
+    const here = S.invites.filter((i) => S.handle === 'all' || i.forHandle === S.handle), elsewhere = S.invites.filter((i) => S.handle !== 'all' && i.forHandle !== S.handle);
     return here.map((i) => `<form class="card" data-form="accept" data-parcel="${i.parcelId}" style="border:2px solid var(--accent)"><h2>@${esc(i.fromHandle)} has asked to ship together with you</h2>
       <p>@${esc(i.fromHandle)} is posting a parcel to <strong>their own address</strong> and would like your items in the same box. It's one parcel, and the postage and packaging are shared out <strong>${/^ww\b/i.test(i.method) ? "by the weight of each person's items" : 'equally per person'}</strong>${/^ww\b/i.test(i.method) ? '' : ' (not by how many items each has)'} — there may be more than two of you. @${esc(i.fromHandle)} will confirm when it arrives. It's your choice — you can say no.</p>
       ${ready.length ? `<label>Which of your items should go in?</label>${pickAll(ready.length)}${ready.map((c) => `<label class="chk" style="margin:6px 0"><input type="checkbox" name="claim" value="${c.id}"> ${esc(c.label)} <span class="sub">${esc(c.orderTitle)}</span></label>`).join('')}
@@ -142,7 +142,7 @@
         if (f.bias.value.trim()) payload.bias = f.bias.value.trim();
         if (f.lomoName.value.trim()) payload.lomoName = f.lomoName.value.trim();
         if (f.notes.value.trim()) payload.notes = f.notes.value.trim();
-        const r = await S.api('POST', `/api/my/parcels/${form.dataset.parcel}/companion/accept`, payload);
+        const r = await S.api('POST', `/api/my/parcels/${form.dataset.parcel}/companion/accept`, payload, S.invites.find((i) => i.parcelId === Number(form.dataset.parcel))?.forHandle);
         if (!r.ok) return S.say(msg, errText(r));
         await S.reload(); await SITE.views.ship(view);
         view.insertAdjacentHTML('afterbegin', `<div class="msg ok" data-joined>You're in — your items are in the parcel now. Postage and packaging will be split equally between the two of you.</div>`);
@@ -164,7 +164,7 @@
       if (f.bias.value.trim()) payload.bias = f.bias.value.trim();
       if (f.lomoName.value.trim()) payload.lomoName = f.lomoName.value.trim();
       if (f.shareWith.value.trim()) payload.shareWith = f.shareWith.value.trim();
-      const r = await S.api('POST', '/api/my/parcels', payload);
+      const r = await S.api('POST', '/api/my/parcels', payload, S.claimHandle(claimIds[0]));          // posted as the handle that owns the first item (their address is shared anyway)
       if (!r.ok) return say(errText(r));
       await S.reload(); await SITE.views.ship(view);
       view.insertAdjacentHTML('afterbegin', `<div class="msg ok" data-sent>Shipping requested — parcel #${r.json.id} is number ${r.json.queuePosition} in the packing queue.${r.json.companions?.length ? ` We've asked ${listNames(r.json.companions.map((c) => c.handle))} to share it — it can't be packed until ${r.json.companions.length === 1 ? 'they answer' : 'they have all answered'}.` : ''}</div>`);

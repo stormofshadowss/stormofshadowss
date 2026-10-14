@@ -45,9 +45,35 @@
         : `<span class="pill ${p.status === 'confirmed' ? 'ok' : 'dim'}">${p.status}</span>`}</td></tr>`;
   }
 
+  // A combined payment (one transfer covering several of a person's handles) is several rows with one batch key: show it as ONE line, with the split, and verify / reject it as one.
+  function batchRow(rows) {
+    const first = rows[0], pending = rows.filter((p) => p.status === 'pending'), total = rows.reduce((n, p) => n + Number(p.amount), 0), over = rows.find((p) => p.overpayAmount);
+    const name = first.payerIsAddressName === true ? '<span class="pill ok">matches address name</span>' : first.payerIsAddressName === false ? `<span class="pill warn">different name — address says ${esc(first.addressName || '?')}</span>` : '<span class="pill dim">no name on file</span>';
+    const status = rows.every((p) => p.status === rows[0].status) ? rows[0].status : 'part verified';
+    return `<tr data-payment-batch="${esc(first.batchKey)}"><td class="nowrap">${when(first.createdAt)}</td>
+      <td>${rows.map((p) => `<div>@${esc(p.handle)} <strong>${money(p.amount)}</strong>${p.status !== 'pending' ? ` <span class="pill ${p.status === 'confirmed' ? 'ok' : 'dim'}">${p.status}</span>` : ''}</div>`).join('')}<span class="pill">one payment, ${rows.length} handles</span></td>
+      <td>${esc(first.orderTitle || 'All outstanding')}</td><td class="nowrap"><strong>${money(total)}</strong></td><td>${esc(first.method)}</td>
+      <td>${first.reference ? esc(first.reference) : '<span class="sub">no reference</span>'}<div class="sub">${first.payerName ? esc(first.payerName) + ' ' : ''}${name}</div></td>
+      <td>${over ? `<strong>${money(over.overpayAmount)}</strong> extra → <span class="pill ${over.overpayChoice === 'tip' ? 'ok' : ''}">${over.overpayChoice === 'tip' ? 'tip' : 'credit'}</span>${over.overpayNote ? `<div class="sub">“${esc(over.overpayNote)}”</div>` : ''}` : '—'}</td>
+      <td class="nowrap">${pending.length ? `<button class="sm" data-act="verify-batch" data-key="${esc(first.batchKey)}">Verify all${pending.length < rows.length ? ` (${pending.length} left)` : ''}</button> <button class="sm secondary" data-act="reject-batch" data-key="${esc(first.batchKey)}">Reject all</button>` : `<span class="pill ${status === 'confirmed' ? 'ok' : 'dim'}">${status}</span>`}</td></tr>`;
+  }
+  // rows in the order shown, with each combined payment's rows gathered into one entry at the place its first row appears
+  function lines(list) {
+    const seen = new Set(), out = [];
+    for (const p of list) {
+      if (!p.batchKey) { out.push(paymentRow(p)); continue; }
+      if (seen.has(p.batchKey)) continue; seen.add(p.batchKey);
+      const rows = list.filter((x) => x.batchKey === p.batchKey).sort((x, y) => x.id - y.id);
+      out.push(rows.length > 1 ? batchRow(rows) : paymentRow(p));
+    }
+    return out;
+  }
+
   function visible() {
     const q = filter.q.trim().toLowerCase().replace(/^@/, '');
-    return payments.filter((p) => !q || [p.handle, p.reference, p.payerName].some((v) => (v || '').toLowerCase().includes(q)));
+    const hit = (p) => !q || [p.handle, p.reference, p.payerName].some((v) => (v || '').toLowerCase().includes(q));
+    const keep = new Set(payments.filter((p) => p.batchKey && hit(p)).map((p) => p.batchKey));          // a combined payment stays whole if any part of it matches
+    return payments.filter((p) => hit(p) || (p.batchKey && keep.has(p.batchKey)));
   }
 
   function draw() {
@@ -57,7 +83,7 @@
         <div><label>Show</label><select data-filter="status">${[['pending', 'Waiting for me'], ['confirmed', 'Verified'], ['rejected', 'Rejected'], ['all', 'Everything']].map(([v, l]) => `<option value="${v}" ${filter.status === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
         <div><label>Search handle, reference or payer name</label><input data-filter="q" value="${esc(filter.q)}"></div></div>
       <div class="scroll"><table class="grid"><thead><tr><th>Sent</th><th>Person</th><th>For</th><th>Amount</th><th>Method</th><th>Reference / payer</th><th>Extra</th><th></th></tr></thead><tbody>
-      ${list.length ? list.map(paymentRow).join('') : `<tr><td colspan="8" class="muted">${filter.status === 'pending' ? 'Nothing waiting — all caught up.' : 'No payments match.'}</td></tr>`}</tbody></table></div></div>
+      ${list.length ? lines(list).join('') : `<tr><td colspan="8" class="muted">${filter.status === 'pending' ? 'Nothing waiting — all caught up.' : 'No payments match.'}</td></tr>`}</tbody></table></div></div>
       <div class="card"><div class="row"><h2 style="margin:0">Credit and tips</h2><span>Tips received so far: <strong>${money(tips)}</strong></span></div>
         <form data-form="lookup" class="btn-row" style="align-items:end"><div style="flex:1; min-width:180px"><label>Look up a person</label><input name="handle" value="${esc(ledgerHandle)}" placeholder="@handle"></div><button type="submit" class="sm">Look up</button></form>
         ${ledger ? ledgerHtml() : ''}</div>`;
@@ -82,6 +108,24 @@
     if (!b) return;
     const p = payments.find((x) => x.id === Number(b.dataset.id));
     switch (b.dataset.act) {
+      case 'verify-batch': {
+        const rows = payments.filter((x) => x.batchKey === b.dataset.key && x.status === 'pending').sort((x, y) => x.id - y.id), total = rows.reduce((n, x) => n + Number(x.amount), 0);
+        const ok = await GOM.confirm(`Mark the ${money(total)} payment as received?\n\nIt is ONE transfer covering ${rows.length} of this person's handles, split as: ${rows.map((x) => `@${x.handle} ${money(x.amount)}`).join(', ')}.\n\nEach part is applied to what that handle owes (item cost first, then EMS, customs, postage).${rows.some((x) => x.overpayAmount) ? `\n\nThey paid ${money(rows.find((x) => x.overpayAmount).overpayAmount)} extra and chose for it to be ${rows.find((x) => x.overpayAmount).overpayChoice === 'tip' ? 'a tip' : 'credit'}.` : ''}`, { ok: 'Mark all as received', cancel: 'Not yet' });
+        if (!ok) return;
+        const r = await api('POST', `/api/admin/payments/batch/${encodeURIComponent(b.dataset.key)}/verify`, {});
+        await render(root); GOM.refreshBadges();
+        if (!r.ok) return GOM.toast(errText(r), true);
+        const applied = r.json.parts.reduce((n, x) => n + x.applied, 0), leftover = r.json.parts.reduce((n, x) => n + x.leftover, 0);
+        GOM.toast(`Verified: ${money(applied)} applied across ${r.json.verified} handle${r.json.verified === 1 ? '' : 's'}.${leftover > 0 ? ` ${money(leftover)} kept as ${rows.find((x) => x.overpayAmount)?.overpayChoice === 'tip' ? 'a tip' : 'credit'}.` : ''}`);
+        break;
+      }
+      case 'reject-batch': {
+        const rows = payments.filter((x) => x.batchKey === b.dataset.key && x.status === 'pending').sort((x, y) => x.id - y.id);
+        if (!(await GOM.confirm(`Reject the ${money(rows.reduce((n, x) => n + Number(x.amount), 0))} payment covering ${rows.map((x) => `@${x.handle}`).join(', ')}?\n\nNo money is moved. They'll need to send it again.`, { ok: 'Reject all', cancel: 'Not yet' }))) return;
+        const r = await api('POST', `/api/admin/payments/batch/${encodeURIComponent(b.dataset.key)}/reject`, {});
+        await render(root); GOM.refreshBadges(); GOM.toast(r.ok ? 'Rejected.' : errText(r), !r.ok);
+        break;
+      }
       case 'add-method': $('#methodRows', root).insertAdjacentHTML('beforeend', methodRow({ method: '', accountInfo: '' })); break;
       case 'remove-method': b.closest('[data-mrow]').remove(); break;
       case 'verify': {
@@ -145,7 +189,7 @@
 
   GOM.registerTab({
     id: 'payments', label: 'Payments',
-    badgeCount: async () => ((await api('GET', '/api/admin/payments?status=pending')).json?.payments || []).length,
+    badgeCount: async () => new Set(((await api('GET', '/api/admin/payments?status=pending')).json?.payments || []).map((p) => p.batchKey || `#${p.id}`)).size,       // a combined payment is one payment
     async render(el) { if (!el._methodsToggle) { el._methodsToggle = true; el.addEventListener('toggle', (e) => { if (e.target.id === 'methodsCard') methodsOpen = e.target.open; }, true); } await render(el); el.onclick = onClick; el.onsubmit = onSubmit; el.onchange = onChange; el.oninput = onInput; },
   });
 })();

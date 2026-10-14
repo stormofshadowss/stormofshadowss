@@ -7,10 +7,18 @@
   const READY = 'ready to pack / on hand';
   const CATS = [['initials', 'Initials'], ['ems', 'EMS'], ['customs', 'Customs'], ['doms', 'Doms'], ['packaging', 'Packaging']];
 
-  const S = (SITE.my = { me: null, handle: null, summary: null, address: null, parcels: [], invites: [], fixed: { fixed: [], requests: [] }, notify: { enabled: false, email: '' } });
+  const S = (SITE.my = { me: null, handle: null, handles: [], primary: null, summary: null, address: null, parcels: [], invites: [], fixed: { fixed: [], requests: [] }, notify: { enabled: false, email: '' } });
   S.say = (el, text, ok) => { if (!el) return; el.textContent = text; el.className = 'msg' + (ok ? ' ok' : ''); el.hidden = !text; };
-  S.q = (path) => `${path}${path.includes('?') ? '&' : '?'}handle=${encodeURIComponent(S.handle)}`;
-  S.api = (method, path, body) => api(method, S.q(path), body);
+  // A person with several handles sees them ALL together by default (S.handle === 'all'). The read-only lists and the combined payment can answer for all of them; anything else belongs to
+  // ONE handle — the one it is about (pass it), or the first one for things that are per-person anyway (email choices, shipping defaults).
+  const ASKS_ALL = (method, path) => (method === 'GET' && ['/api/my/summary', '/api/my/parcels', '/api/my/payments'].includes(path.split('?')[0])) || (method === 'POST' && path.split('?')[0] === '/api/my/payments');
+  S.multi = () => S.handle === 'all' && S.handles.length > 1;
+  S.handleFor = (method, path, explicit) => explicit || (S.handle === 'all' ? (ASKS_ALL(method, path) ? 'all' : S.primary) : S.handle);
+  S.q = (path, handle) => `${path}${path.includes('?') ? '&' : '?'}handle=${encodeURIComponent(handle)}`;
+  S.api = (method, path, body, handle) => api(method, S.q(path, S.handleFor(method, path, handle)), body);
+  S.one = () => (S.handle === 'all' ? S.primary : S.handle);                                  // the single handle for per-handle settings
+  S.tag = (h) => (S.multi() && h ? ` <span class="pill dim" data-handle-tag>@${esc(h)}</span>` : '');
+  S.claimHandle = (claimId) => S.allClaims().find((c) => c.id === Number(claimId))?.handle;
   S.crumb = '<div class="crumb"><a href="#/">← My orders</a></div>';
   S.activeParcelClaimIds = () => new Set(S.parcels.filter((p) => ['requested', 'packed', 'shipped'].includes(p.status)).flatMap((p) => p.items.map((i) => i.claimId)));
   S.allClaims = () => (S.summary ? S.summary.orders.flatMap((o) => o.claims.map((c) => ({ ...c, orderTitle: o.title }))) : []);
@@ -21,14 +29,19 @@
     const m = await api('GET', '/api/me');
     if (!m.ok) { S.me = null; return false; }
     S.me = m.json;
-    const handles = S.me.handles.map((h) => h.handle);
-    if (!S.handle || !handles.includes(S.handle)) S.handle = handles[0] || null;
+    const handles = S.me.handles.map((h) => h.handle); S.handles = handles; S.primary = handles[0] || null;
+    if (handles.length > 1) { if (!S.handle || (S.handle !== 'all' && !handles.includes(S.handle))) S.handle = 'all'; }      // several handles: all together, until they choose one
+    else S.handle = handles[0] || null;
     S.summary = S.address = null; S.parcels = []; S.invites = []; S.fixed = { fixed: [], requests: [] };
     { const nr = await S.api('GET', '/api/my/notifications'); if (nr.ok) S.notify = nr.json; }
     if (S.handle) {
       const [s, a, p, f] = await Promise.all([S.api('GET', '/api/my/summary'), S.api('GET', '/api/my/address'), S.api('GET', '/api/my/parcels'), S.api('GET', '/api/my/fixed')]);
       S.summary = s.ok ? s.json : null; S.address = a.json?.address || null; S.parcels = p.json?.parcels || []; S.invites = p.json?.invites || [];
       if (f.ok) S.fixed = f.json;
+      if (S.handle === 'all') {                                                                  // fixed claims belong to a handle: gather them from every handle, each tagged
+        const fs = await Promise.all(handles.map((h) => api('GET', `/api/my/fixed?handle=${encodeURIComponent(h)}`)));
+        S.fixed = { fixed: fs.flatMap((r, i) => (r.json?.fixed || []).map((x) => ({ ...x, handle: handles[i] }))), requests: fs.flatMap((r, i) => (r.json?.requests || []).map((x) => ({ ...x, handle: handles[i] }))) };
+      } else { S.fixed.fixed = (S.fixed.fixed || []).map((x) => ({ ...x, handle: S.handle })); S.fixed.requests = (S.fixed.requests || []).map((x) => ({ ...x, handle: S.handle })); }
     }
     return true;
   };
@@ -62,19 +75,20 @@
     const card = (href, title, hint) => `<a class="gocard" href="${href}"><strong>${title}</strong><span class="sub">${hint}</span></a>`;
     const settingsCard = card('#/settings', 'My settings', m.pending.length ? `${m.pending.length} handle${m.pending.length === 1 ? '' : 's'} waiting for the GOM` : 'handles, email & preferences');
     view.innerHTML = `<div class="row" style="margin:18px 0 8px"><h1 style="margin:0">My orders</h1><span class="muted">${handles.length === 1 ? `<strong>@${esc(handles[0])}</strong> · ` : ''}${esc(m.account.email)} · <a href="#" data-act="logout">Sign out</a></span></div>
-      ${handles.length > 1 ? `<div class="card"><label for="sw">Viewing</label><select id="sw" data-act="switch">${handles.map((h) => `<option value="${esc(h)}" ${h === S.handle ? 'selected' : ''}>@${esc(h)}</option>`).join('')}</select></div>` : ''}
+      ${handles.length > 1 ? `<div class="card"><label for="sw">Viewing</label><select id="sw" data-act="switch"><option value="all" ${S.handle === 'all' ? 'selected' : ''}>All my handles</option>${handles.map((h) => `<option value="${esc(h)}" ${h === S.handle ? 'selected' : ''}>@${esc(h)}</option>`).join('')}</select></div>` : ''}
       ${late.length ? `<div class="card overdue-notice" data-overdue-notice role="alert"><strong>You have overdue payments</strong><div>${money(lateTotal)} is overdue across ${late.length} item${late.length === 1 ? '' : 's'} (${lateGos.slice(0, 3).map(esc).join(', ')}${lateGos.length > 3 ? ` and ${lateGos.length - 3} more` : ''}).</div><div class="btn-row" style="margin-top:10px"><a class="pillbtn" href="#/pay">Pay now</a><a class="pillbtn alt" href="#/ongoing">See which items</a></div></div>` : ''}
       ${S.invites.length ? `<div class="card" data-invite-notice style="background:var(--paper)"><strong>${S.invites.length === 1 ? `@${esc(S.invites[0].fromHandle)} has asked` : `${S.invites.length} people have asked`} to ship a parcel together with yours</strong><div class="sub">One parcel, one address — you choose which of your items go in. Nothing happens unless you say yes.</div><a class="pillbtn" href="#/ship" style="margin-top:8px">Have a look</a></div>` : ''}
       ${shippedBanner()}
       ${sum ? `<div class="card"><h2>What you owe</h2><div class="tiles">${CATS.map(([k, n]) => tile(n, o[k])).join('')}${tile('Total to pay', o.total, 'total')}</div>
-        ${sum.credit > 0 ? `<p class="sub">You have ${money(sum.credit)} credit on your account — it's used automatically against what you owe.</p>` : ''}</div>
-      <div class="cards">${card('#/pay', 'Make a payment', o.total > 0 ? `${money(o.total)} owed` : 'nothing owing')}
+        ${S.multi() && sum.handles ? `<table class="grid" data-by-handle style="margin-top:10px"><thead><tr><th>Handle</th><th>Owes</th><th>Credit</th></tr></thead><tbody>${sum.handles.map((h) => `<tr><td>@${esc(h.handle)}</td><td>${money(h.owed)}</td><td>${money(h.credit)}</td></tr>`).join('')}</tbody></table>` : ''}
+        ${sum.credit > 0 ? `<p class="sub">${S.multi() ? `You have ${money(sum.credit)} credit across your handles — it's shared: it's used automatically against what you owe, on any of them.` : `You have ${money(sum.credit)} credit on your account — it's used automatically against what you owe.`}</p>` : ''}</div>
+      <div class="cards">${card('#/pay', 'Make a payment', o.total > 0 ? `${money(o.total)} owed${S.multi() ? ` across ${S.handles.length} handles — one payment` : ''}` : 'nothing owing')}
         ${card('#/ship', 'Request shipping', `${ready ? `${ready} item${ready === 1 ? '' : 's'} ready` : 'nothing ready yet'}${S.invites.length ? ` · ${S.invites.length} invitation${S.invites.length === 1 ? '' : 's'}` : ''}`)}
         ${card('#/ongoing', 'Ongoing orders', `${ongoing.length} item${ongoing.length === 1 ? '' : 's'}${S.parcels.some((p) => p.status === 'shipped') ? ' · a parcel is on its way' : ''}`)}
         ${card('#/completed', 'Completed orders', `${completed.length} received`)}
         ${S.fixed.fixed.length || S.fixed.requests.length ? card('#/fixed', 'Fixed claims', `${S.fixed.fixed.length} standing claim${S.fixed.fixed.length === 1 ? '' : 's'}${S.fixed.fixed.some((x) => x.pending) ? ' · a request is waiting' : ''}`) : ''}
         ${card('#/notifications', 'Email notifications', S.notify.enabled ? 'on' : 'off')}
-        ${card('#/address', 'Delivery details', S.address ? esc(S.address.fullName) : 'not added yet')}
+        ${card('#/address', 'Delivery details', S.address ? `${esc(S.address.fullName)}${S.handles.length > 1 ? ' · one address for all your handles' : ''}` : 'not added yet')}
         ${settingsCard}</div>` : `<div class="cards">${settingsCard}</div>`}
       ${!handles.length ? `<div class="card" id="handleCard"><h2>Link your Instagram handle</h2>
         <p class="sub">Your orders are tied to your Instagram handle, so link it to see them here.</p>
@@ -119,7 +133,7 @@
       const open = goOpen(title, cs), late = cs.filter((c) => c.overdue && c.owed > 0), lateTotal = late.reduce((n, c) => n + c.owed, 0), toPay = cs.reduce((n, c) => n + (c.owed > 0 ? c.owed : 0), 0);
       return `<div class="card gosec ${late.length ? 'has-overdue' : ''}" data-go="${esc(title)}"><div class="row"><h2 style="margin:0"><button class="ghost gohead" data-act="toggle-go" data-go="${esc(title)}" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} the items in ${esc(title)}"><span aria-hidden="true">${open ? '▾' : '▸'}</span> ${esc(title)}</button></h2>
         <div class="gobadges">${late.length ? `<span class="pill err" data-go-overdue>${late.length} overdue · ${money(lateTotal)}</span>` : toPay > 0 && !done ? `<span class="pill warn">${money(toPay)} to pay</span>` : ''}<span class="sub">${cs.length} item${cs.length === 1 ? '' : 's'}</span></div></div>
-        ${open ? cs.map((c) => `<div class="itemrow ${c.overdue && c.owed > 0 ? 'overdue' : ''}"><div class="grow">${esc(c.label)} ${c.isFixed ? '<span class="pill">fixed</span>' : ''}
+        ${open ? cs.map((c) => `<div class="itemrow ${c.overdue && c.owed > 0 ? 'overdue' : ''}"><div class="grow">${esc(c.label)}${S.tag(c.handle)} ${c.isFixed ? '<span class="pill">fixed</span>' : ''}
         <div class="sub">${esc(stage(c))}${c.payBy && c.owed > 0 ? ` · <span class="${c.overdue ? 'late-text' : ''}">${c.overdue ? 'was due' : 'pay by'} ${fmtDate(c.payBy)}</span>` : ''}</div><div style="margin-top:4px">${costChips(c)}</div>${cancelUi(c)}</div>
         <div>${c.overdue ? '<span class="pill err">overdue</span>' : ''}</div></div>`).join('') : ''}</div>`;
     };
@@ -141,7 +155,7 @@
   view.addEventListener('submit', async (e) => {                                  // sending a request to cancel
     const form = e.target; if (form.dataset?.form !== 'cancel') return;
     e.preventDefault();
-    const r = await S.api('POST', `/api/my/claims/${form.dataset.id}/cancel-request`, { reason: form.elements.reason.value.trim() || undefined });
+    const r = await S.api('POST', `/api/my/claims/${form.dataset.id}/cancel-request`, { reason: form.elements.reason.value.trim() || undefined }, S.claimHandle(form.dataset.id));
     if (!r.ok) return S.say($('[data-msg]', form), errText(r));
     S.cancelOpen = null; await S.reload(); SITE.toast('Request sent — the GOM will let you know.'); route();
   });
@@ -154,12 +168,12 @@
     if (b.dataset.act === 'cancel-close') { S.cancelOpen = null; return route(); }
     if (b.dataset.act === 'cancel-withdraw') {
       if (!(await SITE.confirm('Take back your request to cancel this?\n\nThe item stays in your order as it was.', { ok: 'Yes, take it back', cancel: 'Not yet' }))) return;
-      const r = await S.api('DELETE', `/api/my/cancel-requests/${b.dataset.req}`);
+      const r = await S.api('DELETE', `/api/my/cancel-requests/${b.dataset.req}`, undefined, S.allClaims().find((c) => c.cancelRequest?.id === Number(b.dataset.req))?.handle);
       if (!r.ok) return SITE.toast(errText(r), true);
       await S.reload(); SITE.toast('Request withdrawn.'); return route();
     }
     if (b.dataset.act === 'received') {
-      const r = await S.api('POST', `/api/my/parcels/${b.dataset.id}/received`, {});
+      const r = await S.api('POST', `/api/my/parcels/${b.dataset.id}/received`, {}, S.parcels.find((p) => p.id === Number(b.dataset.id))?.recipient);
       if (!r.ok) return SITE.toast(errText(r), true);
       await S.reload(); SITE.toast('Marked as received — enjoy!'); return route();
     }

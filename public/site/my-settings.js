@@ -31,7 +31,7 @@
           <p class="msg" data-msg hidden></p><button type="submit">Send a confirmation link</button></form>
         <p class="sub">We email a link to the <strong>new</strong> address, and nothing changes until you open it there. You'll be signed out on your other devices.</p></div>
 
-      ${S.handle ? `<div class="card" id="defaultsCard"><h2>Shipping defaults${handles.length > 1 ? ` for @${esc(S.handle)}` : ''}</h2>
+      ${S.handle ? `<div class="card" id="defaultsCard"><h2>Shipping defaults${handles.length > 1 ? ` for @${esc(S.one())}` : ''}</h2>
         <p class="sub" style="margin-top:0">We'll fill these in when you ask for shipping. You can still change them each time.</p>
         <form data-form="defaults"><div class="formgrid"><div><label for="defBias">Your bias</label><input id="defBias" name="bias" maxlength="80" value="${esc(defs.bias)}" placeholder="e.g. Hyunjin"></div>
           <div><label for="defLomo">Personalised Lomo name</label><input id="defLomo" name="lomoName" maxlength="80" value="${esc(defs.lomoName)}" placeholder="Leave blank to use your delivery name"></div></div>
@@ -82,7 +82,7 @@
         const r = await api('POST', '/api/my/email/change', { email: f.elements.email.value });
         S.say(msg, r.ok ? r.json.message : errText(r), r.ok);
       } else if (f.dataset.form === 'defaults') {
-        const r = await S.api('PUT', '/api/my/defaults', { handle: S.handle, bias: f.elements.bias.value, lomoName: f.elements.lomoName.value });
+        const r = await S.api('PUT', '/api/my/defaults', { handle: S.one(), bias: f.elements.bias.value, lomoName: f.elements.lomoName.value });
         S.say(msg, r.ok ? 'Saved.' : errText(r), r.ok);
       }
     };

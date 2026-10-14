@@ -46,7 +46,7 @@ export function importRoutes(app, { pool }) {
   }));
 
   app.get('/api/admin/import/batches', admin, wrap(async (req, res) => {
-    const [rows] = await pool.query('SELECT id, filename, status, row_count, created_at AS createdAt, imported_at AS importedAt, undone_at AS undoneAt, summary FROM import_batches ORDER BY id DESC LIMIT 50');
+    const [rows] = await pool.query('SELECT id, filename, status, row_count AS rowCount, created_at AS createdAt, imported_at AS importedAt, undone_at AS undoneAt, summary FROM import_batches ORDER BY id DESC LIMIT 50');
     res.json({ batches: rows.map((b) => ({ ...b, summary: json(b.summary, null) })) });
   }));
 

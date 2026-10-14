@@ -119,6 +119,9 @@ test('an invitation for one of your OTHER handles says so, rather than offering 
   const second = u('second'); assert.ok([200, 201].includes((await api('POST', '/api/me/handles', { handle: second }, b.cookie)).status));
   await request(a, { shareWith: second });
   const p = await myPage(b); await go(p, '#/ship');
+  assert.ok(p.q('form[data-form="accept"]'), 'viewing ALL their handles: the invitation for the other handle can be answered straight away');
+  assert.equal(p.q('[data-other-handle]'), null);
+  await go(p, '#/'); p.q('#sw').value = b.handle; p.q('#sw').dispatchEvent(new p.window.Event('change', { bubbles: true })); await sleep(300); await p.settle(); await go(p, '#/ship');          // now viewing ONE handle
   assert.match(text(p, '[data-other-handle]'), new RegExp(`has asked @${second} to ship together.*Switch to @${second}`, 's'));
   assert.equal(p.q('form[data-form="accept"]'), null);
   p.close();

@@ -22,7 +22,7 @@
       const heading = f.orderTitle !== last ? `<div style="font-weight:600; margin-top:18px">${esc(f.orderTitle)}</div>` : ''; last = f.orderTitle;
       const secured = f.setDecision === 'secured';
       return `${heading}<div class="card" style="margin-top:8px" data-fixed="${f.id}"><div class="row"><div><strong>${esc(f.itemTitle)}</strong>
-        <div style="margin-top:4px">🔒 Your fixed claim: <strong>${esc(f.member)}</strong> · ${f.price == null ? 'Price TBC' : money(f.price)} <span class="sub">· Set ${f.setNumber}</span></div></div>
+        <div style="margin-top:4px">🔒 Your fixed claim${S.tag(f.handle)}: <strong>${esc(f.member)}</strong> · ${f.price == null ? 'Price TBC' : money(f.price)} <span class="sub">· Set ${f.setNumber}</span></div></div>
         <span class="pill ${secured ? 'ok' : 'warn'}">${secured ? 'Set secured' : 'Not secured yet'}</span></div>
         ${f.pending
           ? `<div class="msg" style="margin-top:12px">Request sent — ${f.pending.action === 'ot8' ? 'swap to the full set' : 'give up this claim'}. Waiting for the GOM to approve it.</div><button class="secondary" data-act="withdraw" data-req="${f.pending.id}" style="margin-top:8px">Withdraw request</button>`
@@ -37,7 +37,7 @@
     view.onclick = async (e) => {
       const b = e.target.closest('[data-act]'); if (!b) return;
       if (b.dataset.act === 'withdraw') {
-        const r = await S.api('POST', `/api/my/fixed/requests/${b.dataset.req}/withdraw`, {});
+        const r = await S.api('POST', `/api/my/fixed/requests/${b.dataset.req}/withdraw`, {}, S.fixed.requests.find((x) => x.id === Number(b.dataset.req))?.handle);
         if (!r.ok) return SITE.toast(errText(r), true);
         await S.reload(); await SITE.views.fixed(view); return SITE.toast('Request withdrawn.');
       }
@@ -48,7 +48,7 @@
         : `Give up your fixed ${f.member} on "${f.itemTitle}"?\n\nYou'll no longer be claiming anything on this item, and the ${f.member} slot opens up for others.${f.canChangeNow ? '' : '\n\nThis set is already secured, so this sends a request to the GOM.'}`,
       { ok: action === 'ot8' ? 'Swap to the full set' : 'Give it up', cancel: 'Keep it' });
       if (!ok) return;
-      const r = await S.api('POST', `/api/my/fixed/${f.id}/change`, { action });
+      const r = await S.api('POST', `/api/my/fixed/${f.id}/change`, { action }, f.handle);
       if (!r.ok) return SITE.toast(errText(r), true);
       await S.reload(); await SITE.views.fixed(view);
       view.insertAdjacentHTML('afterbegin', `<div class="msg ok" data-result>${r.json.instant ? esc(describe(r.json, f)) : 'Request sent — the GOM will approve or decline it. You can withdraw it any time before then.'}</div>`);

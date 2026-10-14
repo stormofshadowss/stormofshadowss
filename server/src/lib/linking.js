@@ -1,4 +1,5 @@
 import { audit } from '../auth.js';
+import { shareAddress } from './address-share.js';
 
 // Links a handle to an account (once). Returns true if it linked, false if the handle already belongs to someone.
 // Caller is inside a transaction. The proofs are used up, so they can't be replayed against a later unlink.
@@ -10,5 +11,6 @@ export async function linkJoiner(conn, joinerId, accountId, via) {
   await conn.query('UPDATE joiners SET account_id = ?, account_deleted_at = NULL, linked_at = NOW(3), linked_via = ? WHERE id = ?', [accountId, via, joinerId]);
   await conn.query('DELETE FROM handle_proofs WHERE joiner_id = ?', [joinerId]);
   await audit(conn, accountId, 'handle.link', 'joiner', joinerId, { via });
+  await shareAddress(conn, accountId);                                                       // one address per person: the new handle gets theirs
   return true;
 }

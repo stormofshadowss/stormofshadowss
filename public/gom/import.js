@@ -2,7 +2,7 @@
 // → preview exactly what would happen → import → (undo, until money has moved on the imported claims). Nothing is saved until you press Import.
 (function () {
   const { esc, money, fmtDate, api, errText, $, $$ } = GOM;
-  let root = null, batches = [], cur = null, report = null, result = null, showAllPeople = false, msg = '';
+  let root = null, batches = [], cur = null, report = null, result = null, showAllPeople = false, msg = '', pastOpen = false;      // pastOpen: the "Imports so far" list is folded away until you open it
   const SCOPES = [['ongoing', 'Ongoing orders only (not completed or cancelled)'], ['history', 'Completed and cancelled orders only (history)'], ['all', 'Everything']];
 
   async function render(el) { root = el; batches = (await api('GET', '/api/admin/import/batches')).json?.batches || []; if (cur) await load(cur.id); else draw(); }
@@ -25,11 +25,16 @@
       <p class="msg" id="impMsg" ${msg ? '' : 'hidden'}>${esc(msg)}</p></div>`;
   }
 
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  // the list of earlier imports: folded away (it gets long when you import one person at a time); the line you see says how many, when the last was, and whether one is unfinished
   function pastCard() {
     if (!batches.length) return '';
-    return `<div class="card"><h2>Imports so far</h2>${batches.map((b) => `<div class="itemrow" data-batch="${b.id}"><div class="grow"><strong>${esc(b.filename || 'Untitled')}</strong> ${stat(b)}
-        <div class="sub">${esc(when(b.createdAt))} · ${b.rowCount} rows${b.summary?.counts ? ` · ${b.summary.counts.claims} claims for ${b.summary.counts.people.total} people` : ''}${b.status === 'imported' ? ` · imported ${esc(when(b.importedAt))}` : ''}</div></div>
-        <div class="btn-row" style="margin:0">${b.status === 'draft' ? '<button class="sm" data-act="open">Open</button>' : ''}${b.status === 'imported' ? '<button class="sm secondary" data-act="undo">Undo this import</button>' : ''}${b.status !== 'imported' ? '<button class="sm secondary" data-act="discard">Discard</button>' : ''}</div></div>`).join('')}</div>`;
+    const last = batches[0], drafts = batches.filter((b) => b.status === 'draft').length;
+    const claimsOf = (b) => (b.summary?.counts ? `${plural(b.summary.counts.claims, 'claim', 'claims')} for ${plural(b.summary.counts.people.total, 'person', 'people')}` : '');
+    return `<details class="card" id="pastImports" ${pastOpen ? 'open' : ''}><summary><strong>Imports so far</strong> (${batches.length}) <span class="sub">— last ${esc(when(last.createdAt))}${claimsOf(last) ? `: ${claimsOf(last)}` : ''}${drafts ? ` · <strong>${plural(drafts, 'unfinished upload', 'unfinished uploads')}</strong> — open to resume` : ''}</span></summary>
+      ${batches.map((b) => `<div class="itemrow" data-batch="${b.id}"><div class="grow"><strong>${esc(b.filename || 'Untitled')}</strong> ${stat(b)}
+        <div class="sub">${esc(when(b.createdAt))} · ${plural(b.rowCount, 'row', 'rows')}${claimsOf(b) ? ` · ${claimsOf(b)}` : ''}${b.status === 'imported' ? ` · imported ${esc(when(b.importedAt))}` : ''}</div></div>
+        <div class="btn-row" style="margin:0">${b.status === 'draft' ? '<button class="sm" data-act="open">Open</button>' : ''}${b.status === 'imported' ? '<button class="sm secondary" data-act="undo">Undo this import</button>' : ''}${b.status !== 'imported' ? '<button class="sm secondary" data-act="discard">Discard</button>' : ''}</div></div>`).join('')}</details>`;
   }
 
   function peopleCard() {
@@ -101,7 +106,7 @@
       ${reportCard()}`;
   }
 
-  function draw() { root.innerHTML = `<h1 style="margin:18px 0 10px">Import</h1>${introCard()}${pastCard()}${workspace()}${resultCard()}`; }
+  function draw() { const d = $('#pastImports', root); if (d) pastOpen = d.open; root.innerHTML = `<h1 style="margin:18px 0 10px">Import</h1>${introCard()}${pastCard()}${workspace()}${resultCard()}`; }
 
   // everything on the screen → the decisions to save
   function collect() {
