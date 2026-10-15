@@ -114,6 +114,8 @@ test('paying more than you owe: you must choose credit or tip, and the choice re
   await p.submit(form());
   const sent = (await pendingPayments()).find((x) => x.handle === 'over_h');
   assert.deepEqual([sent.amount, sent.overpayAmount, sent.overpayChoice, sent.overpayNote], [10, 4, 'tip', 'thank you!']);
+  assert.ok(p.q('[data-sent]') && !form(), 'after sending, a confirmation replaces the form');
+  await p.click(p.q('[data-act="pay-again"]'));                               // …until they say they are sending another
   await p.type(form().elements.amount, '6');
   assert.equal(p.q('[data-overpay]').hidden, true, 'back to the exact amount hides the question');
   p.close();
@@ -129,6 +131,8 @@ test('whose name: with a delivery name on file it defaults to it; a different na
   form().elements.method.value = 'PayPal';
   await p.submit(form());                                           // no reference needed: paid under her own name
   assert.equal((await pendingPayments()).find((x) => x.handle === 'name_h').payerIsAddressName, true);
+  assert.ok(p.q('[data-sent]') && !form(), 'after sending, a confirmation replaces the form');
+  await p.click(p.q('[data-act="pay-again"]'));                               // a second, different payment
   await p.click(p.q('input[name="payerChoice"][value="other"]'));
   assert.equal(form().elements.payerName.hidden, false);
   form().elements.method.value = 'Wise'; await p.submit(form());

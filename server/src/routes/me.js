@@ -138,13 +138,23 @@ export function meRoutes(app, { pool }) {
     const extra = round2(b.amount - owed);
     if (extra > 0.004 && !b.overpay) throw bad(`You're paying £${extra.toFixed(2)} more than you owe — choose whether that's credit for next time or a tip.`, 'overpay_choice_required');
 
-    const [ins] = await pool.query(
-      `INSERT INTO payments (joiner_id, order_id, amount, method, reference, payer_name, payer_is_address_name, address_name_snapshot,
-                             overpay_amount, overpay_choice, overpay_note)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-      [joiner.id, orderId, b.amount, b.method, b.reference || null, payerName, payerIsAddr, addrName,
-        extra > 0.004 ? extra : null, extra > 0.004 ? b.overpay.choice : null, extra > 0.004 ? (b.overpay.note || null) : null]);
-    res.status(201).json({ id: ins.insertId, status: 'pending', extra: extra > 0.004 ? extra : 0 });
+    // A double-tap or a retry must not record the same payment twice: look for an exact repeat (and wait our turn, so two taps at once can't both slip past the look).
+    const out = await withTx(pool, async (conn) => {
+      await lockJoiner(conn, joiner.id);
+      const [[dup]] = await conn.query(
+        `SELECT id, status FROM payments WHERE joiner_id = ? AND batch_key IS NULL AND status <> 'rejected' AND method = ? AND order_id <=> ? AND ABS(amount - ?) < 0.005
+            AND ((? IS NOT NULL AND reference = ? AND created_at > NOW() - INTERVAL 7 DAY) OR (reference <=> ? AND payer_name <=> ? AND created_at > NOW() - INTERVAL 2 MINUTE)) ORDER BY id DESC LIMIT 1`,
+        [joiner.id, b.method, orderId, b.amount, b.reference || null, b.reference || null, b.reference || null, payerName]);
+      if (dup) return { id: dup.id, status: dup.status, extra: 0, duplicate: true };
+      const [ins] = await conn.query(
+        `INSERT INTO payments (joiner_id, order_id, amount, method, reference, payer_name, payer_is_address_name, address_name_snapshot,
+                               overpay_amount, overpay_choice, overpay_note)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        [joiner.id, orderId, b.amount, b.method, b.reference || null, payerName, payerIsAddr, addrName,
+          extra > 0.004 ? extra : null, extra > 0.004 ? b.overpay.choice : null, extra > 0.004 ? (b.overpay.note || null) : null]);
+      return { id: ins.insertId, status: 'pending', extra: extra > 0.004 ? extra : 0 };
+    });
+    res.status(out.duplicate ? 200 : 201).json(out);
   }));
 
   // ONE payment for all of a person's handles: it is split across the handles in proportion to what each owes (oldest handle first), stored as one row per handle tied together
@@ -171,7 +181,17 @@ export function meRoutes(app, { pool }) {
     for (const x of owes) { if (x.owed <= 0.004 || remaining <= 0.004) continue; const a = round2(Math.min(x.owed, remaining)); remaining = round2(remaining - a); parts.push({ j: x.j, amount: a }); }
     if (extra > 0.004) parts[0].amount = round2(parts[0].amount + extra);
     const batchKey = randomBytes(8).toString('hex');
-    const ids = await withTx(pool, async (conn) => {
+    const made = await withTx(pool, async (conn) => {
+      await lockJoiner(conn, payers[0].id);                                                   // all their handles are locked together: two taps at once wait their turn
+      const [cands] = await conn.query(
+        `SELECT batch_key, SUM(amount) AS total FROM payments WHERE joiner_id IN (?) AND batch_key IS NOT NULL AND status <> 'rejected' AND method = ? AND order_id <=> ?
+            AND ((? IS NOT NULL AND reference = ? AND created_at > NOW() - INTERVAL 7 DAY) OR (reference <=> ? AND payer_name <=> ? AND created_at > NOW() - INTERVAL 2 MINUTE)) GROUP BY batch_key ORDER BY MAX(id) DESC`,
+        [payers.map((p) => p.id), b.method, orderId, b.reference || null, b.reference || null, b.reference || null, payerName]);
+      const same = cands.find((c) => Math.abs(Number(c.total) - b.amount) < 0.005);
+      if (same) {
+        const [rows] = await conn.query('SELECT p.id, p.amount, j.instagram_handle AS handle FROM payments p JOIN joiners j ON j.id = p.joiner_id WHERE p.batch_key = ? ORDER BY p.id', [same.batch_key]);
+        return { duplicate: true, batchKey: same.batch_key, ids: rows.map((r) => r.id), split: rows.map((r) => ({ handle: r.handle, amount: Number(r.amount) })) };
+      }
       const out = [];
       for (const [i, p] of parts.entries()) {
         const over = i === 0 && extra > 0.004;
@@ -181,15 +201,15 @@ export function meRoutes(app, { pool }) {
           [p.j.id, orderId, p.amount, b.method, b.reference || null, payerName, payerIsAddr, addrName, over ? extra : null, over ? b.overpay.choice : null, over ? (b.overpay.note || null) : null, batchKey]);
         out.push(ins.insertId);
       }
-      return out;
+      return { ids: out, batchKey, split: parts.map((p) => ({ handle: p.j.handle, amount: p.amount })) };
     });
-    res.status(201).json({ id: ids[0], ids, batchKey, status: 'pending', extra: extra > 0.004 ? extra : 0, split: parts.map((p) => ({ handle: p.j.handle, amount: p.amount })) });
+    res.status(made.duplicate ? 200 : 201).json({ id: made.ids[0], ids: made.ids, batchKey: made.batchKey, status: 'pending', extra: made.duplicate ? 0 : (extra > 0.004 ? extra : 0), split: made.split, ...(made.duplicate ? { duplicate: true } : {}) });
   }
 
   app.get('/api/my/payments', auth, wrap(async (req, res) => {
     const scope = await scopeOf(req);
     const [rows] = await pool.query(
-      `SELECT p.id, jo.instagram_handle AS handle, p.amount, p.method, p.reference, p.payer_name AS payerName, p.status, p.created_at AS createdAt, go.title AS orderTitle
+      `SELECT p.id, jo.instagram_handle AS handle, p.amount, p.method, p.reference, p.payer_name AS payerName, p.status, p.order_id AS orderId, p.created_at AS createdAt, go.title AS orderTitle
          FROM payments p JOIN joiners jo ON jo.id = p.joiner_id LEFT JOIN group_orders go ON go.id = p.order_id WHERE p.joiner_id IN (?) ORDER BY p.id DESC`, [scope.joiners.map((j) => j.id)]);
     res.json({ payments: rows });
   }));
