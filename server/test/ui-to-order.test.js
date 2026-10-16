@@ -1,7 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, seed } from './helpers.js';
-import { gomPage, toast } from './ui.helpers.js';
+import { gomPage, toast, modal, press } from './ui.helpers.js';
 
 // Warehouse → Incoming → "To order": what is secured and still needs ordering, counted per option — by group order or by proxy — with a copy button.
 let app, admin, w, N = 0, ids;
@@ -55,4 +55,61 @@ test('ITEM AND ORDER NAMES WITH HTML are shown as text', async () => {
   const api = (m, p, b) => app.api(m, p, b, admin); const go = (await api('POST', '/api/admin/orders', { groupId: w.group, title: '<img src=x onerror="window.pwned=1"> GO', proxy: 'Sam' })).json.id;
   const it = (await api('POST', `/api/admin/orders/${go}/items`, { type: 'independent', members: ['<b>Bold</b>'], title: '<i>Item</i>', price: 4 })).json.id; await app.api('POST', '/api/claims', { handle: `to${++N}`, lines: [{ itemId: it, member: '<b>Bold</b>' }] }); await api('POST', '/api/admin/claims/secure', { orderId: go });
   const p = await open(); await p.click(chip(p, 'toorder')); assert.equal(p.q('img[src="x"]'), null); assert.equal(p.q('[data-to-order] b'), null); assert.equal(p.window.pwned, undefined); assert.match(p.text(group(p, `o${go}`)), /<img src=x onerror="window\.pwned=1"> GO.*<i>Item<\/i>.*1× <b>Bold<\/b>/s); p.close();
+});
+
+
+// ───────── "Log as a store order…": the To order list → a New store order with its items already in ─────────
+const form = (p) => p.q('#newOrder');
+const lines = (p) => p.qa('[data-line-row]', form(p)).map((r) => [p.text(r.querySelector('[name=itemId]').selectedOptions[0]), r.querySelector('[name=qty]').value, r.querySelector('[name=lnote]').value]);
+const mkOrder = async (title, proxy, items) => { const api = (m, pa, b) => app.api(m, pa, b, admin); const go = (await api('POST', '/api/admin/orders', { groupId: w.group, title, proxy })).json.id; const out = [];
+  for (const it of items) { const id = (await api('POST', `/api/admin/orders/${go}/items`, { type: it.members ? 'independent' : 'normal', price: 5, ...it })).json.id; out.push(id); for (const [member, qty] of it.claims || [[null, it.qty || 1]]) await app.api('POST', '/api/claims', { handle: `lg${++N}`, lines: [{ itemId: id, ...(member ? { member } : {}), qty }] }); }
+  await api('POST', '/api/admin/claims/secure', { orderId: go }); return { go, items: out }; };
+
+test('"LOG AS A STORE ORDER…" OPENS THE FORM FILLED IN: one line per item with how many, the options in the line\'s note, "Placed by" set to the group\'s proxy — and the cursor in the Store box', async () => {
+  const p = await open(); await p.click(chip(p, 'toorder')); assert.equal(form(p), null, 'not open until asked'); await p.click(p.q('[data-act="log-order"]', group(p, `o${ids.sam}`))); await sleep(60);
+  assert.ok(form(p)); assert.match(p.text(p.q('[data-prefill]', form(p))), /Filled in from Skzoo Pop-up on your To order list — check the quantities, add the store, then save\./);
+  assert.deepEqual(lines(p), [['Strap plush', '5', ''], ['Pop-up tee', '3', '1× L, 2× M'], ['Photocards', '4', '1× Felix, 3× Han']], 'the same totals and options as the list'); assert.equal(form(p).elements.proxy.value, 'Sam'); assert.equal(form(p).elements.store.value, '', 'you still add the store');
+  assert.equal(p.window.document.activeElement, form(p).elements.store, 'ready to type the store'); assert.deepEqual([p.errors, p.native], [[], 0]); p.close();
+});
+
+test('THE PROXY IS FILLED IN FROM THE GROUP: by proxy it is that proxy ("Me" = blank); a group whose items have different proxies leaves it for you to choose', async () => {
+  const none = await mkOrder('Self-ordered GO', null, [{ title: 'My own thing' }]); const mixed = await mkOrder('Mixed proxies GO', 'Sam', [{ title: 'Sam thing' }, { title: 'Yuki thing', proxy: 'Yuki' }]);
+  const p = await open(); await p.click(chip(p, 'toorder'));
+  await p.click(p.q('[data-act="log-order"]', group(p, `o${mixed.go}`))); assert.equal(form(p).elements.proxy.value, '', 'two proxies in one group: you choose'); assert.equal(lines(p).length, 2);
+  await p.click(p.q('[data-act="to-by"][data-by="proxy"]')); await p.click(p.q('[data-act="log-order"]', group(p, 'pYuki'))); assert.equal(form(p).elements.proxy.value, 'Yuki'); assert.ok(lines(p).some(([t, q]) => t === 'Lightstick' && q === '2'));
+  assert.ok(lines(p).some(([t]) => t === 'Yuki thing'), 'by proxy, only that proxy\'s items — across group orders'); await p.click(p.q('[data-act="log-order"]', group(p, 'pMe'))); assert.equal(form(p).elements.proxy.value, ''); assert.ok(lines(p).some(([t]) => t === 'My own thing')); void none; p.close();
+});
+
+test('SAVING IT creates the store order with those lines and notes, and tells you the next step; nothing is moved on yet (the list is unchanged)', async () => {
+  const api = (m, pa, b) => app.api(m, pa, b, admin); const me = await mkOrder('Save flow GO', 'Yuki', [{ title: 'Keyring set', members: ['Han', 'Felix'], claims: [['Han', 2], ['Felix', 1]] }]);
+  const p = await open(); await p.click(chip(p, 'toorder')); const before = Number(p.text(chip(p, 'toorder')).match(/\((\d+)\)/)[1]); await p.click(p.q('[data-act="log-order"]', group(p, `o${me.go}`)));
+  form(p).elements.store.value = 'Ktown4u'; form(p).elements.orderRef.value = 'KT-1001'; await p.submit(form(p)); await sleep(350); await p.settle();
+  assert.match(toast(p), /Store order saved\. To move those claims on, use “Mark ordered…” under By item\./); assert.equal(form(p), null, 'the form closes'); assert.equal(p.q('[data-act="filter"][data-k="toorder"]').getAttribute('aria-pressed'), 'true', 'and you are still on the To order list');
+  const saved = (await api('GET', '/api/admin/incoming')).json.orders.find((o) => o.orderRef === 'KT-1001'); assert.deepEqual([saved.store, saved.proxy, saved.lines.map((l) => [l.qty, l.note])], ['Ktown4u', 'Yuki', [[3, '1× Felix, 2× Han']]]);
+  assert.equal(Number(p.text(chip(p, 'toorder')).match(/\((\d+)\)/)[1]), before, 'logging a store order does not move claims on by itself'); p.close();
+});
+
+test('THE WHOLE JOURNEY: see what to order → log it → "Mark ordered…" under By item moves exactly those claims → they leave the To order list', async () => {
+  const j = await mkOrder('Journey GO', 'Sam', [{ title: 'Journey album', qty: 4 }]); const api = (m, pa, b) => app.api(m, pa, b, admin);
+  const p = await open(); await p.click(chip(p, 'toorder')); assert.match(p.text(group(p, `o${j.go}`)), /Journey album.*4 in all/s); await p.click(p.q('[data-act="log-order"]', group(p, `o${j.go}`))); form(p).elements.store.value = 'Weverse Shop'; await p.submit(form(p)); await sleep(350); await p.settle();
+  await p.click(chip(p, 'items')); await p.click(p.q(`[data-act="advance"][data-to="ordered"][data-id="${j.items[0]}"]`)); await sleep(250); await p.settle(); assert.match(p.text(modal(p)), /Move 4 claims to “ordered via proxy \/ warehouse”\?/); await press(p, 'Move them'); await sleep(350); await p.settle();
+  assert.equal((await api('GET', `/api/admin/claims?order=${j.go}`)).json.claims.filter((c) => c.pipeline === 'ordered via proxy / warehouse').length, 4, 'all four moved'); await p.click(chip(p, 'toorder')); assert.equal(group(p, `o${j.go}`), null, 'gone from the list'); p.close();
+});
+
+test('THE ORDINARY "+ New store order" BUTTON IS STILL A BLANK FORM (no leftover pre-fill), and closing the filled-in form forgets it', async () => {
+  const p = await open(); await p.click(chip(p, 'toorder')); await p.click(p.q('[data-act="log-order"]', group(p, `o${ids.sam}`))); assert.ok(p.q('[data-prefill]'));
+  await p.click(p.q('[data-act="new"]')); assert.equal(form(p), null, 'pressing + New store order while the filled-in form is open closes it');
+  await p.click(p.q('[data-act="new"]')); assert.ok(form(p)); assert.equal(p.q('[data-prefill]'), null, 'no hint'); assert.deepEqual(lines(p), [['Which item?', '', '']], 'one empty line'); assert.equal(form(p).elements.proxy.value, ''); p.close();
+});
+
+test('A LONG LIST OF OPTIONS STILL SAVES: the note is kept within its 200 characters (cut with "…") instead of failing', async () => {
+  const members = Array.from({ length: 30 }, (_, i) => `Member Number ${String(i + 1).padStart(2, '0')}`); const long = await mkOrder('Long options GO', 'Sam', [{ title: 'Huge set', members, claims: members.map((m) => [m, 1]) }]);
+  const p = await open(); await p.click(chip(p, 'toorder')); await p.click(p.q('[data-act="log-order"]', group(p, `o${long.go}`))); const note = lines(p)[0][2]; assert.ok(note.length <= 200 && note.endsWith('…'), `kept within 200 (is ${note.length})`); assert.ok(note.startsWith('1× Member Number 01, 1× Member Number 02'));
+  form(p).elements.store.value = 'Big shop'; form(p).elements.orderRef.value = 'LONG-1'; await p.submit(form(p)); await sleep(350); await p.settle(); assert.match(toast(p), /Store order saved/); assert.equal((await app.api('GET', '/api/admin/incoming', undefined, admin)).json.orders.find((o) => o.orderRef === 'LONG-1').lines[0].qty, 30); p.close();
+});
+
+test('NAMES WITH HTML in the pre-filled form are shown as text (the hint, the item picker and the note)', async () => {
+  const x = await mkOrder('<img src=x onerror="window.pwned=1"> Hint GO', 'Sam', [{ title: '<b>Bold</b> thing', members: ['<i>Han</i>'], claims: [['<i>Han</i>', 2]] }]);
+  const p = await open(); await p.click(chip(p, 'toorder')); await p.click(p.q('[data-act="log-order"]', group(p, `o${x.go}`))); assert.equal(p.q('img[src="x"]'), null); assert.equal(p.window.pwned, undefined); assert.equal(p.q('#newOrder b'), null);
+  assert.match(p.text(p.q('[data-prefill]')), /<img src=x onerror="window\.pwned=1"> Hint GO/); assert.deepEqual(lines(p)[0], ['<b>Bold</b> thing', '2', '2× <i>Han</i>']); p.close();
 });

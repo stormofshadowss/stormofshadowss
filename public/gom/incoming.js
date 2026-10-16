@@ -2,6 +2,7 @@
 // and a button to move the oldest claims along once copies are ordered / have arrived.
 (function () {
   const { esc, fmtDate, api, errText, $, $$ } = GOM;
+  let newPrefill = null, toOrderGroups = new Map();                  // newPrefill: the New store order form filled in from a To order group; toOrderGroups: the groups on screen, by key
   let toOrder = { rows: [], total: 0 }, toOrderBy = 'order';        // what still needs ordering (secured, not yet marked ordered), and how it is grouped: 'order' or 'proxy'
   let root = null, data = null, filter = 'waiting', groupFilter = '', showNew = false, editing = null, addingLine = null, addingShip = null;
   const CARRIERS = [
@@ -17,12 +18,13 @@
   // the little switch at the top of the Warehouse tab (Boxes ⇄ Incoming); warehouse.js uses it too
   GOM.whSwitch = (current) => `<div class="chips" id="whSwitch" role="group" aria-label="Warehouse view"><button type="button" class="chip ${current === 'boxes' ? 'on' : ''}" data-act="wh-view" data-view="boxes" aria-pressed="${current === 'boxes'}">Boxes</button><button type="button" class="chip ${current === 'incoming' ? 'on' : ''}" data-act="wh-view" data-view="incoming" aria-pressed="${current === 'incoming'}">Incoming</button></div>`;
 
-  const itemOptions = () => {
+  const itemOptions = (sel, fallbackTitle) => {
     const by = new Map(); for (const o of data.options) { if (!by.has(o.groupOrder)) by.set(o.groupOrder, []); by.get(o.groupOrder).push(o); }
-    return `<option value="">Which item?</option>${[...by.entries()].map(([g, list]) => `<optgroup label="${esc(g)}">${list.map((o) => `<option value="${o.itemId}">${esc(o.item)}</option>`).join('')}</optgroup>`).join('')}`;
+    const missing = sel && !data.options.some((o) => o.itemId === sel) ? `<option value="${sel}" selected>${esc(fallbackTitle || 'This item')}</option>` : '';
+    return `<option value="">Which item?</option>${missing}${[...by.entries()].map(([g, list]) => `<optgroup label="${esc(g)}">${list.map((o) => `<option value="${o.itemId}" ${o.itemId === sel ? 'selected' : ''}>${esc(o.item)}</option>`).join('')}</optgroup>`).join('')}`;
   };
   const carrierOptions = (sel) => `<option value="">Carrier…</option>${CARRIERS.map(([n]) => `<option ${n === sel ? 'selected' : ''}>${esc(n)}</option>`).join('')}`;
-  const lineRow = () => `<div class="formgrid" data-line-row style="margin-bottom:6px"><div class="span2"><select name="itemId">${itemOptions()}</select></div><div><input name="qty" type="number" min="1" max="9999" placeholder="How many" inputmode="numeric"></div><div><input name="lnote" placeholder="Note (e.g. ver. A)" maxlength="200"></div></div>`;
+  const lineRow = (pre) => `<div class="formgrid" data-line-row style="margin-bottom:6px"><div class="span2"><select name="itemId">${itemOptions(pre?.itemId, pre?.title)}</select></div><div><input name="qty" type="number" min="1" max="9999" placeholder="How many" inputmode="numeric" value="${pre ? esc(pre.qty) : ''}"></div><div><input name="lnote" placeholder="Note (e.g. ver. A)" maxlength="200" value="${pre ? esc(pre.note || '') : ''}"></div></div>`;
   const shipRow = () => `<div class="formgrid" data-ship-row style="margin-bottom:6px"><div><select name="carrier">${carrierOptions('')}</select></div><div class="span2"><input name="trackingNo" placeholder="Tracking number to your warehouse" maxlength="40"></div></div>`;
 
   async function render(el) {
@@ -49,11 +51,20 @@
           return { key: `p${px}`, title: px === 'Me' ? 'Me (no proxy)' : px, sub: `${mine.length} group order${mine.length === 1 ? '' : 's'}`, body: mine.map((x) => `<div class="sub" style="margin:8px 0 2px; font-weight:600">${esc(x.o.title)}</div>${x.items.map((it) => itemHtml(it, false)).join('')}`).join(''),
             text: `${px === 'Me' ? 'Me (no proxy)' : px}\n${mine.map((x) => `${x.o.title}\n${x.items.map((it) => `  ${itemLine(it)}`).join('\n')}`).join('\n')}`, total: mine.reduce((n, x) => n + x.items.reduce((m, it) => m + it.total, 0), 0) };
         });
+    // what the New store order form is filled in with: one line per item (how many, and the options in the line's note — kept within the note's 200 characters)
+    const noteOf = (it) => { const t = it.options.some((x) => x.option) ? it.options.map((x) => `${x.qty}× ${x.option || 'no option'}`).join(', ') : ''; return t.length > 200 ? `${t.slice(0, 199)}…` : t; };
+    const linesOf = (items) => items.map((it) => ({ itemId: it.id, title: it.title, qty: it.total, note: noteOf(it) }));
+    toOrderGroups = new Map();
+    for (const g of groups) {
+      const items = toOrderBy === 'order' ? [...orders.get(Number(g.key.slice(1))).items.values()] : [...orders.values()].flatMap((o) => [...o.items.values()].filter((it) => it.proxy === g.key.slice(1)));
+      const proxies = [...new Set(items.map((it) => it.proxy))];
+      toOrderGroups.set(g.key, { from: g.title, proxy: proxies.length === 1 && proxies[0] !== 'Me' ? proxies[0] : null, lines: linesOf(items) });
+    }
     const all = groups.map((g) => g.text).join('\n\n');
     return `<div class="card" data-to-order><div class="row"><div><h2 style="margin:0">To order</h2><div class="sub">${plural(toOrder.total, 'copy', 'copies')} secured and waiting to be ordered. They leave this list once they are moved to “ordered” (Claims → Stage, or <em>Mark ordered…</em> under By item after you've logged the store order).</div></div>
         <div class="btn-row" style="margin:0"><span role="group" aria-label="Group by" style="display:inline-flex; gap:6px"><button class="sm ${toOrderBy === 'order' ? '' : 'secondary'}" data-act="to-by" data-by="order" aria-pressed="${toOrderBy === 'order'}">By group order</button><button class="sm ${toOrderBy === 'proxy' ? '' : 'secondary'}" data-act="to-by" data-by="proxy" aria-pressed="${toOrderBy === 'proxy'}">By proxy</button></span>
         <button class="sm secondary" data-act="copy" data-text="${esc(all)}" data-copy-all>Copy all</button></div></div></div>
-      ${groups.map((g) => `<div class="card" data-to-order-group="${esc(g.key)}"><div class="row"><div><strong>${esc(g.title)}</strong> <span class="sub">· ${plural(g.total, 'copy', 'copies')}${g.sub ? ` · ${esc(g.sub)}` : ''}</span></div><button class="sm secondary" data-act="copy" data-text="${esc(g.text)}">Copy list</button></div>${g.body}</div>`).join('')}`;
+      ${groups.map((g) => `<div class="card" data-to-order-group="${esc(g.key)}"><div class="row"><div><strong>${esc(g.title)}</strong> <span class="sub">· ${plural(g.total, 'copy', 'copies')}${g.sub ? ` · ${esc(g.sub)}` : ''}</span></div><div class="btn-row" style="margin:0"><button class="sm" data-act="log-order" data-key="${esc(g.key)}" title="Open a new store order with these items already filled in">Log as a store order…</button><button class="sm secondary" data-act="copy" data-text="${esc(g.text)}">Copy list</button></div></div>${g.body}</div>`).join('')}`;
   }
   function counts() {
     const rows = data.counts.filter((c) => !c.cancelled && (!groupFilter || c.groupOrder === groupFilter) && (c.needed || c.ordered));
@@ -87,11 +98,11 @@
   }
   function newForm() {
     const stores = [...new Set(data.orders.map((o) => o.store))];
-    return `<form class="card" data-form="new-order" id="newOrder"><h2>New store order</h2><datalist id="storeList">${stores.map((s) => `<option value="${esc(s)}">`).join('')}</datalist>
+    return `<form class="card" data-form="new-order" id="newOrder"><h2>New store order</h2>${newPrefill ? `<p class="sub" data-prefill style="margin:0 0 10px">Filled in from <strong>${esc(newPrefill.from)}</strong> on your To order list — check the quantities, add the store, then save.</p>` : ''}<datalist id="storeList">${stores.map((s) => `<option value="${esc(s)}">`).join('')}</datalist>
       <div class="formgrid"><div><label>Store</label><input name="store" list="storeList" required maxlength="120" placeholder="e.g. Ktown4u, Weverse Shop"></div><div><label>Order number</label><input name="orderRef" maxlength="120"></div>
-        <div><label>Ordered on</label><input name="orderedOn" type="date" value="${today()}" required></div><div><label>Placed by</label><select name="proxy"><option value="">Me</option>${data.proxies.map((n) => `<option>${esc(n)}</option>`).join('')}</select></div>
+        <div><label>Ordered on</label><input name="orderedOn" type="date" value="${today()}" required></div><div><label>Placed by</label><select name="proxy"><option value="">Me</option>${data.proxies.map((n) => `<option ${n === newPrefill?.proxy ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></div>
         <div class="span2"><label>Link to the order / confirmation</label><input name="orderUrl" placeholder="https://…" maxlength="500"></div></div>
-      <div class="sub" style="margin:12px 0 4px; font-weight:600">What's on it</div><div id="lineRows">${lineRow()}</div><button type="button" class="sm secondary" data-act="more-lines">+ Another item</button>
+      <div class="sub" style="margin:12px 0 4px; font-weight:600">What's on it</div><div id="lineRows">${newPrefill?.lines?.length ? newPrefill.lines.map((l) => lineRow(l)).join('') : lineRow()}</div><button type="button" class="sm secondary" data-act="more-lines">+ Another item</button>
       <div class="sub" style="margin:12px 0 4px; font-weight:600">Tracking numbers to your warehouse (add them now or later)</div><div id="shipRows">${shipRow()}</div><button type="button" class="sm secondary" data-act="more-ships">+ Another tracking number</button>
       <label>Notes</label><textarea name="notes" rows="2" maxlength="2000" style="width:100%" placeholder="e.g. limit 3 per order"></textarea>
       <p class="msg" data-msg hidden></p><div class="btn-row"><button type="submit">Save store order</button><button type="button" class="secondary" data-act="new-close">Cancel</button></div></form>`;
@@ -116,8 +127,12 @@
     const b = e.target.closest('[data-act]'); if (!b) return;
     const act = b.dataset.act, id = Number(b.dataset.id);
     if (act === 'wh-view') { GOM.whView = b.dataset.view; return GOM.showTab('warehouse'); }
-    if (act === 'new') { showNew = !showNew; draw(); return $('#newOrder input[name="store"]', root)?.focus(); }
-    if (act === 'new-close') { showNew = false; return draw(); }
+    if (act === 'new') { showNew = !showNew; newPrefill = null; draw(); return $('#newOrder input[name="store"]', root)?.focus(); }
+    if (act === 'new-close') { showNew = false; newPrefill = null; return draw(); }
+    if (act === 'log-order') {                                                        // the To order list → a New store order with its items already in
+      const g = toOrderGroups.get(b.dataset.key); if (!g) return;
+      newPrefill = g; showNew = true; draw(); const f = $('#newOrder', root); f?.scrollIntoView?.({ block: 'start' }); return $('input[name="store"]', f)?.focus();
+    }
     if (act === 'more-lines') { $('#lineRows', root).insertAdjacentHTML('beforeend', lineRow()); return; }
     if (act === 'more-ships') { $('#shipRows', root).insertAdjacentHTML('beforeend', shipRow()); return; }
     if (act === 'filter') { filter = b.dataset.k; return draw(); }
@@ -159,7 +174,7 @@
       if (lines.some((l) => !l.itemId || !(l.qty >= 1))) return fail(f, 'Each item line needs an item and how many.');
       const shipments = $$('[data-ship-row]', f).map((r) => ({ carrier: r.querySelector('[name=carrier]').value || null, trackingNo: r.querySelector('[name=trackingNo]').value.trim() })).filter((s) => s.trackingNo);
       const body = { store: val(f, 'store'), orderRef: val(f, 'orderRef') || null, orderedOn: val(f, 'orderedOn'), proxy: val(f, 'proxy') || null, orderUrl: val(f, 'orderUrl') || null, notes: val(f, 'notes') || null, lines, shipments };
-      if (await call('POST', '/api/admin/store-orders', body)) { showNew = false; filter = 'waiting'; await render(root); GOM.toast('Store order saved.'); } return;
+      if (await call('POST', '/api/admin/store-orders', body)) { const fromList = !!newPrefill; showNew = false; newPrefill = null; filter = fromList ? 'toorder' : 'waiting'; await render(root); GOM.toast(fromList ? 'Store order saved. To move those claims on, use “Mark ordered…” under By item.' : 'Store order saved.'); } return;
     }
     if (kind === 'edit-order') {
       const body = { store: val(f, 'store'), orderRef: val(f, 'orderRef') || null, orderedOn: val(f, 'orderedOn'), proxy: val(f, 'proxy') || null, orderUrl: val(f, 'orderUrl') || null, notes: val(f, 'notes') || null };
