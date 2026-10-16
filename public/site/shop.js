@@ -27,14 +27,25 @@
   const candidateSets = (it) => it.sets.filter((s) => s.decision !== 'cancelled');             // the same sets the server places into
   const openIn = (it, name) => candidateSets(it).filter((s) => !s.taken.includes(name)).map((s) => s.number);
   const spotText = (nums) => (nums.length ? `open in Set ${nums.slice(0, 3).join(', ')}${nums.length > 3 ? ` +${nums.length - 3} more` : ''}` : 'next one starts a new set');
-  const openGrids = new Set();                                                                  // item ids whose grid is open (the page redraws on every click)
+  const moreSets = new Set();                                                                   // item ids showing ALL their sets with room (the page redraws on every click)
+  const SETS_SHOWN = 5, SETS_MAX = 40;
+  // Where the open spots are: one row per set that still has room, like the GOM's Sets tab — a dot per part (a RINGED dot is an open spot, a filled one is taken), how many are taken,
+  // and the open members written out. A set the GOM has already secured still has real open spots (its taken dots are green). Display only: a part always goes in the earliest set where it's open.
   function setGrid(it) {
     const cand = candidateSets(it); if (!cand.length) return '';
-    const names = it.members.map((m) => m.name), room = cand.filter((x) => names.some((n) => !x.taken.includes(n))), rows = room.slice(0, 20), full = cand.length - room.length;
-    return `<details class="setgrid" data-setgrid="${it.id}" style="margin-top:10px" ${openGrids.has(it.id) ? 'open' : ''}><summary>See where the open spots are (${room.length} set${room.length === 1 ? '' : 's'} with room)</summary>
-      ${room.length ? `<div class="scroll"><table class="grid"><thead><tr><th>Set</th>${names.map((n) => `<th>${esc(n)}</th>`).join('')}</tr></thead><tbody>${rows.map((x) => `<tr data-set="${x.number}"><td>Set ${x.number}${x.decision === 'secured' ? ' <span class="pill ok">secured</span>' : ''}</td>${names.map((n) => (x.taken.includes(n) ? '<td class="sub">taken</td>' : '<td><strong>open</strong></td>')).join('')}</tr>`).join('')}</tbody></table></div>` : ''}
-      ${room.length > rows.length ? `<p class="sub">…and ${room.length - rows.length} more sets with room.</p>` : ''}${full ? `<p class="sub">${full} full set${full === 1 ? '' : 's'} not shown.</p>` : ''}
-      <p class="sub">A part you claim goes in the earliest set where it's open. Sets marked <em>secured</em> are already bought — a spot there is confirmed by the GOM after you claim it.</p></details>`;
+    const names = it.members.map((m) => m.name), room = cand.filter((x) => names.some((n) => !x.taken.includes(n))), full = cand.length - room.length;
+    const all = moreSets.has(it.id), shown = room.slice(0, all ? SETS_MAX : SETS_SHOWN);
+    const row = (x) => {
+      const open = names.filter((n) => !x.taken.includes(n)), takenN = names.length - open.length;
+      return `<div class="spotrow" data-set="${x.number}"><strong>Set ${x.number}</strong>${x.decision === 'secured' ? ' <span class="pill ok">secured</span>' : ''}
+        <span class="dots lg" role="img" aria-label="${takenN} of ${names.length} taken">${names.map((n) => (x.taken.includes(n) ? `<i class="dot ${x.decision === 'secured' ? 'lock' : 'gone'}" data-taken title="${esc(n)} — taken"></i>` : `<i class="dot free" data-open title="${esc(n)} — open"></i>`)).join('')}</span>
+        <span class="sub" data-count>${takenN} of ${names.length} taken</span><span class="spotopen" data-open-names><strong>Open:</strong> ${open.map(esc).join(', ')}</span></div>`;
+    };
+    return `<div class="spotmap" data-spotmap="${it.id}"><div class="row" style="margin-bottom:2px"><strong>Where the open spots are</strong><span class="sub legend"><i class="dot free"></i> open <i class="dot gone"></i> taken${shown.some((x) => x.decision === 'secured') ? ' <i class="dot lock"></i> taken, set secured' : ''}</span></div>
+      ${room.length ? shown.map(row).join('') : '<p class="sub">Every set so far is full — a new one starts when you claim.</p>'}
+      ${room.length > SETS_SHOWN ? `<button type="button" class="sm secondary" data-act="moresets" data-item="${it.id}" style="margin:6px 0">${all ? 'Show fewer sets' : `Show ${room.length - SETS_SHOWN} more set${room.length - SETS_SHOWN === 1 ? '' : 's'}`}</button>` : ''}
+      ${all && room.length > SETS_MAX ? `<p class="sub">…and ${room.length - SETS_MAX} more sets with room.</p>` : ''}${full ? `<p class="sub">${full} full set${full === 1 ? '' : 's'} not shown.</p>` : ''}
+      <p class="sub">A part you claim goes in the earliest set where it's open. Sets marked <em>secured</em> are already bought — a spot there is confirmed by the GOM after you claim it.</p></div>`;
   }
   function placementText(it) {
     const lines = basket.filter((l) => l.itemId === it.id);
@@ -261,13 +272,13 @@
     home();
   }
 
-  view.addEventListener('toggle', (e) => { const d = e.target; if (d.dataset && d.dataset.setgrid) { const id = Number(d.dataset.setgrid); d.open ? openGrids.add(id) : openGrids.delete(id); } }, true);
   view.addEventListener('click', (e) => {
     const b = e.target.closest('[data-act]'); if (!b) return;
     if (b.dataset.act === 'inc' || b.dataset.act === 'dec') {
       bump(Number(b.dataset.item), b.dataset.member || null, b.dataset.variant || null, b.dataset.act === 'inc' ? 1 : -1);
       return route();
     }
+    if (b.dataset.act === 'moresets') { const id = Number(b.dataset.item); if (moreSets.has(id)) moreSets.delete(id); else moreSets.add(id); return route(); }
     if (b.dataset.act === 'shopgroup') { const g = b.dataset.g === 'all' ? null : b.dataset.g === 'other' ? 'other' : Number(b.dataset.g); shopGroup = g === shopGroup ? null : g; return shopPage(); }
     if (b.dataset.act === 'shopinc' || b.dataset.act === 'shopdec') { bumpShop(Number(b.dataset.shop), b.dataset.act === 'shopinc' ? 1 : -1); return route(); }
     if (b.dataset.act === 'whole') {                        // one of every part, kept together

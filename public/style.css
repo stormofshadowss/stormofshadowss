@@ -1,9 +1,9 @@
 /* Colours are tokens. Dark is the default look; the light set (the original palette) is kept under [data-theme="light"]. Change a token here and every page follows. */
 :root { color-scheme: light; --ink:#1f1b33; --soft:#625d7d; --paper:#f1eefc; --surface:#ffffff; --surface-2:#f6f3ff; --line:#e3ddf6; --accent:#d23c08; --accent-ink:#c2380a; --accent-soft:#fff0e8; --flag-new:#5b3ad6;
-  --ok-bg:#e6f6ee; --ok-ink:#186a43; --ok-line:#b9e3cd; --warn-bg:#fff3dc; --warn-ink:#8a5200; --warn-line:#f1d9a0; --err-bg:#fde8ec; --err-ink:#a32038; --err-line:#f3bcc7;
+  --ok-bg:#e6f6ee; --ok-ink:#186a43; --ok-line:#b9e3cd; --warn-bg:#fff3dc; --warn-ink:#8a5200; --warn-line:#f1d9a0; --err-bg:#fde8ec; --err-ink:#a32038; --err-line:#f3bcc7; --sold:#c4243b;
   --r:20px; --card-line:transparent; --shadow:0 6px 22px rgba(86,64,170,.10); --glass:rgba(255,255,255,.82); --page:linear-gradient(180deg, #e9ecff 0%, #f4eeff 42%, #ffffff 100%); }
 :root[data-theme="dark"] { color-scheme: dark; --ink:#f4eff7; --soft:#bdb3cc; --paper:#100c18; --surface:#1a1424; --surface-2:#241c31; --line:#3a2f4d; --accent:#c2410c; --accent-ink:#ff8a5c; --accent-soft:#2f1a14; --flag-new:#5b3ad6;
-  --ok-bg:#10301f; --ok-ink:#7ee2a8; --ok-line:#1f5a3a; --warn-bg:#3a2a0d; --warn-ink:#ffc46b; --warn-line:#6b4a14; --err-bg:#3a1219; --err-ink:#ff9bb0; --err-line:#6b2230;
+  --ok-bg:#10301f; --ok-ink:#7ee2a8; --ok-line:#1f5a3a; --warn-bg:#3a2a0d; --warn-ink:#ffc46b; --warn-line:#6b4a14; --err-bg:#3a1219; --err-ink:#ff9bb0; --err-line:#6b2230; --sold:#f0384f;
   --card-line:var(--line); --shadow:none; --glass:rgba(26,20,36,.88); --page:#100c18; }
 * { box-sizing: border-box; }
 body { margin:0; background:var(--page); background-attachment:fixed; background-color:var(--paper); color:var(--ink); font:16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-text-size-adjust:100%; }
@@ -215,3 +215,14 @@ button.avatar-link { flex:none; width:68px; display:flex; flex-direction:column;
 button.avatar-link:hover .avatar-ring { filter:brightness(1.08); }
 .avatar-link.on .avatar-ring { box-shadow:0 0 0 3px var(--surface, #fff), 0 0 0 5.5px var(--accent); }
 .avatar-link.on { font-weight:800; }
+
+/* Claiming a set: where the open spots are — a row per set with a dot per part. A RINGED dot is an open spot (the bright ones); a filled dot is taken (green once the GOM has secured the set). */
+.spotmap { margin-top:12px; padding-top:10px; border-top:1px solid var(--line); }
+.spotmap .legend { display:inline-flex; align-items:center; gap:6px; } .spotmap .legend .dot { width:12px; height:12px; }
+.spotrow { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; padding:8px 0; border-top:1px solid var(--line); }
+.spotmap .row + .spotrow { border-top:0; }
+.spotopen { flex-basis:100%; } @media (min-width:720px) { .spotopen { flex:1; flex-basis:auto; } }
+.dots.lg { gap:6px; } .dots.lg .dot { width:17px; height:17px; border-width:2px; opacity:1; }
+.dot.free { background:transparent; border-color:var(--accent); }
+.dot.lock { background:var(--sold); border-color:var(--sold); opacity:1; }           /* taken, in a set the GOM has secured — red, never green (green could read as "open") */
+.dot.gone { background:var(--soft); border-color:var(--soft); opacity:.55; }

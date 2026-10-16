@@ -35,20 +35,15 @@ test('EACH MEMBER SHOWS WHERE ITS NEXT FREE SPOT IS before you click anything �
   assert.deepEqual(p.errors, []); p.close();
 });
 
-test('THE GRID is collapsed until opened, lists the sets with room (secured ones marked), marks each part taken or open, and stays open while you press buttons', async () => {
-  const { go } = await scenario(); const p = await shop(go);
-  const grid = () => p.q('details.setgrid');
-  assert.equal(grid().open, false); assert.match(p.text(grid().querySelector('summary')), /See where the open spots are \(2 sets with room\)/);
-  grid().open = true; grid().dispatchEvent(new p.window.Event('toggle'));
-  const rows = p.qa('tbody tr', grid()).map((r) => [r.dataset.set, ...[...r.children].map((td) => p.text(td))]);
-  assert.deepEqual(p.qa('thead th', grid()).map((x) => p.text(x)), ['Set', 'A', 'B', 'C']);
-  assert.deepEqual(rows, [['1', 'Set 1 secured', 'taken', 'taken', 'open'], ['2', 'Set 2', 'taken', 'open', 'open']]);
-  assert.match(p.text(grid()), /Sets marked secured are already bought — a spot there is confirmed by the GOM after you claim it/);
-  await press1(p, p.q('details.setgrid').dataset.setgrid, 'C');                      // pressing + redraws the whole item
-  assert.equal(p.q('details.setgrid').open, true, 'still open after the page redraws');
-  p.q('details.setgrid').open = false; p.q('details.setgrid').dispatchEvent(new p.window.Event('toggle'));
-  await press1(p, p.q('details.setgrid').dataset.setgrid, 'B'); assert.equal(p.q('details.setgrid').open, false, 'and still closed once you close it');
-  p.close();
+test('THE DOT MAP IS ALWAYS VISIBLE: a row per set with room (secured ones marked), a dot per part — ringed = open, filled = taken (RED in a secured set — never green, which could read as open) — "N of M taken", and the open members written out', async () => {
+  const { go } = await scenario(); const p = await shop(go);                                                   // Set 1 (secured): A,B taken, C open.  Set 2: A taken.
+  assert.ok(p.q('.spotmap'), 'there with no clicking'); assert.equal(p.q('details.setgrid'), null, 'no more folded table'); assert.match(p.text(p.q('.spotmap .row')), /Where the open spots are\s*open\s*taken/);
+  const rows = p.qa('.spotrow').map((r) => ({ set: r.dataset.set, title: p.text(r.querySelector('strong')), dots: p.qa('.dot', r.querySelector('.dots')).map((d) => d.classList.contains('free') ? 'open' : d.classList.contains('lock') ? 'taken-secured' : 'taken'), count: p.text(r.querySelector('[data-count]')), open: p.text(r.querySelector('[data-open-names]')), secured: !!r.querySelector('.pill.ok') }));
+  assert.deepEqual(rows, [{ set: '1', title: 'Set 1', dots: ['taken-secured', 'taken-secured', 'open'], count: '2 of 3 taken', open: 'Open: C', secured: true }, { set: '2', title: 'Set 2', dots: ['taken', 'open', 'open'], count: '1 of 3 taken', open: 'Open: B, C', secured: false }]);
+  assert.deepEqual(p.qa('.spotrow')[1].querySelectorAll('.dot').length, 3, 'one dot per part, in the same order as the members'); assert.equal(p.q('.spotrow .dots').getAttribute('aria-label'), '2 of 3 taken'); assert.equal(p.q('.spotrow [data-open]').title, 'C — open', 'hover/tap names the dot');
+  assert.equal(p.q('.spotmap .dot.ok'), null, 'no green dots on the joiner page'); assert.match(p.text(p.q('.spotmap .legend')), /open\s*taken\s*taken, set secured/, 'the legend explains the red'); assert.equal(p.qa('.spotrow')[1].querySelectorAll('.dot.lock').length, 0, 'taken in an unsecured set stays grey');
+  assert.match(p.text(p.q('.spotmap')), /A part you claim goes in the earliest set where it's open\. Sets marked secured are already bought — a spot there is confirmed by the GOM after you claim it\./);
+  await press1(p, p.q('[data-spotmap]').dataset.spotmap, 'C'); assert.ok(p.q('.spotmap'), 'still there after the page redraws'); assert.equal(p.qa('.spotrow').length, 2); p.close();
 });
 
 test('"WHERE THEY\'LL GO" COUNTS SECURED SETS, SAYS SO, AND MATCHES WHERE THE CLAIM REALLY GOES', async () => {
@@ -60,22 +55,32 @@ test('"WHERE THEY\'LL GO" COUNTS SECURED SETS, SAYS SO, AND MATCHES WHERE THE CL
   p.close();
 });
 
-test('MANY SETS STAY READABLE: only sets with room are listed (first 20), the rest are counted; a cancelled set and full sets never appear; hints are shortened', async () => {
+test('MANY SETS STAY READABLE: the first 5 sets with room, then "Show N more sets" (and "Show fewer"); a cancelled set and full sets never appear; hints are shortened', async () => {
   const s = await newSet(['A', 'B']); for (let i = 0; i < 24; i++) await claim(s.item, u(), ['A']);          // 24 sets, each with A taken and B open
   await claim(s.item, u(), ['B']);                                                                           // fills B in Set 1 → Set 1 is full
   const set3 = (await sets(s.item)).find((x) => x.number === 3); assert.equal((await api('POST', `/api/admin/sets/${set3.id}/cancel`, {})).status, 200);
-  const p = await shop(s.go); p.q('details.setgrid').open = true; p.q('details.setgrid').dispatchEvent(new p.window.Event('toggle'));
-  assert.match(p.text(p.q('details.setgrid summary')), /\(22 sets with room\)/, '24 sets − 1 full − 1 cancelled');
-  assert.equal(p.qa('details.setgrid tbody tr').length, 20); assert.deepEqual(p.qa('details.setgrid tbody tr').slice(0, 3).map((r) => r.dataset.set), ['2', '4', '5'], 'no Set 1 (full) and no Set 3 (cancelled)');
-  assert.match(p.text(p.q('details.setgrid')), /…and 2 more sets with room\./); assert.match(p.text(p.q('details.setgrid')), /1 full set not shown\./);
-  assert.equal(hint(p, 'B'), 'open in Set 2, 4, 5 +19 more'); assert.equal(hint(p, 'A'), 'next one starts a new set'); p.close();
+  const p = await shop(s.go); const nums = () => p.qa('.spotrow').map((r) => r.dataset.set); const btn = () => p.q('[data-act="moresets"]');
+  assert.equal(p.q('.dot.lock'), null, 'no secured set → no red dots'); assert.doesNotMatch(p.text(p.q('.spotmap .legend')), /secured/, 'and no red entry in the legend');
+  assert.deepEqual(nums(), ['2', '4', '5', '6', '7'], 'the first five sets with room — no Set 1 (full), no Set 3 (cancelled)'); assert.equal(p.text(btn()), 'Show 17 more sets', '22 sets with room − 5 shown'); assert.match(p.text(p.q('.spotmap')), /1 full set not shown\./);
+  await p.click(btn()); assert.equal(nums().length, 22, 'all of them'); assert.equal(p.text(btn()), 'Show fewer sets'); assert.equal(nums()[0], '2');
+  await press1(p, s.item, 'B'); assert.equal(nums().length, 22, 'stays expanded while you press buttons (the page redraws)');
+  await p.click(btn()); assert.equal(nums().length, 5, 'and "Show fewer sets" folds it back'); assert.equal(hint(p, 'B'), 'open in Set 2, 4, 5 +19 more'); assert.equal(hint(p, 'A'), 'next one starts a new set'); p.close();
 });
 
-test('CLOSED ORDERS show no hints or grid; member names with HTML are shown as text', async () => {
+test('A HUGE NUMBER OF SETS IS CAPPED (40 rows once expanded, the rest counted); a set size with only a few sets shows no "show more" button', async () => {
+  const big = await newSet(['A', 'B']); for (let i = 0; i < 44; i++) await claim(big.item, u(), ['A']); const p = await shop(big.go); await p.click(p.q('[data-act="moresets"]')); assert.equal(p.qa('.spotrow').length, 40); assert.match(p.text(p.q('.spotmap')), /…and 4 more sets with room\./); p.close();
+  const small = await newSet(['A', 'B']); for (let i = 0; i < 5; i++) await claim(small.item, u(), ['A']); const q = await shop(small.go); assert.equal(q.qa('.spotrow').length, 5); assert.equal(q.q('[data-act="moresets"]'), null, 'five sets: nothing to expand'); q.close();
+});
+
+test('WHEN EVERY SET IS FULL the map says so plainly and shows no rows; the member tiles still say a new set will start', async () => {
+  const s = await newSet(['A']); await claim(s.item, u(), ['A']); await claim(s.item, u(), ['A']); const p = await shop(s.go); assert.equal(p.qa('.spotrow').length, 0); assert.match(p.text(p.q('.spotmap')), /Every set so far is full — a new one starts when you claim\./); assert.equal(hint(p, 'A'), 'next one starts a new set'); p.close();
+});
+
+test('CLOSED ORDERS show no hints or map; member names with HTML are shown as text (in the dots\' tooltips and the open list)', async () => {
   const closed = await newSet(['A', 'B'], 'closed'); await claim(closed.item, u(), ['A']).catch(() => {}); const pc = await shop(closed.go);
-  assert.equal(pc.q('[data-spot]'), null); assert.equal(pc.q('details.setgrid'), null); pc.close();
-  const s = await newSet(['<b>x</b>', 'B']); await claim(s.item, u(), ['B']); const p = await shop(s.go); p.q('details.setgrid').open = true; p.q('details.setgrid').dispatchEvent(new p.window.Event('toggle'));
-  assert.equal(p.q('details.setgrid b'), null); assert.ok(p.qa('details.setgrid thead th').some((x) => p.text(x) === '<b>x</b>')); p.close();
+  assert.equal(pc.q('[data-spot]'), null); assert.equal(pc.q('.spotmap'), null); pc.close();
+  const s = await newSet(['<b>x</b>', 'B']); await claim(s.item, u(), ['B']); const p = await shop(s.go);
+  assert.equal(p.q('.spotmap b'), null); assert.match(p.text(p.q('[data-open-names]')), /Open: <b>x<\/b>/); assert.equal(p.q('.spotrow [data-open]').title, '<b>x</b> — open'); p.close();
 });
 
 test('FOR THE GOM: a new request that filled a spot in a secured set shows on the Sets tab (and its badge), and one button confirms it — the person owes from then on', async () => {
