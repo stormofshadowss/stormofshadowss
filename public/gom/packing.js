@@ -52,7 +52,7 @@
   const owingBanner = (p) => (p.owing && p.owing.length && p.status !== 'received' ? `<div class="msg" data-owing style="background:var(--warn-bg); color:var(--warn-ink); border-color:var(--warn-line); margin:8px 0"><strong>Still owing</strong> — just a heads-up, you can still pack and ship.
       ${p.owing.map((o) => `<div data-owing-person="${esc(o.handle)}">@${esc(o.handle)} owes <strong>${money(o.total)}</strong> (${o.categories.map((c) => `${CAT[c.category] || esc(c.category)} ${money(c.owed)}`).join(', ')})${o.pending > 0 ? ` · <span data-owing-pending>a ${money(o.pending)} payment is waiting for you to verify</span>` : ''}</div>`).join('')}</div>` : '');
   function card(p) {
-    const addr = [p.deliveryName, p.deliveryAddress, p.deliveryPhone && `Tel: ${p.deliveryPhone}`].filter(Boolean).join('\n');
+    const addr = [p.deliveryName, p.deliveryAddress, p.deliveryPhone && `Tel: ${p.deliveryPhone}`, p.deliveryEmail && `Email: ${p.deliveryEmail}`].filter(Boolean).join('\n');
     const fr = friends(p), wt = waiting(p), dc = declined(p);
     const friendBits = fr.map((c) => `<div data-friend-details style="margin-top:6px"><strong>@${esc(c.handle)}'s details:</strong> ${[c.bias && `bias ${esc(c.bias)}`, c.lomoName && `Lomo ${esc(c.lomoName)} (${c.lomoSource === 'custom' ? 'a name they chose' : 'their delivery name'})`, c.notes && `notes: ${esc(c.notes)}`].filter(Boolean).join(' · ') || 'nothing extra'}</div>`).join('');
     return `<div class="card" data-parcel="${p.id}">
@@ -65,7 +65,7 @@
         ${dc.length ? `<div class="sub" data-share-line>${names(dc.map((f) => f.handle))} said no to sharing${fr.length || wt.length ? '' : ', so this goes on its own'}.</div>` : ''}</div></div>
       ${p.handleVerified ? '' : '<p class="sub">You haven\'t checked this person yet. Worth a quick Instagram DM to confirm the address before their first parcel goes out.</p>'}
       <div class="formgrid" style="margin-top:8px"><div class="span2"><label>Send to</label><pre style="margin:0; white-space:pre-wrap; font:inherit">${addr ? esc(addr) : 'No address on file'}</pre>
-        ${addr ? `<button class="sm secondary" data-act="copy" data-id="${p.id}" style="margin-top:6px">Copy address</button>` : ''}</div>
+        ${addr ? `<button class="sm secondary" data-act="copy" data-id="${p.id}" style="margin-top:6px">Copy address</button>` : ''}${p.deliveryEmail ? ` <button class="sm secondary" data-act="copy-email" data-id="${p.id}" style="margin-top:6px" title="For a courier's tracking form">Copy email</button>` : ''}</div>
         <div class="span2">${p.status === 'requested' ? checklist(p) : `<label>Items</label><ul style="margin:0; padding-left:18px; list-style:none">${p.items.map((i) => `<li>${i.packed ? '✓ ' : ''}${esc(i.label)}${tag(p, i)}</li>`).join('')}</ul>`}</div></div>
       <div class="sub" style="margin-top:8px">${p.notes ? `<div><strong>Packing notes:</strong> ${esc(p.notes)}</div>` : ''}${p.bias ? `<div><strong>Bias (thank-you card):</strong> ${esc(p.bias)}</div>` : ''}
         <div><strong>Personalised Lomo:</strong> ${p.lomoName ? `${esc(p.lomoName)} <span class="pill ${p.lomoSource === 'custom' ? 'warn' : ''}">${p.lomoSource === 'custom' ? 'a name they chose' : 'their delivery name'}</span>` : 'no name given'}</div>${friendBits}</div>
@@ -202,6 +202,10 @@
     if (act === 'verify') {
       const r = await api('POST', '/api/admin/joiners/verify', { handle: b.dataset.handle });
       await render(root); return GOM.toast(r.ok ? `@${b.dataset.handle} marked as checked.` : errText(r), !r.ok);
+    }
+    if (act === 'copy-email') {                                                                  // just the email, for a courier's tracked-shipping form
+      try { await navigator.clipboard.writeText(p.deliveryEmail); GOM.toast('Email copied.'); } catch { GOM.alert(`Copy this email:\n\n${p.deliveryEmail}`); }
+      return;
     }
     if (act === 'copy') {
       const text = [p.deliveryName, p.deliveryAddress].filter(Boolean).join('\n');

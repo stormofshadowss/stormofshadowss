@@ -36,7 +36,7 @@ test('the queue shows each parcel in order with everything needed to pack it', a
   const one = p.text(card(p, parcel.pk1));
   assert.match(one, /#1 in the queue · Parcel \d+ — @pk1/);
   assert.match(one, /WW Tracked.*declared reduced value/);
-  assert.match(one, /Send to\s*Pat One 12 Test Street, Leeds, LS1 1AA Tel: 07700 900123/);
+  assert.match(one, /Send to\s*Pat One 12 Test Street, Leeds, LS1 1AA Tel: 07700 900123 Email: pk1@x\.com/);
   assert.match(one, /Keyring.*Album/);
   assert.match(one, /Packing notes: toploader please/); assert.match(one, /Bias \(thank-you card\): Han/);
   assert.match(one, /Personalised Lomo: Pat One their delivery name/);
@@ -339,4 +339,26 @@ test('names with HTML in the Lomo or bias are shown as text in the checklist', a
   assert.match(p.text(p.q('[data-checklist]', card(p, parcel.ck3))), /<img src=x onerror="window\.pwned=1">.*<b>Han<\/b>/);
   assert.equal(p.window.pwned, undefined);
   p.close();
+});
+
+
+// ───────── the delivery EMAIL beside the address and phone (needed for tracked shipping) ─────────
+test('THE EMAIL IS SHOWN WITH THE ADDRESS AND PHONE, in that order, on every parcel in the queue', async () => {
+  await makeParcel('em1', 'Eve One', {}, [w.keyring]); await makeParcel('em2', 'Eve Two', {}, [w.album]);
+  const p = await open(); await new Promise((r) => setTimeout(r, 150)); await p.settle();
+  for (const [h, name] of [['em1', 'Eve One'], ['em2', 'Eve Two']]) assert.match(p.text(p.q('pre', card(p, parcel[h]))), new RegExp(`^${name} 12 Test Street, Leeds, LS1 1AA Tel: 07700 900123 Email: ${h}@x\\.com$`), `${h}: name, address, phone, email`);
+  assert.deepEqual([p.errors, p.native], [[], 0]); p.close();
+});
+
+test('"COPY EMAIL" COPIES JUST THE EMAIL (for a courier\'s form); "Copy address" still copies only the name and address — no phone or email in a pasted label', async () => {
+  await makeParcel('em3', 'Eve Three'); const p = await open(); await new Promise((r) => setTimeout(r, 150)); await p.settle(); const copied = []; p.window.navigator.clipboard = { writeText: async (t) => { copied.push(t); } };
+  await p.click(p.q('[data-act="copy-email"]', card(p, parcel.em3))); await new Promise((r) => setTimeout(r, 40)); assert.equal(copied[0], 'em3@x.com'); assert.match(toast(p), /Email copied\./);
+  await p.click(p.q('[data-act="copy"]', card(p, parcel.em3))); await new Promise((r) => setTimeout(r, 40)); assert.equal(copied[1], 'Eve Three\n12 Test Street, Leeds, LS1 1AA', 'unchanged: just the address'); p.close();
+});
+
+test('WITH NO EMAIL ON FILE there is no Email line and no Copy email button; an email with HTML in it is shown as text', async () => {
+  await makeParcel('em4', 'Eve Four'); await makeParcel('em5', 'Eve Five'); const j4 = (await app.q('SELECT id FROM joiners WHERE instagram_handle = ?', ['em4']))[0].id, j5 = (await app.q('SELECT id FROM joiners WHERE instagram_handle = ?', ['em5']))[0].id;
+  await app.q("UPDATE addresses SET email = '' WHERE joiner_id = ?", [j4]); await app.q("UPDATE addresses SET email = '<img src=x onerror=\"window.pwned=1\">@x.com' WHERE joiner_id = ?", [j5]);
+  const p = await open(); await new Promise((r) => setTimeout(r, 150)); await p.settle(); assert.doesNotMatch(p.text(p.q('pre', card(p, parcel.em4))), /Email:/); assert.equal(p.q('[data-act="copy-email"]', card(p, parcel.em4)), null);
+  assert.equal(p.q('img[src="x"]'), null); assert.equal(p.window.pwned, undefined); assert.match(p.text(p.q('pre', card(p, parcel.em5))), /Email: <img src=x onerror="window\.pwned=1">@x\.com/); p.close();
 });
