@@ -2,6 +2,7 @@
 // and a button to move the oldest claims along once copies are ordered / have arrived.
 (function () {
   const { esc, fmtDate, api, errText, $, $$ } = GOM;
+  let toOrder = { rows: [], total: 0 }, toOrderBy = 'order';        // what still needs ordering (secured, not yet marked ordered), and how it is grouped: 'order' or 'proxy'
   let root = null, data = null, filter = 'waiting', groupFilter = '', showNew = false, editing = null, addingLine = null, addingShip = null;
   const CARRIERS = [
     ['CJ Logistics', (n) => `https://trace.cjlogistics.com/next/tracking.html?wblNo=${n}`], ['Korea Post / EMS', (n) => `https://service.epost.go.kr/trace.RetrieveEmsRigiTraceList.comm?POST_CODE=${n}`],
@@ -25,7 +26,34 @@
   const shipRow = () => `<div class="formgrid" data-ship-row style="margin-bottom:6px"><div><select name="carrier">${carrierOptions('')}</select></div><div class="span2"><input name="trackingNo" placeholder="Tracking number to your warehouse" maxlength="40"></div></div>`;
 
   async function render(el) {
-    root = el; const r = await api('GET', '/api/admin/incoming'); data = r.json; draw();
+    root = el; const [r, t] = await Promise.all([api('GET', '/api/admin/incoming'), api('GET', '/api/admin/incoming/to-order')]); data = r.json; toOrder = t.json || { rows: [], total: 0 }; draw();
+  }
+  // ── To order: secured claims that are still waiting to be ordered, counted per option ──
+  function toOrderCard() {
+    const rows = toOrder.rows;
+    if (!rows.length) return `<div class="card" data-to-order><h2>To order</h2><p class="muted" style="margin:0">Nothing is waiting to be ordered — everything that has been secured is marked as ordered. 🎉</p></div>`;
+    const orders = new Map();                                                                                 // group order → item → options
+    for (const r of rows) {
+      if (!orders.has(r.orderId)) orders.set(r.orderId, { id: r.orderId, title: r.order, proxies: new Set(), items: new Map() });
+      const o = orders.get(r.orderId); o.proxies.add(r.proxy || 'Me');
+      if (!o.items.has(r.itemId)) o.items.set(r.itemId, { id: r.itemId, title: r.item, proxy: r.proxy || 'Me', options: [], total: 0 });
+      const it = o.items.get(r.itemId); it.options.push({ option: r.option, qty: r.qty }); it.total += r.qty;
+    }
+    const itemLine = (it) => `${it.title}: ${it.options.some((x) => x.option) ? it.options.map((x) => `${x.qty}× ${x.option || 'no option'}`).join(', ') : `${it.total}×`}`;
+    const itemHtml = (it, showProxy) => `<div class="itemrow" data-to-order-item="${it.id}"><div class="grow"><strong>${esc(it.title)}</strong> <span class="sub">${it.total} in all${showProxy ? ` · ${esc(it.proxy)}` : ''}</span>
+        <div style="margin-top:4px">${it.options.some((x) => x.option) ? it.options.map((x) => `<span class="pill" data-option>${x.qty}× ${esc(x.option || 'no option')}</span>`).join(' ') : `<span class="pill" data-option>${it.total}×</span>`}</div></div></div>`;
+    const groups = toOrderBy === 'order'
+      ? [...orders.values()].map((o) => ({ key: `o${o.id}`, title: o.title, sub: [...o.proxies].join(', '), body: [...o.items.values()].map((it) => itemHtml(it, o.proxies.size > 1)).join(''), text: `${o.title} (${[...o.proxies].join(', ')})\n${[...o.items.values()].map(itemLine).join('\n')}`, total: [...o.items.values()].reduce((n, it) => n + it.total, 0) }))
+      : [...new Set(rows.map((r) => r.proxy || 'Me'))].map((px) => {
+          const mine = [...orders.values()].map((o) => ({ o, items: [...o.items.values()].filter((it) => it.proxy === px) })).filter((x) => x.items.length);
+          return { key: `p${px}`, title: px === 'Me' ? 'Me (no proxy)' : px, sub: `${mine.length} group order${mine.length === 1 ? '' : 's'}`, body: mine.map((x) => `<div class="sub" style="margin:8px 0 2px; font-weight:600">${esc(x.o.title)}</div>${x.items.map((it) => itemHtml(it, false)).join('')}`).join(''),
+            text: `${px === 'Me' ? 'Me (no proxy)' : px}\n${mine.map((x) => `${x.o.title}\n${x.items.map((it) => `  ${itemLine(it)}`).join('\n')}`).join('\n')}`, total: mine.reduce((n, x) => n + x.items.reduce((m, it) => m + it.total, 0), 0) };
+        });
+    const all = groups.map((g) => g.text).join('\n\n');
+    return `<div class="card" data-to-order><div class="row"><div><h2 style="margin:0">To order</h2><div class="sub">${plural(toOrder.total, 'copy', 'copies')} secured and waiting to be ordered. They leave this list once they are moved to “ordered” (Claims → Stage, or <em>Mark ordered…</em> under By item after you've logged the store order).</div></div>
+        <div class="btn-row" style="margin:0"><span role="group" aria-label="Group by" style="display:inline-flex; gap:6px"><button class="sm ${toOrderBy === 'order' ? '' : 'secondary'}" data-act="to-by" data-by="order" aria-pressed="${toOrderBy === 'order'}">By group order</button><button class="sm ${toOrderBy === 'proxy' ? '' : 'secondary'}" data-act="to-by" data-by="proxy" aria-pressed="${toOrderBy === 'proxy'}">By proxy</button></span>
+        <button class="sm secondary" data-act="copy" data-text="${esc(all)}" data-copy-all>Copy all</button></div></div></div>
+      ${groups.map((g) => `<div class="card" data-to-order-group="${esc(g.key)}"><div class="row"><div><strong>${esc(g.title)}</strong> <span class="sub">· ${plural(g.total, 'copy', 'copies')}${g.sub ? ` · ${esc(g.sub)}` : ''}</span></div><button class="sm secondary" data-act="copy" data-text="${esc(g.text)}">Copy list</button></div>${g.body}</div>`).join('')}`;
   }
   function counts() {
     const rows = data.counts.filter((c) => !c.cancelled && (!groupFilter || c.groupOrder === groupFilter) && (c.needed || c.ordered));
@@ -78,8 +106,8 @@
         <details style="margin-top:8px" ${data.warehouseAddress ? '' : 'open'}><summary>Your warehouse address</summary>${data.warehouseAddress ? `<pre data-address style="white-space:pre-wrap; margin:6px 0; font:inherit">${esc(data.warehouseAddress)}</pre><button class="sm secondary" data-act="copy" data-text="${esc(data.warehouseAddress)}">Copy address</button>` : '<p class="sub">Save it here once and copy it into any store\'s checkout.</p>'}
           <form data-form="address" style="margin-top:8px"><textarea name="address" rows="4" maxlength="600" style="width:100%" placeholder="Name, address and contact number at your Korean warehouse">${esc(data.warehouseAddress)}</textarea><div class="btn-row"><button class="sm" type="submit">Save address</button></div></form></details></div>
       ${showNew ? newForm() : ''}
-      <div class="chips" id="orderFilter" role="group" aria-label="Which store orders">${[['waiting', 'Waiting'], ['arrived', 'Arrived'], ['cancelled', 'Cancelled'], ['all', 'All'], ['items', 'By item']].map(([k, l]) => `<button type="button" class="chip ${filter === k ? 'on' : ''}" data-act="filter" data-k="${k}" aria-pressed="${filter === k}">${l}${k === 'all' || k === 'items' ? '' : `<span class="n">${n(k)}</span>`}</button>`).join('')}</div>
-      ${filter === 'items' ? counts() : sorted.length ? sorted.map(orderCard).join('') : `<div class="card"><p class="muted">${filter === 'waiting' ? 'No store orders are waiting. Add one when you order from a shop.' : 'Nothing here.'}</p></div>`}`;
+      <div class="chips" id="orderFilter" role="group" aria-label="Which store orders">${[['toorder', `To order${toOrder.total ? ` (${toOrder.total})` : ''}`], ['waiting', 'Waiting'], ['arrived', 'Arrived'], ['cancelled', 'Cancelled'], ['all', 'All'], ['items', 'By item']].map(([k, l]) => `<button type="button" class="chip ${filter === k ? 'on' : ''}" data-act="filter" data-k="${k}" aria-pressed="${filter === k}">${l}${k === 'all' || k === 'items' || k === 'toorder' ? '' : `<span class="n">${n(k)}</span>`}</button>`).join('')}</div>
+      ${filter === 'toorder' ? toOrderCard() : filter === 'items' ? counts() : sorted.length ? sorted.map(orderCard).join('') : `<div class="card"><p class="muted">${filter === 'waiting' ? 'No store orders are waiting. Add one when you order from a shop.' : 'Nothing here.'}</p></div>`}`;
   }
   const fail = (card, text) => { const m = $('[data-msg]', card); if (m) { m.textContent = text; m.hidden = !text; } else GOM.toast(text, true); };
   const val = (f, n) => f.elements[n]?.value?.trim() ?? '';
@@ -93,6 +121,7 @@
     if (act === 'more-lines') { $('#lineRows', root).insertAdjacentHTML('beforeend', lineRow()); return; }
     if (act === 'more-ships') { $('#shipRows', root).insertAdjacentHTML('beforeend', shipRow()); return; }
     if (act === 'filter') { filter = b.dataset.k; return draw(); }
+    if (act === 'to-by') { toOrderBy = b.dataset.by; return draw(); }
     if (act === 'edit') { editing = editing === id ? null : id; return draw(); }
     if (act === 'add-line') { addingLine = id; return draw(); }
     if (act === 'add-line-close') { addingLine = null; return draw(); }

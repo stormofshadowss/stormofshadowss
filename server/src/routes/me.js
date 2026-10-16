@@ -142,7 +142,7 @@ export function meRoutes(app, { pool }) {
     const out = await withTx(pool, async (conn) => {
       await lockJoiner(conn, joiner.id);
       const [[dup]] = await conn.query(
-        `SELECT id, status FROM payments WHERE joiner_id = ? AND batch_key IS NULL AND status <> 'rejected' AND method = ? AND order_id <=> ? AND ABS(amount - ?) < 0.005
+        `SELECT id, status FROM payments WHERE joiner_id = ? AND batch_key IS NULL AND status NOT IN ('rejected', 'reversed') AND method = ? AND order_id <=> ? AND ABS(amount - ?) < 0.005
             AND ((? IS NOT NULL AND reference = ? AND created_at > NOW() - INTERVAL 7 DAY) OR (reference <=> ? AND payer_name <=> ? AND created_at > NOW() - INTERVAL 2 MINUTE)) ORDER BY id DESC LIMIT 1`,
         [joiner.id, b.method, orderId, b.amount, b.reference || null, b.reference || null, b.reference || null, payerName]);
       if (dup) return { id: dup.id, status: dup.status, extra: 0, duplicate: true };
@@ -184,7 +184,7 @@ export function meRoutes(app, { pool }) {
     const made = await withTx(pool, async (conn) => {
       await lockJoiner(conn, payers[0].id);                                                   // all their handles are locked together: two taps at once wait their turn
       const [cands] = await conn.query(
-        `SELECT batch_key, SUM(amount) AS total FROM payments WHERE joiner_id IN (?) AND batch_key IS NOT NULL AND status <> 'rejected' AND method = ? AND order_id <=> ?
+        `SELECT batch_key, SUM(amount) AS total FROM payments WHERE joiner_id IN (?) AND batch_key IS NOT NULL AND status NOT IN ('rejected', 'reversed') AND method = ? AND order_id <=> ?
             AND ((? IS NOT NULL AND reference = ? AND created_at > NOW() - INTERVAL 7 DAY) OR (reference <=> ? AND payer_name <=> ? AND created_at > NOW() - INTERVAL 2 MINUTE)) GROUP BY batch_key ORDER BY MAX(id) DESC`,
         [payers.map((p) => p.id), b.method, orderId, b.reference || null, b.reference || null, b.reference || null, payerName]);
       const same = cands.find((c) => Math.abs(Number(c.total) - b.amount) < 0.005);

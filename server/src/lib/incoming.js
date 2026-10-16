@@ -66,3 +66,19 @@ export async function incomingSnapshot(conn) {
   const [prox] = await conn.query('SELECT name FROM proxies ORDER BY name');
   return { warehouseAddress: addr?.v || '', proxies: prox.map((p) => p.name), orders: out, chase: chase.map((o) => o.id), counts, options, chaseAfterDays: CHASE_AFTER_DAYS, totals: { waiting: chase.length, toChase: chase.filter((o) => o.chase).length, missingCopies: round2(chase.reduce((n, o) => n + o.missing, 0)) } };
 }
+
+// What still needs ORDERING: claims that are SECURED (confirmed) and still at 'awaiting fulfillment' — counted per group order → item → OPTION (a member of a set or of a member
+// item, or a size). Pressing "Mark ordered…" moves claims on, so they drop off this list. Cancelled items/orders and test orders are left out; private orders are included
+// (an order that came by message still has to be ordered). 'proxy' is the item's own proxy, else its group order's (null = you order it yourself).
+export async function toOrderList(conn) {
+  const [rows] = await conn.query(
+    `SELECT go.id AS orderId, go.title AS \`order\`, COALESCE(ipx.name, opx.name) AS proxy, i.id AS itemId, i.title AS item, i.item_type AS type,
+            COALESCE(c.member_name, c.variant_label) AS option_name, COUNT(*) AS qty
+       FROM claims c JOIN items i ON i.id = c.item_id JOIN group_orders go ON go.id = c.order_id
+       LEFT JOIN proxies ipx ON ipx.id = i.proxy_id LEFT JOIN proxies opx ON opx.id = go.proxy_id
+      WHERE c.status = 'confirmed' AND c.pipeline = 'awaiting fulfillment' AND i.cancelled_at IS NULL AND go.cancelled_at IS NULL AND go.is_test = 0
+      GROUP BY go.id, go.title, COALESCE(ipx.name, opx.name), i.id, i.title, i.item_type, i.sort_order, COALESCE(c.member_name, c.variant_label)
+      ORDER BY go.id DESC, i.sort_order, i.id, option_name`);
+  const out = rows.map((r) => ({ orderId: r.orderId, order: r.order, proxy: r.proxy || null, itemId: r.itemId, item: r.item, type: r.type, option: r.option_name || null, qty: Number(r.qty) }));
+  return { rows: out, total: out.reduce((n, r) => n + r.qty, 0) };
+}

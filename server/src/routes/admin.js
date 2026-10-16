@@ -10,17 +10,18 @@ import { combineParcels, uncombineParcel, withdrawInvitation, feesSet, MAX_PEOPL
 import { normalizeHandle, isValidHandle } from '../lib/handles.js';
 import { round2 } from '../lib/money.js';
 import { storageCase } from '../lib/storage.js';
+import { reversePayments, DryRunDone } from '../lib/payment-reverse.js';
 
 export function adminRoutes(app, { pool, notifier }) {
   const admin = [requireAdmin];
 
   // ── payments ──
   app.get('/api/admin/payments', admin, wrap(async (req, res) => {
-    const status = ['pending', 'confirmed', 'rejected'].includes(req.query.status) ? req.query.status : null;
+    const status = ['pending', 'confirmed', 'rejected', 'reversed'].includes(req.query.status) ? req.query.status : null;
     const [rows] = await pool.query(
       `SELECT p.id, j.instagram_handle AS handle, go.title AS orderTitle, p.amount, p.method, p.reference, p.payer_name AS payerName,
               p.payer_is_address_name AS payerIsAddressName, p.address_name_snapshot AS addressName,
-              p.overpay_amount AS overpayAmount, p.overpay_choice AS overpayChoice, p.overpay_note AS overpayNote, p.status, p.batch_key AS batchKey, p.created_at AS createdAt
+              p.overpay_amount AS overpayAmount, p.overpay_choice AS overpayChoice, p.overpay_note AS overpayNote, p.status, p.batch_key AS batchKey, p.created_at AS createdAt, p.reversed_at AS reversedAt, p.reverse_reason AS reverseReason
          FROM payments p JOIN joiners j ON j.id = p.joiner_id LEFT JOIN group_orders go ON go.id = p.order_id
         ${status ? 'WHERE p.status = ?' : ''} ORDER BY p.id DESC LIMIT 500`, status ? [status] : []);
     res.json({ payments: rows.map((r) => ({ ...r, payerIsAddressName: r.payerIsAddressName === null ? null : !!r.payerIsAddressName })) });
@@ -62,6 +63,31 @@ export function adminRoutes(app, { pool, notifier }) {
     if (r.affectedRows !== 1) throw conflict('That payment has already been dealt with', 'not_pending');
     notifier.paymentDecided(Number(req.params.id));
     res.json({ ok: true });
+  }));
+
+  // A payment that FAILED after you verified it (a bank transfer that bounced days later): what it paid off is owed again, and the credit it created is taken back (see lib/payment-reverse.js).
+  // {dryRun:true} says exactly what would change, then rolls it back. For a combined payment this covers every part of it (any part still waiting is rejected). No email is sent.
+  app.post('/api/admin/payments/:id/reverse', admin, wrap(async (req, res) => {
+    const b = z.object({ reason: z.string().trim().max(255).optional(), dryRun: z.boolean().optional() }).parse(req.body || {});
+    const id = Number(req.params.id);
+    try {
+      const out = await withTx(pool, async (conn) => {
+        const [[p]] = await conn.query('SELECT id, batch_key FROM payments WHERE id = ?', [id]); if (!p) throw notFound('No such payment');
+        let ids = [id], waiting = [];
+        if (p.batch_key) {
+          const [rows] = await conn.query('SELECT id, status FROM payments WHERE batch_key = ? ORDER BY id', [p.batch_key]);
+          const confirmed = rows.filter((r) => r.status === 'confirmed').map((r) => r.id); waiting = rows.filter((r) => r.status === 'pending').map((r) => r.id);
+          if (confirmed.length) ids = confirmed;
+        }
+        const result = await reversePayments(conn, ids, { reason: b.reason || null, adminId: req.account.id });
+        if (waiting.length) await conn.query("UPDATE payments SET status = 'rejected', verified_at = NOW(3), verified_by = ? WHERE id IN (?) AND status = 'pending'", [req.account.id, waiting]);
+        await audit(conn, req.account.id, 'payment.reverse', 'payment', id, { ids, owedAgain: result.owedAgainTotal, creditRemoved: result.creditRemoved, spentUndone: result.creditSpentUndone, notRecovered: result.notRecovered, reason: b.reason || null });
+        const full = { ...result, rejectedParts: waiting.length };
+        if (b.dryRun) throw new DryRunDone(full);
+        return full;
+      });
+      res.json({ ok: true, ...out });
+    } catch (e) { if (e instanceof DryRunDone) return res.json({ ok: true, dryRun: true, ...e.result }); throw e; }
   }));
 
   // A combined payment (one transfer covering several of a person's handles) is several rows with one batch key: verify or reject them all at once.

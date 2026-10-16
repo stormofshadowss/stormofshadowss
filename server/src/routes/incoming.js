@@ -3,7 +3,7 @@ import { wrap } from '../lib/http.js';
 import { requireAdmin, audit } from '../auth.js';
 import { withTx } from '../db.js';
 import { bad, notFound } from '../errors.js';
-import { incomingSnapshot, advancePlan } from '../lib/incoming.js';
+import { incomingSnapshot, advancePlan, toOrderList } from '../lib/incoming.js';
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-10-31').refine((s) => { const d = new Date(`${s}T00:00:00Z`); return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s; }, 'That is not a real date');
 const optText = (n) => z.string().trim().max(n).nullish().transform((v) => v || null);
@@ -22,6 +22,7 @@ async function proxyIdFor(conn, name) {
 export function incomingRoutes(app, { pool }) {
   const admin = requireAdmin;
   app.get('/api/admin/incoming', admin, wrap(async (req, res) => res.json(await incomingSnapshot(pool))));
+  app.get('/api/admin/incoming/to-order', admin, wrap(async (req, res) => res.json(await toOrderList(pool))));        // what still needs ordering, by option
 
   app.post('/api/admin/store-orders', admin, wrap(async (req, res) => {
     const b = z.object({ store: z.string().trim().min(1).max(120), orderRef: optText(120), orderUrl: url, orderedOn: date, proxy: optText(80), notes: optText(2000), lines: z.array(line).max(60).default([]), shipments: z.array(shipment).max(30).default([]) }).parse(req.body);

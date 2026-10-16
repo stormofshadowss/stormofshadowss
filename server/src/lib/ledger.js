@@ -50,7 +50,7 @@ export async function owedInScope(conn, joinerId, orderId = null) {
   return round2(r.owed);
 }
 
-async function setPaid(conn, claimId, category, newPaid, cost) {
+export async function setPaid(conn, claimId, category, newPaid, cost) {
   const fully = cost > 0 && newPaid >= cost - 0.0001;
   await conn.query(
     'UPDATE claim_costs SET paid = ?, paid_date = IF(?, COALESCE(paid_date, CURDATE()), NULL) WHERE claim_id = ? AND category = ?',

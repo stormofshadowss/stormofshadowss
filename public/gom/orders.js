@@ -1,7 +1,7 @@
 // Group Orders tab: create and edit group orders, add and edit their items.
 (function () {
   const { esc, money, fmtDate, api, errText, $, $$ } = GOM;
-  let orders = [], groups = [], root = null, cancelFlow = null;
+  let orders = [], groups = [], root = null, cancelFlow = null, orderQ = '', closedOpen = false;     // orderQ: the search box; closedOpen: whether the Closed section is unfolded
   document.addEventListener('gom:picture', (e) => {            // a picture changed: keep what this tab remembers in step, so the next redraw is right
     const { kind, id, image } = e.detail;
     if (kind === 'item') orders.forEach((x) => x.items.forEach((i) => { if (i.id === id) i.image = image; }));
@@ -159,7 +159,25 @@
       <p class="msg" data-msg hidden></p>
       <div class="btn-row"><button class="danger" data-act="cancel-go" disabled ${blocked ? 'hidden' : ''}>Cancel the ${what}…</button><button class="secondary" data-act="cancel-close">${blocked ? 'Close' : 'Keep it'}</button></div></div>`;
   }
+  // a group order is CLOSED when it was closed by hand, its closing date has passed, or it was cancelled
+  const isClosedOrder = (o) => o.cancelled || o.status !== 'open' || o.closedByDate;
+  const orderRow = (o) => `<tr data-order="${o.id}"><td>${o.cover ? `<img class="thumb sm" src="${esc(o.cover.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}<strong>${esc(o.title)}</strong></td><td>${esc(o.group)}</td>
+        <td>${o.cancelled ? '<span class="pill warn" data-cancelled>Cancelled</span>' : o.closedByDate ? '<span class="pill warn" data-closed-by-date title="Its closing date has passed, so it no longer takes claims">Closed (date passed)</span>' : `<span class="pill ${o.status === 'open' ? 'ok' : 'dim'}">${o.status === 'open' ? 'Open' : 'Closed'}</span>`}</td>
+        <td>${o.isPrivate ? '<span class="pill warn">Private</span>' : 'Public'}${o.isTest ? ' <span class="pill" data-test>Test</span>' : ''}</td><td>${fmtDate(o.closeDate)}</td><td>${fmtDate(o.paymentDeadline)}</td><td>${esc(o.proxy || '—')}</td>
+        <td class="nowrap"><button class="sm secondary" data-act="edit-order" data-id="${o.id}">Edit</button> <button class="sm" data-act="open-items" data-id="${o.id}">Items (${o.items.length})</button> <button class="sm secondary danger" data-act="delete-order" data-id="${o.id}">Delete</button>${o.cancelled ? '' : ` <button class="sm secondary danger" data-act="cancel-order" data-id="${o.id}">Cancel…</button>`}</td></tr>
+        ${editingId === o.id ? `<tr><td colspan="8">${orderForm(o)}</td></tr>` : ''}`;
+  const orderTable = (list) => `<div class="scroll"><table class="grid"><thead><tr><th>Title</th><th>Group</th><th>Status</th><th>Listing</th><th>Closes</th><th>Payment due</th><th>Proxy</th><th></th></tr></thead><tbody>${list.map(orderRow).join('')}</tbody></table></div>`;
+  // the list: open orders in a table, everything closed folded away underneath; the search box filters both
+  function listHtml() {
+    const q = orderQ.trim().toLowerCase(), hit = (o) => !q || [o.title, o.group, o.proxy].some((v) => (v || '').toLowerCase().includes(q));
+    const open = orders.filter((o) => !isClosedOrder(o) && hit(o)), closed = orders.filter((o) => isClosedOrder(o) && hit(o)), closedAll = orders.filter(isClosedOrder).length;
+    const unfold = closedOpen || (q && closed.length > 0) || closed.some((o) => o.id === editingId);                // searching, or editing one of them, opens it
+    return `<div class="card" id="openOrders">${open.length ? orderTable(open) : `<p class="muted" style="margin:0">${orders.length ? (q ? `No open group orders match “${esc(orderQ.trim())}”.` : 'No open group orders right now.') : 'No group orders yet. Create your first one above.'}</p>`}</div>
+      ${closedAll ? `<details class="card" id="closedOrders" ${unfold ? 'open' : ''}><summary><strong>Closed</strong> (${closedAll}${q ? `, ${closed.length} match` : ''}) <span class="sub">— closed, past their closing date, or cancelled</span></summary>${closed.length ? orderTable(closed) : `<p class="muted">No closed group orders match “${esc(orderQ.trim())}”.</p>`}</details>` : ''}`;
+  }
+
   function draw() {
+    { const d = $('#closedOrders', root); if (d) closedOpen = d.open; }                  // remember whether the Closed section was unfolded across redraws
     const proxies = [...new Set(orders.flatMap((o) => [o.proxy, ...o.items.map((i) => i.proxy)]).filter(Boolean))];
     root.innerHTML = `
       <div class="row" style="margin:18px 0 10px"><h1 style="margin:0">Group orders</h1>
@@ -169,13 +187,8 @@
       ${showNew ? `<div class="card"><h2>New group order</h2>${orderForm(null)}</div>` : ''}
       ${dateNotice()}
       ${cancelPanel()}
-      <div class="card"><div class="scroll"><table class="grid"><thead><tr><th>Title</th><th>Group</th><th>Status</th><th>Listing</th><th>Closes</th><th>Payment due</th><th>Proxy</th><th></th></tr></thead><tbody>
-      ${orders.length ? orders.map((o) => `<tr data-order="${o.id}"><td>${o.cover ? `<img class="thumb sm" src="${esc(o.cover.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}<strong>${esc(o.title)}</strong></td><td>${esc(o.group)}</td>
-        <td>${o.cancelled ? '<span class="pill warn" data-cancelled>Cancelled</span>' : o.closedByDate ? '<span class="pill warn" data-closed-by-date title="Its closing date has passed, so it no longer takes claims">Closed (date passed)</span>' : `<span class="pill ${o.status === 'open' ? 'ok' : 'dim'}">${o.status === 'open' ? 'Open' : 'Closed'}</span>`}</td>
-        <td>${o.isPrivate ? '<span class="pill warn">Private</span>' : 'Public'}${o.isTest ? ' <span class="pill" data-test>Test</span>' : ''}</td><td>${fmtDate(o.closeDate)}</td><td>${fmtDate(o.paymentDeadline)}</td><td>${esc(o.proxy || '—')}</td>
-        <td class="nowrap"><button class="sm secondary" data-act="edit-order" data-id="${o.id}">Edit</button> <button class="sm" data-act="open-items" data-id="${o.id}">Items (${o.items.length})</button> <button class="sm secondary danger" data-act="delete-order" data-id="${o.id}">Delete</button>${o.cancelled ? '' : ` <button class="sm secondary danger" data-act="cancel-order" data-id="${o.id}">Cancel…</button>`}</td></tr>
-        ${editingId === o.id ? `<tr><td colspan="8">${orderForm(o)}</td></tr>` : ''}`).join('') : '<tr><td colspan="8" class="muted">No group orders yet. Create your first one above.</td></tr>'}
-      </tbody></table></div></div>
+      <div class="card"><input id="orderSearch" type="search" placeholder="Search group orders by name…" value="${esc(orderQ)}" aria-label="Search group orders" autocomplete="off"></div>
+      <div id="orderList">${listHtml()}</div>
       ${itemsFor ? itemsPanel() : ''}${itemsFor && fixedFor ? fixedPanel() : ''}`;
     $$('form[data-form="new-item"]', root).forEach(syncTypeFields);
   }
@@ -367,6 +380,11 @@
 
   GOM.registerTab({
     id: 'orders', label: 'Group Orders',
-    async render(el) { await render(el); el.onclick = onClick; el.onsubmit = onSubmit; el.onchange = onChange; el.oninput = (e) => { if (e.target.id === 'cancelTyped' && cancelFlow) $('[data-act="cancel-go"]', root).disabled = norm(e.target.value) !== norm(cancelFlow.plan.title); }; },
+    async render(el) { await render(el); el.onclick = onClick; el.onsubmit = onSubmit; el.onchange = onChange; el.oninput = (e) => {
+      if (e.target.id === 'orderSearch') {                                                   // only the LIST is redrawn, so the cursor stays in the box
+        { const d = $('#closedOrders', root); if (d) closedOpen = d.open; }
+        orderQ = e.target.value; $('#orderList', root).innerHTML = listHtml(); return;
+      }
+      if (e.target.id === 'cancelTyped' && cancelFlow) $('[data-act="cancel-go"]', root).disabled = norm(e.target.value) !== norm(cancelFlow.plan.title); }; },
   });
 })();

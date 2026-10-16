@@ -25,7 +25,7 @@
         <div style="color:inherit">${allCovered ? 'That covers what you owe, so there is nothing more to send.' : `Only ${money(stillToCover(null))} is still to cover — the amount below is filled in for you.`}</div>
         ${allCovered ? '<div style="margin-top:8px"><button type="button" class="sm secondary" data-act="pay-again">I\'m sending a different payment</button></div>' : ''}</div>` : '';
 
-    const statusPill = (p) => p.status === 'confirmed' ? '<span class="pill ok">received ✓</span>' : p.status === 'rejected' ? '<span class="pill warn">not received — please check with the GOM</span>' : '<span class="pill">waiting for the GOM to check</span>';
+    const statusPill = (p) => p.status === 'confirmed' ? '<span class="pill ok">received ✓</span>' : p.status === 'reversed' ? '<span class="pill err" data-failed>the payment failed after it was received — it is owed again, please check with the GOM</span>' : p.status === 'rejected' ? '<span class="pill warn">not received — please check with the GOM</span>' : '<span class="pill">waiting for the GOM to check</span>';
     view.innerHTML = `${S.crumb}<h1 style="margin:4px 0 10px">Make a payment</h1>
       <div class="card"><h2>Where to send it</h2>${methods.length ? methods.map((x) => `<span class="pill">${esc(x.method)}: ${esc(x.accountInfo)}</span>`).join(' ') : '<p class="muted">The GOM hasn\'t added payment details yet — message them to ask where to send it.</p>'}
         <p class="sub">Send the payment, then tell us about it below. The GOM checks it against their account and marks it received.</p></div>

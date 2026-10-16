@@ -5,6 +5,7 @@
   let methodsOpen = null;            // null = decide from the data (open only when there are no methods yet); true/false once you've opened or saved it
   const filter = { status: 'pending', q: '' };
   let ledgerHandle = '';
+  let reversing = null;              // { id, plan, reason, busy } — the "Payment failed…" panel that is open (the plan is a preview: nothing has changed yet)
 
   const when = (iso) => `${fmtDate((iso || '').slice(0, 10))} ${(iso || '').slice(11, 16)}`;
 
@@ -42,7 +43,26 @@
       <td class="nowrap"><strong>${money(p.amount)}</strong></td><td>${esc(p.method)}</td>
       <td>${p.reference ? esc(p.reference) : '<span class="sub">no reference</span>'}<div class="sub">${p.payerName ? esc(p.payerName) + ' ' : ''}${name}</div></td><td>${extra}</td>
       <td class="nowrap">${p.status === 'pending' ? `<button class="sm" data-act="verify" data-id="${p.id}">Verify</button> <button class="sm secondary" data-act="reject" data-id="${p.id}">Reject</button>`
-        : `<span class="pill ${p.status === 'confirmed' ? 'ok' : 'dim'}">${p.status}</span>`}</td></tr>`;
+        : p.status === 'confirmed' ? `<span class="pill ok">confirmed</span> <button class="sm secondary danger" data-act="reverse" data-id="${p.id}" title="It was verified, but the money never arrived (e.g. a bank transfer that bounced)">Payment failed…</button>`
+        : p.status === 'reversed' ? `<span class="pill err" data-reversed>failed after it was received</span><div class="sub">${when(p.reversedAt)}${p.reverseReason ? ` · ${esc(p.reverseReason)}` : ''}</div>`
+        : `<span class="pill dim">${p.status}</span>`}</td></tr>`;
+  }
+  // The "Payment failed…" panel: exactly what would change, before anything does
+  function reversePanel() {
+    const r = reversing, plan = r?.plan;
+    if (!plan) return `<tr data-reverse-panel><td colspan="8"><div class="card" style="margin:0"><p class="sub" style="margin:0">Checking what would change…</p></div></td></tr>`;
+    const items = plan.owedAgain.slice(0, 8).map((o) => `<li>${esc(o.label)} <span class="sub">@${esc(o.handle)}${o.category !== 'initials' ? ` · ${esc(o.category)}` : ''}</span> — <strong>${money(o.amount)}</strong>${o.creditHadBeenSpent ? ' <span class="pill warn">paid with credit from this payment</span>' : ''}</li>`).join('');
+    return `<tr data-reverse-panel><td colspan="8"><div class="card" style="margin:0; border:2px solid var(--err-line, #d97a7a)"><strong>Mark this ${money(plan.total)} payment as failed</strong>
+      <p style="margin:6px 0 4px">If you do this:</p><ul style="margin:0 0 8px 18px">
+        <li><strong>${money(plan.owedAgainTotal)}</strong> is owed again${plan.owedAgain.length ? `, across ${plan.owedAgain.length} line${plan.owedAgain.length === 1 ? '' : 's'}:<ul>${items}${plan.owedAgain.length > 8 ? `<li class="sub">…and ${plan.owedAgain.length - 8} more</li>` : ''}</ul>` : '.'}</li>
+        ${plan.creditRemoved > 0 ? `<li><strong>${money(plan.creditRemoved)}</strong> of credit that this payment created is taken back.</li>` : ''}
+        ${plan.creditSpentUndone > 0 ? `<li><strong>${money(plan.creditSpentUndone)}</strong> of that credit had already been spent, so the items it paid for are owed again too (shown above).</li>` : ''}
+        ${plan.tipsNotReceived > 0 ? `<li>The <strong>${money(plan.tipsNotReceived)}</strong> tip is noted as not received.</li>` : ''}
+        ${plan.rejectedParts > 0 ? `<li>${plan.rejectedParts} other part${plan.rejectedParts === 1 ? '' : 's'} of the same payment, still waiting, ${plan.rejectedParts === 1 ? 'is' : 'are'} rejected.</li>` : ''}
+        ${plan.notRecovered > 0 ? `<li class="late-text"><strong>${money(plan.notRecovered)}</strong> could not be recovered automatically — you will need to sort that out yourself.</li>` : ''}
+        <li>The payment stays on record, marked as failed. <strong>No email is sent</strong> — message them yourself.</li></ul>
+      <label>Reason (for your records)</label><input name="reverseReason" maxlength="255" value="${esc(r.reason)}" placeholder="e.g. bank transfer bounced">
+      <p class="msg err" data-reverse-error hidden></p><div class="btn-row"><button class="sm" data-act="reverse-go" ${r.busy ? 'disabled' : ''}>${r.busy ? 'Working…' : 'Mark as failed'}</button><button class="sm secondary" data-act="reverse-cancel">Cancel</button></div></div></td></tr>`;
   }
 
   // A combined payment (one transfer covering several of a person's handles) is several rows with one batch key: show it as ONE line, with the split, and verify / reject it as one.
@@ -55,16 +75,18 @@
       <td>${esc(first.orderTitle || 'All outstanding')}</td><td class="nowrap"><strong>${money(total)}</strong></td><td>${esc(first.method)}</td>
       <td>${first.reference ? esc(first.reference) : '<span class="sub">no reference</span>'}<div class="sub">${first.payerName ? esc(first.payerName) + ' ' : ''}${name}</div></td>
       <td>${over ? `<strong>${money(over.overpayAmount)}</strong> extra → <span class="pill ${over.overpayChoice === 'tip' ? 'ok' : ''}">${over.overpayChoice === 'tip' ? 'tip' : 'credit'}</span>${over.overpayNote ? `<div class="sub">“${esc(over.overpayNote)}”</div>` : ''}` : '—'}</td>
-      <td class="nowrap">${pending.length ? `<button class="sm" data-act="verify-batch" data-key="${esc(first.batchKey)}">Verify all${pending.length < rows.length ? ` (${pending.length} left)` : ''}</button> <button class="sm secondary" data-act="reject-batch" data-key="${esc(first.batchKey)}">Reject all</button>` : `<span class="pill ${status === 'confirmed' ? 'ok' : 'dim'}">${status}</span>`}</td></tr>`;
+      <td class="nowrap">${pending.length ? `<button class="sm" data-act="verify-batch" data-key="${esc(first.batchKey)}">Verify all${pending.length < rows.length ? ` (${pending.length} left)` : ''}</button> <button class="sm secondary" data-act="reject-batch" data-key="${esc(first.batchKey)}">Reject all</button>`
+        : status === 'reversed' ? `<span class="pill err" data-reversed>failed after it was received</span><div class="sub">${when(rows[0].reversedAt)}${rows[0].reverseReason ? ` · ${esc(rows[0].reverseReason)}` : ''}</div>`
+        : `<span class="pill ${status === 'confirmed' ? 'ok' : 'dim'}">${status}</span>${rows.some((p) => p.status === 'confirmed') ? ` <button class="sm secondary danger" data-act="reverse" data-id="${rows.find((p) => p.status === 'confirmed').id}" title="It was verified, but the money never arrived">Payment failed…</button>` : ''}`}</td></tr>`;
   }
   // rows in the order shown, with each combined payment's rows gathered into one entry at the place its first row appears
   function lines(list) {
     const seen = new Set(), out = [];
     for (const p of list) {
-      if (!p.batchKey) { out.push(paymentRow(p)); continue; }
+      if (!p.batchKey) { out.push(paymentRow(p) + (reversing && reversing.id === p.id ? reversePanel() : '')); continue; }
       if (seen.has(p.batchKey)) continue; seen.add(p.batchKey);
       const rows = list.filter((x) => x.batchKey === p.batchKey).sort((x, y) => x.id - y.id);
-      out.push(rows.length > 1 ? batchRow(rows) : paymentRow(p));
+      out.push((rows.length > 1 ? batchRow(rows) : paymentRow(p)) + (reversing && rows.some((x) => x.id === reversing.id) ? reversePanel() : ''));
     }
     return out;
   }
@@ -80,7 +102,7 @@
     const list = visible();
     root.innerHTML = `<h1 style="margin:18px 0 10px">Payments</h1>${methodsCard()}
       <div class="card"><div class="formgrid" style="margin-bottom:10px">
-        <div><label>Show</label><select data-filter="status">${[['pending', 'Waiting for me'], ['confirmed', 'Verified'], ['rejected', 'Rejected'], ['all', 'Everything']].map(([v, l]) => `<option value="${v}" ${filter.status === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+        <div><label>Show</label><select data-filter="status">${[['pending', 'Waiting for me'], ['confirmed', 'Verified'], ['rejected', 'Rejected'], ['reversed', 'Marked as failed'], ['all', 'Everything']].map(([v, l]) => `<option value="${v}" ${filter.status === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
         <div><label>Search handle, reference or payer name</label><input data-filter="q" value="${esc(filter.q)}"></div></div>
       <div class="scroll"><table class="grid"><thead><tr><th>Sent</th><th>Person</th><th>For</th><th>Amount</th><th>Method</th><th>Reference / payer</th><th>Extra</th><th></th></tr></thead><tbody>
       ${list.length ? lines(list).join('') : `<tr><td colspan="8" class="muted">${filter.status === 'pending' ? 'Nothing waiting — all caught up.' : 'No payments match.'}</td></tr>`}</tbody></table></div></div>
@@ -108,6 +130,23 @@
     if (!b) return;
     const p = payments.find((x) => x.id === Number(b.dataset.id));
     switch (b.dataset.act) {
+      case 'reverse': {
+        reversing = { id: Number(b.dataset.id), plan: null, reason: '', busy: false }; draw();
+        const r = await api('POST', `/api/admin/payments/${reversing.id}/reverse`, { dryRun: true });
+        if (!r.ok) { reversing = null; draw(); return GOM.toast(errText(r), true); }
+        if (reversing) { reversing.plan = r.json; draw(); $('[data-reverse-panel]', root)?.scrollIntoView?.({ block: 'center' }); }
+        break;
+      }
+      case 'reverse-cancel': reversing = null; draw(); break;
+      case 'reverse-go': {
+        if (!reversing?.plan || reversing.busy) return;
+        const keep = reversing; keep.busy = true; draw();
+        const r = await api('POST', `/api/admin/payments/${keep.id}/reverse`, { reason: keep.reason.trim() || undefined });
+        if (!r.ok) { keep.busy = false; draw(); const m = $('[data-reverse-error]', root); if (m) { m.textContent = errText(r); m.hidden = false; } return; }
+        reversing = null; await render(root); GOM.refreshBadges();
+        GOM.toast(`Marked as failed: ${money(r.json.owedAgainTotal)} is owed again${r.json.notRecovered > 0 ? ` — but ${money(r.json.notRecovered)} could not be recovered automatically` : ''}.`);
+        break;
+      }
       case 'verify-batch': {
         const rows = payments.filter((x) => x.batchKey === b.dataset.key && x.status === 'pending').sort((x, y) => x.id - y.id), total = rows.reduce((n, x) => n + Number(x.amount), 0);
         const ok = await GOM.confirm(`Mark the ${money(total)} payment as received?\n\nIt is ONE transfer covering ${rows.length} of this person's handles, split as: ${rows.map((x) => `@${x.handle} ${money(x.amount)}`).join(', ')}.\n\nEach part is applied to what that handle owes (item cost first, then EMS, customs, postage).${rows.some((x) => x.overpayAmount) ? `\n\nThey paid ${money(rows.find((x) => x.overpayAmount).overpayAmount)} extra and chose for it to be ${rows.find((x) => x.overpayAmount).overpayChoice === 'tip' ? 'a tip' : 'credit'}.` : ''}`, { ok: 'Mark all as received', cancel: 'Not yet' });
@@ -184,6 +223,7 @@
 
   async function onChange(e) { if (e.target.dataset.filter === 'status') { filter.status = e.target.value; render(root); } }
   function onInput(e) {
+    if (e.target.name === 'reverseReason' && reversing) { reversing.reason = e.target.value; return; }
     if (e.target.dataset.filter === 'q') { filter.q = e.target.value; const pos = e.target.selectionStart; draw(); const q = $('[data-filter="q"]', root); q.focus(); q.setSelectionRange?.(pos, pos); }
   }
 
