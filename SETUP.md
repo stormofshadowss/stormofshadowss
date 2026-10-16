@@ -411,3 +411,8 @@ For a bank transfer that bounces days later: **Payments → Verified → "Paymen
 - **Credit it created is taken back** (an overpayment kept as credit); a **tip** is noted as not received. If that credit has **already been spent** on other items (on any of their handles), **those items are owed again too** — the preview names them.
 - A **combined payment** across a person's handles fails as one (any part still waiting is rejected). The payment stays on record as *failed after it was received* (filter **Marked as failed**). The person's pay page says it failed and asks for the amount again.
 - **No email is sent** — message them yourself. Anything that couldn't be recovered automatically is shown in red, never hidden.
+
+### Shop (on hand) by artist
+The joiner **Shop** page now has the same round artist avatars as the home page — **All**, then each artist that has something on the shelf (with how many items), then **Other** — and they **filter in place**: tap an artist to see just their items, tap it again (or *All*) to clear. Items with no artist (and items whose artist is hidden from the home page) are under **Other**; if everything is in one lot there's no avatar row at all.
+- **Setting the artist (GOM → Shop):** every item has an **Artist / group** choice in the add and edit forms (*None* = shown under Other), and each item shows its artist (or *no artist yet*).
+- **Sorting the stock you already have:** your existing items start with no artist. In **Stock**, pick **Show → "No artist yet (N)"**, press **Tick all shown** (or tick items one by one), choose an artist (or *No artist*) in the bar that appears, and **Apply**. You can also filter the list to one artist to check it.

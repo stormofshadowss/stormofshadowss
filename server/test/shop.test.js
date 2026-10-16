@@ -38,7 +38,7 @@ test('what joiners see: active items, newest first, how many are LEFT (never the
   const ids = list.map((i) => i.id);
   assert.ok(ids.indexOf(b) < ids.indexOf(a), 'newest first');
   assert.equal(ids.includes(hidden), false);
-  assert.deepEqual(list.find((i) => i.id === b), { id: b, title: 'Newer item', price: 12.5, notes: 'Mint', payDays: 5, image: null, left: 0 }, 'sold out but still shown, with nothing about stock levels');
+  assert.deepEqual(list.find((i) => i.id === b), { id: b, title: 'Newer item', price: 12.5, notes: 'Mint', payDays: 5, groupId: null, image: null, left: 0 }, 'sold out but still shown, with nothing about stock levels');
   assert.equal(list.find((i) => i.id === a).left, 5);
   assert.ok(!JSON.stringify(list).includes('"qty"'));
 });

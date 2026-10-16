@@ -3,7 +3,7 @@
 (function () {
   const { esc, money, fmtDate, $, $$, api, errText, normalizeHandle, store } = SITE;
   const MAX_QTY = 20;
-  let orders = [], shopItems = [], loaded = false;
+  let orders = [], shopItems = [], shopGroups = [], shopGroup = null, loaded = false;       // shopGroup: the artist filter on the Shop page (null = all, an artist's id, or 'other')
   let basket = store.sget('sos_basket', []);   // [{ key, itemId, orderTitle, title, label, price, qty, member, variant }]
   let together = store.sget('sos_together', {});  // { itemId: true } — "keep these together in the same set"
   let done = null;                              // result of the last submit, shown as the confirmation page
@@ -67,7 +67,7 @@
 
   async function load() {
     const [r, s] = await Promise.all([api('GET', '/api/orders'), api('GET', '/api/shop')]);
-    orders = r.json?.orders || []; shopItems = s.json?.items || []; loaded = true;
+    orders = r.json?.orders || []; shopItems = s.json?.items || []; shopGroups = s.json?.groups || []; loaded = true;
     // forget basket lines for things that no longer exist or whose order has closed; shop lines are trimmed to what's still in stock
     const live = new Map(orders.filter((o) => o.status === 'open').flatMap((o) => o.items.filter((i) => !i.closed).map((i) => [i.id, i])));
     const closedNow = new Set(orders.flatMap((o) => o.items.filter((i) => i.closed || o.status !== 'open').map((i) => i.id)));
@@ -114,10 +114,22 @@
     if (!line.qty) basket = basket.filter((l) => l !== line);
     saveBasket();
   }
+  // the artist avatars on the Shop page — the same look as the home page, but they filter in place: tap one to see just their items, tap it again (or "All") to clear. Items with no artist are under "Other".
+  function shopArtists() {
+    const count = (id) => shopItems.filter((i) => i.groupId === id).length, withItems = shopGroups.filter((g) => count(g.id)), otherN = shopItems.filter((i) => !i.groupId).length;
+    if (withItems.length + (otherN ? 1 : 0) < 2) return '';                                            // one lot of items: nothing to choose between
+    const plural = (n) => `${n} item${n === 1 ? '' : 's'}`;
+    const avatar = (key, name, cover, n, on) => `<button type="button" class="avatar-link ${on ? 'on' : ''}" data-act="shopgroup" data-g="${key}" aria-pressed="${on}"><span class="avatar-ring">${cover ? `<img src="${esc(cover.thumb)}" alt="" loading="lazy">` : `<span class="ph" data-i="${esc(key === 'all' ? 'All' : key === 'other' ? '…' : SITE.initials(name))}" style="--h:${key === 'all' ? 20 : key === 'other' ? 220 : SITE.hue(name)}" aria-hidden="true"></span>`}</span>${esc(name)}<span class="avatar-sub">${plural(n)}</span></button>`;
+    return `<div class="avatars" id="shopArtists" role="group" aria-label="Show items by artist">${avatar('all', 'All', null, shopItems.length, shopGroup === null)}${withItems.map((g) => avatar(g.id, g.name, g.cover, count(g.id), shopGroup === g.id)).join('')}${otherN ? avatar('other', 'Other', null, otherN, shopGroup === 'other') : ''}</div>`;
+  }
   function shopPage() {
+    // an artist (or Other) that no longer has anything can't stay selected
+    if (shopGroup === 'other' ? !shopItems.some((i) => !i.groupId) : shopGroup !== null && !shopItems.some((i) => i.groupId === shopGroup)) shopGroup = null;
+    const shown = shopItems.filter((i) => shopGroup === null || (shopGroup === 'other' ? !i.groupId : i.groupId === shopGroup));
     view.innerHTML = `<div class="crumb"><a href="#/">← Group orders</a></div><h1 style="margin:4px 0 6px">Shop</h1>
       <p class="muted">Items we already have on hand — no waiting for an order to arrive. They're held for you as soon as you claim them, and you pay afterwards; once paid they're ready to send.</p>
-      ${shopItems.length ? shopItems.map((it) => { const q = shopQty(it.id), out = it.left < 1;
+      ${shopArtists()}
+      ${shopItems.length ? shown.map((it) => { const q = shopQty(it.id), out = it.left < 1;
         return `<div class="card" data-shop-item="${it.id}">${it.image ? picbox(it.image, it.title) : ''}<div class="itemrow" style="border:0; padding:0"><div class="grow"><strong>${esc(it.title)}</strong>
           <div class="sub">${money(it.price)} · ${out ? '<strong>Sold out</strong>' : `${it.left} left`} · pay within ${it.payDays} day${it.payDays === 1 ? '' : 's'} of claiming</div></div>
           ${out ? '' : `<span class="stepper"><button class="secondary" data-act="shopdec" data-shop="${it.id}" ${q ? '' : 'disabled'} aria-label="One fewer">−</button><span>${q}</span><button data-act="shopinc" data-shop="${it.id}" ${q >= it.left || q >= MAX_QTY ? 'disabled' : ''} aria-label="One more">+</button></span>`}</div>
@@ -256,6 +268,7 @@
       bump(Number(b.dataset.item), b.dataset.member || null, b.dataset.variant || null, b.dataset.act === 'inc' ? 1 : -1);
       return route();
     }
+    if (b.dataset.act === 'shopgroup') { const g = b.dataset.g === 'all' ? null : b.dataset.g === 'other' ? 'other' : Number(b.dataset.g); shopGroup = g === shopGroup ? null : g; return shopPage(); }
     if (b.dataset.act === 'shopinc' || b.dataset.act === 'shopdec') { bumpShop(Number(b.dataset.shop), b.dataset.act === 'shopinc' ? 1 : -1); return route(); }
     if (b.dataset.act === 'whole') {                        // one of every part, kept together
       const f = findItem(Number(b.dataset.item));
