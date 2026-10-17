@@ -60,7 +60,15 @@ export async function incomingSnapshot(conn) {
   const wanted = [...new Set([...need.keys(), ...got.keys()])];
   const [items] = wanted.length ? await conn.query('SELECT i.id, i.title, i.item_type AS type, go.title AS groupOrder, (i.cancelled_at IS NOT NULL) AS cancelled FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id IN (?) ORDER BY go.id DESC, i.sort_order, i.id', [wanted]) : [[]];
   const counts = items.map((i) => { const g = got.get(i.id), needed = need.get(i.id) || 0, ordered = Number(g?.ordered || 0), arrived = Number(g?.arrived || 0); return { itemId: i.id, item: i.title, type: i.type, groupOrder: i.groupOrder, cancelled: !!i.cancelled, needed, ordered, arrived, toOrder: Math.max(0, needed - ordered), missing: Math.max(0, ordered - arrived), over: Math.max(0, ordered - needed) }; });
-  const [options] = await conn.query("SELECT i.id AS itemId, i.title AS item, go.title AS groupOrder FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.cancelled_at IS NULL AND go.cancelled_at IS NULL ORDER BY go.id DESC, i.sort_order, i.id LIMIT 3000");
+  // The item picker on the store-order form. 'waiting' = how many SECURED claims are still at 'awaiting fulfillment' (what still needs ordering — counted exactly as the To order list counts them, test orders
+  // left out); the form offers only items with something waiting unless "Show all items" is ticked.
+  const [optionRows] = await conn.query(
+    `SELECT i.id AS itemId, i.title AS item, go.title AS groupOrder, COALESCE(w.waiting, 0) AS waiting
+       FROM items i JOIN group_orders go ON go.id = i.order_id
+       LEFT JOIN (SELECT c.item_id, COUNT(*) AS waiting FROM claims c JOIN group_orders g ON g.id = c.order_id
+                   WHERE c.status = 'confirmed' AND c.pipeline = 'awaiting fulfillment' AND g.is_test = 0 GROUP BY c.item_id) w ON w.item_id = i.id
+      WHERE i.cancelled_at IS NULL AND go.cancelled_at IS NULL ORDER BY go.id DESC, i.sort_order, i.id LIMIT 3000`);
+  const options = optionRows.map((o) => ({ ...o, waiting: Number(o.waiting) }));
   const [[addr]] = await conn.query("SELECT v FROM gom_settings WHERE k = 'warehouse_address'").then((r) => (r[0].length ? r : [[{ v: '' }]]));
   const chase = out.filter((o) => o.state === 'waiting' || o.state === 'part').sort((a, b) => String(a.orderedOn).localeCompare(String(b.orderedOn)));
   const [prox] = await conn.query('SELECT name FROM proxies ORDER BY name');

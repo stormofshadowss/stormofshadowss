@@ -60,7 +60,7 @@ test('ITEM AND ORDER NAMES WITH HTML are shown as text', async () => {
 
 // ───────── "Log as a store order…": the To order list → a New store order with its items already in ─────────
 const form = (p) => p.q('#newOrder');
-const lines = (p) => p.qa('[data-line-row]', form(p)).map((r) => [p.text(r.querySelector('[name=itemId]').selectedOptions[0]), r.querySelector('[name=qty]').value, r.querySelector('[name=lnote]').value]);
+const lines = (p) => p.qa('[data-line-row]', form(p)).map((r) => { const v = r.querySelector('[data-combo-input]').value; return [v.includes(' — ') ? v.slice(0, v.lastIndexOf(' — ')) : v, r.querySelector('[name=qty]').value, r.querySelector('[name=lnote]').value]; });   // [item name, how many, note] (the box shows "Item — Group order")
 const mkOrder = async (title, proxy, items) => { const api = (m, pa, b) => app.api(m, pa, b, admin); const go = (await api('POST', '/api/admin/orders', { groupId: w.group, title, proxy })).json.id; const out = [];
   for (const it of items) { const id = (await api('POST', `/api/admin/orders/${go}/items`, { type: it.members ? 'independent' : 'normal', price: 5, ...it })).json.id; out.push(id); for (const [member, qty] of it.claims || [[null, it.qty || 1]]) await app.api('POST', '/api/claims', { handle: `lg${++N}`, lines: [{ itemId: id, ...(member ? { member } : {}), qty }] }); }
   await api('POST', '/api/admin/claims/secure', { orderId: go }); return { go, items: out }; };
@@ -68,7 +68,7 @@ const mkOrder = async (title, proxy, items) => { const api = (m, pa, b) => app.a
 test('"LOG AS A STORE ORDER…" OPENS THE FORM FILLED IN: one line per item with how many, the options in the line\'s note, "Placed by" set to the group\'s proxy — and the cursor in the Store box', async () => {
   const p = await open(); await p.click(chip(p, 'toorder')); assert.equal(form(p), null, 'not open until asked'); await p.click(p.q('[data-act="log-order"]', group(p, `o${ids.sam}`))); await sleep(60);
   assert.ok(form(p)); assert.match(p.text(p.q('[data-prefill]', form(p))), /Filled in from Skzoo Pop-up on your To order list — check the quantities, add the store, then save\./);
-  assert.deepEqual(lines(p), [['Strap plush', '5', ''], ['Pop-up tee', '3', '1× L, 2× M'], ['Photocards', '4', '1× Felix, 3× Han']], 'the same totals and options as the list'); assert.equal(form(p).elements.proxy.value, 'Sam'); assert.equal(form(p).elements.store.value, '', 'you still add the store');
+  assert.deepEqual(lines(p), [['Strap plush', '5', ''], ['Pop-up tee', '3', '1× L, 2× M'], ['Photocards', '4', '1× Felix, 3× Han']], 'the same totals and options as the list'); assert.ok(p.qa('[data-line-row] [name=itemId]', form(p)).every((i) => Number(i.value) > 0), 'each line has its item really chosen (not just shown)'); assert.equal(form(p).elements.proxy.value, 'Sam'); assert.equal(form(p).elements.store.value, '', 'you still add the store');
   assert.equal(p.window.document.activeElement, form(p).elements.store, 'ready to type the store'); assert.deepEqual([p.errors, p.native], [[], 0]); p.close();
 });
 
@@ -99,7 +99,7 @@ test('THE WHOLE JOURNEY: see what to order → log it → "Mark ordered…" unde
 test('THE ORDINARY "+ New store order" BUTTON IS STILL A BLANK FORM (no leftover pre-fill), and closing the filled-in form forgets it', async () => {
   const p = await open(); await p.click(chip(p, 'toorder')); await p.click(p.q('[data-act="log-order"]', group(p, `o${ids.sam}`))); assert.ok(p.q('[data-prefill]'));
   await p.click(p.q('[data-act="new"]')); assert.equal(form(p), null, 'pressing + New store order while the filled-in form is open closes it');
-  await p.click(p.q('[data-act="new"]')); assert.ok(form(p)); assert.equal(p.q('[data-prefill]'), null, 'no hint'); assert.deepEqual(lines(p), [['Which item?', '', '']], 'one empty line'); assert.equal(form(p).elements.proxy.value, ''); p.close();
+  await p.click(p.q('[data-act="new"]')); assert.ok(form(p)); assert.equal(p.q('[data-prefill]'), null, 'no hint'); assert.deepEqual(lines(p), [['', '', '']], 'one empty line'); assert.equal(p.q('[name=itemId]', form(p)).value, '', 'and no item chosen'); assert.equal(form(p).elements.proxy.value, ''); p.close();
 });
 
 test('A LONG LIST OF OPTIONS STILL SAVES: the note is kept within its 200 characters (cut with "…") instead of failing', async () => {

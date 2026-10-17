@@ -232,3 +232,14 @@ button.avatar-link:hover .avatar-ring { filter:brightness(1.08); }
 .viewas #view button, .viewas #view input, .viewas #view select, .viewas #view textarea { pointer-events:none; opacity:.55; }
 .viewas #view #sw, .viewas #view [data-act="toggle-go"], .viewas #view [data-act="open-all-go"], .viewas #view [data-act="close-all-go"] { pointer-events:auto; opacity:1; }
 .viewas [data-act="logout"] { display:none; }
+
+/* The store-order item picker: a search box with a list that filters as you type (grouped by group order, with how many are waiting) */
+.combo { position:relative; }
+.combo-list { position:absolute; z-index:70; left:0; right:0; top:calc(100% + 4px); max-height:340px; overflow-y:auto; background:var(--surface); border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow); padding:4px 0; }
+.combo-list[hidden] { display:none; }
+.combo-group { padding:8px 12px 3px; font-size:.78rem; font-weight:800; letter-spacing:.02em; color:var(--soft); }
+.combo-opt { padding:8px 12px 8px 20px; cursor:pointer; line-height:1.3; }
+.combo-opt .sub { color:var(--soft); font-size:.82rem; }
+.combo-opt:hover, .combo-opt[aria-selected="true"] { background:var(--accent-soft); }
+.combo-empty { padding:10px 12px; color:var(--soft); font-size:.88rem; }
+.combo-input[aria-invalid="true"] { border-color:var(--err-ink); }
