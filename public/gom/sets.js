@@ -176,7 +176,12 @@
     e.preventDefault();
     const form = e.target; if (form.dataset.form !== 'assign') return;
     const m = $('[data-msg]', form);
-    const r = await api('POST', `/api/admin/sets/${form.dataset.set}/slots`, { member: form.dataset.member, handle: form.elements.handle.value });
+    const slotBody = { member: form.dataset.member, handle: form.elements.handle.value };
+    let r = await api('POST', `/api/admin/sets/${form.dataset.set}/slots`, slotBody);
+    if (!r.ok && r.json?.code === 'limit_reached') {                                                   // over the item's purchase limit: you may go past it, but only knowingly
+      if (!(await GOM.confirm(`${r.json.error}\n\nAdd them anyway? As the GOM you can go over a purchase limit.`, { ok: 'Add anyway', cancel: "Don't add" }))) { m.textContent = r.json.error; m.className = 'msg'; m.hidden = false; return; }
+      r = await api('POST', `/api/admin/sets/${form.dataset.set}/slots`, { ...slotBody, overrideLimit: true });
+    }
     if (!r.ok) { m.textContent = errText(r); m.className = 'msg'; m.hidden = false; return; }
     adding = null; await render(root); GOM.toast(r.json.status === 'confirmed' ? 'Added — and confirmed, since the set is already secured.' : 'Added.');
   }

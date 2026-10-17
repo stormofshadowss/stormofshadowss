@@ -1,6 +1,7 @@
 import { bad, notFound, conflict } from '../errors.js';
 import { lockJoiner, setCost, sweepCredit, addLedger } from './ledger.js';
 import { round2 } from './money.js';
+import { checkPurchaseLimit } from './claim-create.js';
 
 // Fixing mistakes in a claim (typically from an import): change WHAT it is, delete it outright, or turn a "filler" line into credit.
 // A true delete is only allowed when nothing would be lost — no money paid, no parcel, no box, no applied payment, no credit history — and says why when it is not.
@@ -93,7 +94,7 @@ export async function changeClaim(conn, claimId, b, accountId, audit) {
   await lockJoiner(conn, peek.joiner_id);
   const [[c]] = await conn.query('SELECT id, joiner_id, status, label, item_id, order_id, set_id, box_id, leftover_item_id, price_tbc, size_bucket FROM claims WHERE id = ? FOR UPDATE', [claimId]);
   const why = await changeReasons(conn, c); if (why.length) throw conflict(why[0], 'cannot_change');
-  const [[item]] = await conn.query('SELECT i.id, i.order_id, i.item_type, i.title, i.price, i.price_tbc, i.size_bucket, i.cancelled_at, go.cancelled_at AS go_cancelled FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id = ?', [b.itemId]);
+  const [[item]] = await conn.query('SELECT i.id, i.order_id, i.item_type, i.title, i.price, i.price_tbc, i.size_bucket, i.purchase_limit, i.limit_scope, i.cancelled_at, go.cancelled_at AS go_cancelled FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id = ?', [b.itemId]);
   if (!item) throw notFound("That item doesn't exist");
   if (item.cancelled_at || item.go_cancelled) throw bad("That item isn't available any more", 'item_cancelled');
   if (item.item_type === 'set') throw bad("A claim can't be changed into a member-set part — use the Sets tab (Add someone) for that.", 'is_set');
@@ -110,6 +111,8 @@ export async function changeClaim(conn, claimId, b, accountId, audit) {
   const changedItem = item.id !== c.item_id;
   const [[prev]] = await conn.query('SELECT member_name, variant_label FROM claims WHERE id = ?', [claimId]);
   if (!changedItem && member === prev.member_name && variant === prev.variant_label) throw bad("That's what it already is.", 'no_change');
+  // moving a claim onto an item (or option) that has a purchase limit takes one of its places — refused unless you knowingly go past it (the claim's own current place doesn't count against it)
+  await checkPurchaseLimit(conn, item, { [member || variant || '']: 1 }, { asAdmin: true, overrideLimit: !!b.overrideLimit, excludeClaimId: claimId });
   if (changedItem && !b.pricing) throw bad('Choose whether to re-price it or keep the old price.', 'pricing_needed');
   const [[pd]] = await conn.query('SELECT COALESCE(SUM(paid), 0) AS paid FROM claim_costs WHERE claim_id = ?', [claimId]);
   if (changedItem && b.pricing === 'reprice' && item.price_tbc && pd.paid > 0.004) throw conflict(`That item's price is TBC, so it can't be re-priced while ${money(pd.paid)} is paid on this claim — choose "keep the old price".`, 'price_tbc');

@@ -2,6 +2,7 @@ import { bad, notFound } from '../errors.js';
 import { addClaimCosts } from './ledger.js';
 import { placeSetParts } from './sets.js';
 import { closedReason } from './closing.js';
+import { conflict } from '../errors.js';
 
 // Making claims for ITEMS of a group order — one place, used both by a joiner claiming for themselves and by the GOM adding a claim for someone.
 // The only difference is `asAdmin`: the GOM may add to a PRIVATE group order and to anything that has CLOSED — an order, or just one item (a joiner may do neither).
@@ -14,10 +15,31 @@ export async function lockLineItems(conn, lines) {
 }
 
 // Place one item line (not a shop item) for a joiner: returns the new claim ids, and where member-set parts went.
-export async function placeItemLine(conn, { joinerId, line, asAdmin = false }) {
+// A TOTAL purchase limit (a store limit, a bulky item): at most N claims across everyone, first come first served — requests count the moment they're made, cancelled claims free their place. It counts
+// the whole item together, or each version / member / size on its own (limit_scope). The item row is already locked, so two people grabbing the last copy at once queue up and one is told it's gone.
+// The GOM adding or fixing a claim may go past it, but only knowingly (overrideLimit) — a plain attempt is refused with code 'limit_reached' so the screen can ask.
+export const hasOptions = (type) => ['set', 'independent', 'size'].includes(type);                    // item types where a person picks a member / size — the only ones a limit can count "each option" of
+export async function checkPurchaseLimit(conn, item, wanted, { asAdmin = false, overrideLimit = false, excludeClaimId = null } = {}) {
+  if (!item.purchase_limit || (asAdmin && overrideLimit)) return;
+  const n = Number(item.purchase_limit), byOption = item.limit_scope === 'option' && hasOptions(item.item_type);
+  const ask = byOption ? wanted : { '': Object.values(wanted).reduce((a, b) => a + b, 0) };                       // wanted: { optionName: qty } — what this request adds
+  for (const [opt, qty] of Object.entries(ask)) {
+    if (!(qty > 0)) continue;
+    const [[{ used }]] = await conn.query(
+      `SELECT COUNT(*) AS used FROM claims WHERE item_id = ? AND status <> 'cancelled' ${excludeClaimId ? 'AND id <> ?' : ''} ${byOption ? 'AND COALESCE(member_name, variant_label) = ?' : ''}`,
+      [item.id, ...(excludeClaimId ? [excludeClaimId] : []), ...(byOption ? [opt] : [])]);
+    const left = Math.max(0, n - Number(used));
+    if (qty > left) {
+      const what = byOption ? `“${item.title} — ${opt}”` : `“${item.title}”`, limit = byOption ? `limit ${n} of each` : `limit ${n} in total`;
+      throw conflict(left === 0 ? `Sorry — ${what} has reached its purchase limit (${limit}).` : `Only ${left} left of ${what} (${limit}) — you asked for ${qty}.`, 'limit_reached');
+    }
+  }
+}
+
+export async function placeItemLine(conn, { joinerId, line, asAdmin = false, overrideLimit = false }) {
   const ids = [], placements = [];
   const [[item]] = await conn.query(
-    `SELECT i.id, i.order_id, i.item_type, i.title, i.price, i.price_tbc, i.size_bucket, i.cancelled_at, i.close_date AS item_close_date, i.closed_by_hand, go.status, go.close_date AS go_close_date, go.is_private
+    `SELECT i.id, i.order_id, i.item_type, i.title, i.price, i.price_tbc, i.size_bucket, i.purchase_limit, i.limit_scope, i.cancelled_at, i.close_date AS item_close_date, i.closed_by_hand, go.status, go.close_date AS go_close_date, go.is_private
        FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id = ?`, [line.itemId]);
   // Private orders look exactly like orders that don't exist.
   if (!item || (item.is_private && !asAdmin)) throw notFound('That item isn\'t available');
@@ -35,6 +57,7 @@ export async function placeItemLine(conn, { joinerId, line, asAdmin = false }) {
     const known = new Set(roster.map((r) => r.name));
     for (const m of Object.keys(asked)) if (!known.has(m)) throw bad(`"${m}" isn't part of "${item.title}"`);
     if (Object.values(asked).some((n) => n > 20)) throw bad('That\'s more of one part than we can take in one go');
+    await checkPurchaseLimit(conn, item, asked, { asAdmin, overrideLimit });
     for (const p of await placeSetParts(conn, { joinerId, item, qtyByMember: asked, together: !!line.together })) { ids.push(p.claimId); placements.push(p); }
     return { ids, placements };
   }
@@ -49,6 +72,7 @@ export async function placeItemLine(conn, { joinerId, line, asAdmin = false }) {
     variant = v.label;
   }
   const label = `${item.title}${member ? ` — ${member}` : ''}${variant ? ` (${variant})` : ''}`;
+  await checkPurchaseLimit(conn, item, { [member || variant || '']: line.qty || 1 }, { asAdmin, overrideLimit });
   for (let n = 0; n < (line.qty || 1); n++) {
     const [r] = await conn.query(
       `INSERT INTO claims (joiner_id, order_id, item_id, label, member_name, variant_label, size_bucket, price_tbc)

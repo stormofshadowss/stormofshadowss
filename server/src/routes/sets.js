@@ -1,4 +1,5 @@
 import { lockItemOfSet } from '../lib/sets.js';
+import { checkPurchaseLimit } from '../lib/claim-create.js';
 import { z } from 'zod';
 import { wrap } from '../lib/http.js';
 import { requireAdmin, audit } from '../auth.js';
@@ -99,7 +100,7 @@ export function setRoutes(app, { pool, notifier }) {
 
   // Put someone into an open part by hand (e.g. to fill a gap). In a set that's already secured the claim is confirmed straight away.
   app.post('/api/admin/sets/:id/slots', admin, wrap(async (req, res) => {
-    const b = z.object({ member: z.string().min(1).max(80), handle: z.string().min(1).max(40) }).parse(req.body);
+    const b = z.object({ member: z.string().min(1).max(80), handle: z.string().min(1).max(40), overrideLimit: z.boolean().optional() }).parse(req.body);
     const id = Number(req.params.id);
     const handle = normalizeHandle(b.handle);
     if (!isValidHandle(handle)) throw bad('That is not a valid Instagram handle');
@@ -111,10 +112,12 @@ export function setRoutes(app, { pool, notifier }) {
       const [[j]] = await conn.query('SELECT id, is_blocked FROM joiners WHERE instagram_handle = ?', [handle]);
       if (j.is_blocked) throw new HttpError(403, 'That handle is blocked', 'handle_blocked');
       await lockJoiner(conn, j.id);
-      const [[s]] = await conn.query('SELECT s.admin_decision AS decision, i.id AS itemId, i.title, i.price, i.price_tbc AS itemTbc, i.order_id AS orderId, i.size_bucket AS sizeBucket FROM item_sets s JOIN items i ON i.id = s.item_id WHERE s.id = ? FOR UPDATE', [id]);
+      const [[s]] = await conn.query('SELECT s.admin_decision AS decision, i.id AS itemId, i.item_type, i.purchase_limit, i.limit_scope, i.title, i.price, i.price_tbc AS itemTbc, i.order_id AS orderId, i.size_bucket AS sizeBucket FROM item_sets s JOIN items i ON i.id = s.item_id WHERE s.id = ? FOR UPDATE', [id]);
       if (s.decision === 'cancelled') throw conflict('That set is cancelled', 'bad_state');
       const [[m]] = await conn.query('SELECT price FROM item_members WHERE item_id = ? AND name = ?', [s.itemId, b.member]);
       if (!m) throw bad(`"${b.member}" isn't part of "${s.title}"`);
+      // adding someone takes one of the item's limited places: refused unless you knowingly go past it (the same rule as adding a claim)
+      await checkPurchaseLimit(conn, { id: s.itemId, title: s.title, item_type: s.item_type, purchase_limit: s.purchase_limit, limit_scope: s.limit_scope }, { [b.member]: 1 }, { asAdmin: true, overrideLimit: !!b.overrideLimit });
       const tbc = m.price === null && s.itemTbc;
       if (tbc && s.decision === 'secured') throw conflict("That part's price is still TBC, so it can't be added to a secured set yet. Set the item's price first.", 'price_tbc');
       const [taken] = await conn.query('SELECT joiner_id FROM set_slots WHERE set_id = ? AND member_name = ?', [id, b.member]);

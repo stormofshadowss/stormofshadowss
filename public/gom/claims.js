@@ -351,7 +351,12 @@
       lines = [{ itemId: it.id, qty: q, ...(it.type === 'size' ? { variant: addS.variant } : {}) }];
     }
     if (!addS.status) return err('Choose Requested or Confirmed — there is no default.');            // checked last, so problems are reported top to bottom, in the order of the form
-    const r = await api('POST', '/api/admin/claims/add', { handle, createHandle: addS.create, status: addS.status, ...(addS.status === 'confirmed' ? { pipeline: addS.stage } : {}), lines });
+    const body = { handle, createHandle: addS.create, status: addS.status, ...(addS.status === 'confirmed' ? { pipeline: addS.stage } : {}), lines };
+    let r = await api('POST', '/api/admin/claims/add', body);
+    if (!r.ok && r.json?.code === 'limit_reached') {                                                   // over an item's purchase limit: you may go past it, but only knowingly
+      if (!(await GOM.confirm(`${r.json.error}\n\nAdd it anyway? As the GOM you can go over a purchase limit — people claiming normally can't.`, { ok: 'Add anyway', cancel: "Don't add" }))) return err(r.json.error);
+      r = await api('POST', '/api/admin/claims/add', { ...body, overrideLimit: true });
+    }
     if (!r.ok) return err(errText(r));
     const j = r.json, n = j.claimIds.length, left = j.leftAsRequests;
     const how = addS.status === 'requested' ? (n === 1 ? 'as a request' : 'as requests') : `${j.confirmed} confirmed${left ? `, ${left} left as request${left === 1 ? '' : 's'}` : ''}`;
@@ -479,7 +484,12 @@
         const pricing = changedItem ? (askPrice ? fixS.pricing : 'keep') : undefined, now = `${it.title}${it.type === 'independent' ? ` — ${fixS.member}` : ''}${it.type === 'size' ? ` (${fixS.variant})` : ''}`;
         const ok = await GOM.confirm(`Change “${p.label}” to “${now}” for @${p.handle}?${changedItem ? `\n\n${pricing === 'reprice' ? `Its price becomes ${it.priceTbc ? 'TBC (0)' : money(it.price)}; what's paid is kept, so any difference shows as owed or credit.` : `It keeps its price (${money(p.cost)}).`}` : ''}`, { ok: 'Change it', cancel: 'Not yet' });
         if (!ok) return;
-        const r = await api('POST', `/api/admin/claims/${cid}/change`, { itemId: it.id, ...(it.type === 'independent' ? { member: fixS.member } : {}), ...(it.type === 'size' ? { variant: fixS.variant } : {}), ...(pricing ? { pricing } : {}) });
+        const changeBody = { itemId: it.id, ...(it.type === 'independent' ? { member: fixS.member } : {}), ...(it.type === 'size' ? { variant: fixS.variant } : {}), ...(pricing ? { pricing } : {}) };
+        let r = await api('POST', `/api/admin/claims/${cid}/change`, changeBody);
+        if (!r.ok && r.json?.code === 'limit_reached') {
+          if (!(await GOM.confirm(`${r.json.error}\n\nMove it there anyway? As the GOM you can go over a purchase limit.`, { ok: 'Move anyway', cancel: "Don't move" }))) return fixErr(r.json.error);
+          r = await api('POST', `/api/admin/claims/${cid}/change`, { ...changeBody, overrideLimit: true });
+        }
         if (!r.ok) return fixErr(errText(r)); fixing = null; await render(root); GOM.toast(`Changed to “${r.json.label}”${r.json.repriced ? ' and re-priced' : ''}.`); break;
       }
       case 'fix-delete': {

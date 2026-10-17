@@ -13,7 +13,7 @@ export function claimFixRoutes(app, { pool }) {
   }));
 
   app.post('/api/admin/claims/:id/change', requireAdmin, wrap(async (req, res) => {
-    const b = z.object({ itemId: z.number().int().positive(), member: z.string().max(80).optional(), variant: z.string().max(40).optional(), pricing: z.enum(['reprice', 'keep']).optional() }).parse(req.body);
+    const b = z.object({ itemId: z.number().int().positive(), member: z.string().max(80).optional(), variant: z.string().max(40).optional(), pricing: z.enum(['reprice', 'keep']).optional(), overrideLimit: z.boolean().optional() }).parse(req.body);
     const out = await withTx(pool, (conn) => changeClaim(conn, Number(req.params.id), b, req.account.id, audit));
     res.json({ ok: true, ...out });
   }));

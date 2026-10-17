@@ -85,6 +85,8 @@
         <div class="full">${GOM.pictureControl('item', it.id, it.image, 'Item picture')}</div>
         ${dateInput('paymentDeadline', it.ownPaymentDeadline, "Pay by (blank = the GO's date)")}
         <div>${dateInput('closeDate', it.closeDate, "Closes (blank = when the group order closes)")}<div class="sub">Claims on this item stop after this day (UK time).${currentOrder().closeDate ? ` It can't be later than the group order's ${fmtDate(currentOrder().closeDate)}.` : ''}</div></div>
+        <div><label>Purchase limit (blank = none)</label><input name="purchaseLimit" type="number" min="1" max="9999" inputmode="numeric" placeholder="e.g. 5" value="${it.limit ? it.limit.n : ''}"><div class="sub">At most this many across everyone, first come first served. Lowering it never cancels claims people already have — it only stops new ones.</div></div>
+        ${['set', 'independent', 'size'].includes(it.type) ? `<div><label>The limit counts</label><select name="limitScope"><option value="item" ${it.limit?.scope === 'option' ? '' : 'selected'}>The whole item together</option><option value="option" ${it.limit?.scope === 'option' ? 'selected' : ''}>Each member / size separately</option></select></div>` : ''}
         <div><label>Proxy (blank = the GO's)</label><input name="proxy" list="proxyList" value="${esc(it.proxy && it.proxy !== currentOrder().proxy ? it.proxy : '')}"></div>
       </div>
       <p class="sub">Changing the price only affects future claims — existing claims keep the price they were made at.</p>
@@ -94,7 +96,7 @@
     return `<tr><td>${it.image ? `<img class="thumb sm" src="${esc(it.image.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}${esc(it.title)}${it.description ? `<div class="sub" style="white-space:pre-line">${esc(it.description.length > 140 ? it.description.slice(0, 140) + '…' : it.description)}</div>` : ''}</td><td>${esc(typeName[it.type])}</td><td class="nowrap">${it.priceTbc ? '<span class="pill warn">TBC</span>' : money(it.price)}</td>
       <td class="nowrap">${fmtDate(it.payBy)}${it.ownPaymentDeadline ? ' <span class="sub">(own)</span>' : ''}</td>
       <td class="nowrap" data-closes>${closesCell(it)}</td><td>${esc(it.proxy || '—')}</td>
-      <td>${itemSummary(it)}</td><td>${it.claimed}</td><td><button class="sm secondary" data-act="edit-item" data-id="${it.id}">Edit</button> <button class="sm secondary danger" data-act="delete-item" data-id="${it.id}">Delete</button>${it.cancelled ? ' <span class="pill warn" data-cancelled>Cancelled</span>' : ` <button class="sm secondary danger" data-act="cancel-item" data-id="${it.id}">Cancel…</button>`}${it.type === 'set' ? ` <button class="sm secondary" data-act="fixed" data-id="${it.id}">Fixed claimers</button>` : ''}</td></tr>`;
+      <td>${itemSummary(it)}</td><td>${it.claimed}${limitCell(it)}</td><td><button class="sm secondary" data-act="edit-item" data-id="${it.id}">Edit</button> <button class="sm secondary danger" data-act="delete-item" data-id="${it.id}">Delete</button>${it.cancelled ? ' <span class="pill warn" data-cancelled>Cancelled</span>' : ` <button class="sm secondary danger" data-act="cancel-item" data-id="${it.id}">Cancel…</button>`}${it.type === 'set' ? ` <button class="sm secondary" data-act="fixed" data-id="${it.id}">Fixed claimers</button>` : ''}</td></tr>`;
   }
 
   const currentOrder = () => orders.find((o) => o.id === itemsFor) || {};
@@ -119,6 +121,8 @@
         <div data-only="size,normal,random,independent,set"><label>Size (for postage)</label><select name="sizeBucket"><option>XS</option><option>S</option><option selected>M</option><option>L</option><option>XL</option></select></div>
         ${dateInput('paymentDeadline', '', "Pay by (blank = the GO's date)")}
         <div>${dateInput('closeDate', '', "Closes (blank = when the group order closes)")}<div class="sub">Claims on this item stop after this day (UK time) — use it when an item closes before the rest of the order.</div></div>
+        <div><label>Purchase limit (blank = none)</label><input name="purchaseLimit" type="number" min="1" max="9999" inputmode="numeric" placeholder="e.g. 5"><div class="sub">At most this many across everyone, first come first served — for a store limit or a bulky item.</div></div>
+        <div data-limit-scope hidden><label>The limit counts</label><select name="limitScope"><option value="item">The whole item together</option><option value="option">Each member / size separately</option></select></div>
         <div><label>Proxy (blank = the GO's)</label><input name="proxy" list="proxyList" maxlength="80"></div>
         <div class="full" data-extra hidden><label data-extra-label></label><input name="extra"><div class="btn-row" style="margin-top:6px"><button type="button" class="sm secondary" data-act="fill-members">Use the group's members</button></div></div>
         <div class="full" data-setonly hidden><label class="chk"><input type="checkbox" name="requiresFullSet"> Every part must be claimed — a set that doesn't fill can't go ahead</label></div>
@@ -193,12 +197,21 @@
     $$('form[data-form="new-item"]', root).forEach(syncTypeFields);
   }
 
+  // under "Claimed" in the items list: the purchase limit and how much of it is used (whole item, or the options that are full)
+  const limitCell = (it) => {
+    const l = it.limit; if (!l) return '';
+    if (l.scope === 'item') return `<div class="sub" data-item-limit>Limit ${l.n} · ${l.left > 0 ? `${l.left} left` : l.used > l.n ? `<strong>full (${l.used - l.n} over)</strong>` : '<strong>full</strong>'}</div>`;
+    const full = Object.entries(l.options).filter(([, o]) => o.left === 0).map(([n]) => n);
+    return `<div class="sub" data-item-limit>Limit ${l.n} of each${full.length ? ` · full: ${full.map(esc).join(', ')}` : ''}</div>`;
+  };
+
   function syncTypeFields(form) {
     const type = form.elements.type.value;
     const extra = EXTRA[type];
     $('[data-extra]', form).hidden = !extra;
     if (extra) { $('[data-extra-label]', form).textContent = extra[0]; form.elements.extra.placeholder = extra[1]; }
     $('[data-setonly]', form).hidden = type !== 'set';
+    $('[data-limit-scope]', form).hidden = !['set', 'independent', 'size'].includes(type);
   }
 
   const showMsg = (form, text) => { const m = $('[data-msg]', form); m.textContent = text; m.className = 'msg'; m.hidden = !text; };
@@ -278,6 +291,7 @@
       const body = {
         type, title: val(form, 'title'), description: val(form, 'description'), ...priceBody(form), sizeBucket: val(form, 'sizeBucket'),
         paymentDeadline: val(form, 'paymentDeadline') || null, closeDate: val(form, 'closeDate') || null, proxy: val(form, 'proxy') || null, ...extra,
+        purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), limitScope: ['set', 'independent', 'size'].includes(type) ? val(form, 'limitScope') : 'item',
       };
       if (type === 'set') body.requiresFullSet = form.elements.requiresFullSet.checked;
       const r = await api('POST', `/api/admin/orders/${form.dataset.id}/items`, body);
@@ -298,6 +312,7 @@
       const r = await api('PATCH', `/api/admin/items/${form.dataset.id}`, {
         title: val(form, 'title'), ...priceBody(form), description: val(form, 'description'),
         paymentDeadline: val(form, 'paymentDeadline') || null, closeDate: val(form, 'closeDate') || null, proxy: val(form, 'proxy') || null,
+        purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), ...(form.elements.limitScope ? { limitScope: val(form, 'limitScope') } : {}),
       });
       if (!r.ok) return showMsg(form, errText(r));
       editingItem = null; await reload(true);

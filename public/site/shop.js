@@ -91,15 +91,34 @@
         const it = live.get(l.itemId);
         return { ...l, price: l.member ? (it.members?.find((m) => m.name === l.member)?.price ?? it.price) : it.price };
       }).filter((l) => l.qty > 0);
+    let trimmed = 0;
+    for (const [id, it] of live) {
+      if (!it.limit) continue; const lines = basket.filter((l) => !l.shopId && l.itemId === id);
+      if (it.limit.scope === 'item') { let room = it.limit.left; for (const l of lines) { const keep = Math.max(0, Math.min(l.qty, room)); if (keep < l.qty) trimmed += 1; l.qty = keep; room -= keep; } }
+      else for (const l of lines) { const o = it.limit.options?.[l.member || l.variant]; if (o && l.qty > o.left) { trimmed += 1; l.qty = Math.max(0, o.left); } }
+    }
+    basket = basket.filter((l) => l.qty > 0);
     if (JSON.stringify(basket) !== before) saveBasket();
+    if (trimmed) setTimeout(() => SITE.toast(`${trimmed} item${trimmed === 1 ? '' : 's'} in your basket ${trimmed === 1 ? 'was' : 'were'} reduced or taken out — the purchase limit has been reached.`, true), 60);
     if (droppedClosed) setTimeout(() => SITE.toast(`${droppedClosed} item${droppedClosed === 1 ? '' : 's'} in your basket ${droppedClosed === 1 ? 'has' : 'have'} closed for claims, so ${droppedClosed === 1 ? 'it was' : 'they were'} taken out.`, true), 50);
   }
 
   const findItem = (id) => { for (const o of orders) for (const i of o.items) if (i.id === id) return { order: o, item: i }; return null; };
+  // PURCHASE LIMITS (a store limit, a bulky item): at most N across everyone, first come first served. `limit` is { n, scope:'item', left } for the whole item together, or { n, scope:'option', options:{ name:{left} } }
+  // for each version / member / size on its own. What's already in YOUR basket counts against what's left.
+  const inBasket = (itemId) => basket.filter((l) => !l.shopId && l.itemId === itemId).reduce((n, l) => n + l.qty, 0);
+  const roomFor = (it, member, variant) => {
+    const lim = it?.limit; if (!lim) return Infinity;
+    if (lim.scope === 'option') { const o = lim.options?.[member || variant]; return o ? o.left - qtyOf(it.id, member, variant) : Infinity; }
+    return lim.left - inBasket(it.id);
+  };
+  const limitNote = (it) => { const l = it.limit; if (!l || it.closed) return ''; if (l.scope === 'option') return `<p class="sub" data-limit style="margin:6px 0 0">Limit ${l.n} of each</p>`; return l.left > 0 ? `<p class="sub" data-limit style="margin:6px 0 0">Limit ${l.n} in total · ${l.left} left</p>` : '<p style="margin:6px 0 0"><span class="pill warn" data-limit-reached>Limit reached</span></p>'; };
+  const optLimit = (it, name) => { const o = it.limit?.scope === 'option' ? it.limit.options?.[name] : null; return o ? (o.left > 0 ? ` · ${o.left} left` : ' · <span data-limit-reached>limit reached</span>') : ''; };
   const qtyOf = (itemId, member, variant) => basket.find((l) => l.key === lineKey(itemId, member, variant))?.qty || 0;
 
   function bump(itemId, member, variant, delta) {
     const f = findItem(itemId); if (!f || f.order.status !== 'open') return;
+    if (delta > 0 && roomFor(f.item, member, variant) < delta) { SITE.toast(`“${f.item.title}${member ? ` — ${member}` : variant ? ` (${variant})` : ''}” has reached its purchase limit${f.item.limit.scope === 'option' ? ` (${f.item.limit.n} of each)` : ` (${f.item.limit.n} in total)`}.`, true); return; }
     const key = lineKey(itemId, member, variant);
     let line = basket.find((l) => l.key === key);
     if (!line) {
@@ -151,7 +170,7 @@
   const stepper = (itemId, member, variant, closed) => {
     const q = qtyOf(itemId, member, variant);
     const attrs = `data-item="${itemId}" ${member ? `data-member="${esc(member)}"` : ''} ${variant ? `data-variant="${esc(variant)}"` : ''}`;
-    return closed ? '' : `<span class="stepper"><button class="secondary" data-act="dec" ${attrs} ${q ? '' : 'disabled'} aria-label="One fewer">−</button><span>${q}</span><button data-act="inc" ${attrs} ${q >= MAX_QTY ? 'disabled' : ''} aria-label="One more">+</button></span>`;
+    return closed ? '' : `<span class="stepper"><button class="secondary" data-act="dec" ${attrs} ${q ? '' : 'disabled'} aria-label="One fewer">−</button><span>${q}</span><button data-act="inc" ${attrs} ${q >= MAX_QTY || roomFor(findItem(itemId)?.item, member, variant) <= 0 ? 'disabled' : ''} aria-label="One more">+</button></span>`;
   };
 
   // ── pages ──
@@ -171,8 +190,8 @@
   // a picture sits to the left of its item; tapping it opens the full-size one
   const picbox = (img, alt) => `<a class="picbox" href="${esc(img.url)}" target="_blank" rel="noopener"><img class="thumb" src="${esc(img.thumb)}" width="84" height="84" loading="lazy" alt="${esc(alt)}"></a>`;
   // Options are drawn as little boxes you can tap (member names, set parts) and horizontal pills (sizes). A box or pill is highlighted once you've picked some.
-  const tile = (it, name, sub, closed) => `<div class="opt${qtyOf(it.id, name, null) ? ' on' : ''}" data-opt="${esc(name)}"><span class="opt-name">${esc(name)}</span> <span class="opt-sub">${sub}</span>${stepper(it.id, name, null, closed)}</div>`;
-  const sizePill = (it, v, closed) => `<div class="sizepill${qtyOf(it.id, null, v) ? ' on' : ''}" data-opt="${esc(v)}"><span class="sz">Size ${esc(v)}</span> ${stepper(it.id, null, v, closed)}</div>`;
+  const tile = (it, name, sub, closed) => `<div class="opt${qtyOf(it.id, name, null) ? ' on' : ''}" data-opt="${esc(name)}"><span class="opt-name">${esc(name)}</span> <span class="opt-sub">${sub}${closed ? '' : optLimit(it, name)}</span>${stepper(it.id, name, null, closed)}</div>`;
+  const sizePill = (it, v, closed) => `<div class="sizepill${qtyOf(it.id, null, v) ? ' on' : ''}" data-opt="${esc(v)}"><span class="sz">Size ${esc(v)}</span>${closed ? '' : ` <span class="opt-sub">${optLimit(it, v).replace(/^ · /, '')}</span>`} ${stepper(it.id, null, v, closed)}</div>`;
 
   function itemBlock(o, it) {
     const html = itemBlockRaw(o, it);                                                              // one <div class="card">…</div>
@@ -193,7 +212,7 @@
       const multi = mine.some((l) => l.qty > 1);
       const summary = it.members.filter((m) => mine.some((l) => l.member === m.name)).map((m) => { const q = mine.find((l) => l.member === m.name).qty; return q > 1 ? `${q} × ${esc(m.name)}` : esc(m.name); }).join(', ');
       return `<div class="card"><div class="row"><div><strong>${esc(it.title)}</strong><div class="sub">${it.wholeSetPrice == null ? 'Price TBC' : `${money(it.wholeSetPrice)} for the whole set`}${it.requiresFullSet ? ' · <strong>every part must be claimed for it to go ahead</strong>' : ''}</div></div>${meta}</div>
-        ${d}<p class="sub">Press + on the members you want. Each goes in the first available set with a free space for it, or a new set starts if there isn’t one. You can also choose to keep your members in the same set but this may affect if your claim goes through or not.</p>
+        ${d}${limitNote(it)}<p class="sub">Press + on the members you want. Each goes in the first available set with a free space for it, or a new set starts if there isn’t one. You can also choose to keep your members in the same set but this may affect if your claim goes through or not.</p>
         <div class="opts">${it.members.map((m) => tile(it, m.name, `${priceText(m.price)} · ${it.partsClaimed[m.name] || 0} claimed${closed || !candidateSets(it).length ? '' : ` · <span data-spot>${spotText(openIn(it, m.name))}</span>`}`, closed)).join('')}</div>
         ${closed ? '' : setGrid(it)}
         ${closed ? '' : `<div class="btn-row"><button class="secondary" data-act="whole" data-item="${it.id}">Claim the whole set (${it.wholeSetPrice == null ? 'price TBC' : money(it.wholeSetPrice)}, all in one set)</button></div>`}
@@ -202,14 +221,14 @@
           ${count >= 2 ? `<label class="chk" style="margin-top:6px"><input type="checkbox" data-act="together" data-item="${it.id}" ${together[it.id] ? 'checked' : ''}> Keep these together in the same set</label>${multi ? '<div class="sub">With this on, one of each part goes in the same set, then the next one of each in the next set, and so on.</div>' : ''}` : ''}` : ''}</div>`;
     }
     if (it.type === 'independent') {
-      return `<div class="card"><div class="row"><div><strong>${esc(it.title)}</strong></div>${meta}</div>${d}
+      return `<div class="card"><div class="row"><div><strong>${esc(it.title)}</strong></div>${meta}</div>${d}${limitNote(it)}
         <div class="opts">${it.members.map((m) => tile(it, m.name, priceText(m.price), closed)).join('')}</div></div>`;
     }
     if (it.type === 'size') {
-      return `<div class="card"><div class="row"><div><strong>${esc(it.title)}</strong> <span class="sub">${eachText(it.price)}</span></div>${meta}</div>${d}
+      return `<div class="card"><div class="row"><div><strong>${esc(it.title)}</strong> <span class="sub">${eachText(it.price)}</span></div>${meta}</div>${d}${limitNote(it)}
         <div class="pills">${it.variants.map((v) => sizePill(it, v, closed)).join('')}</div></div>`;
     }
-    return `<div class="card"><div class="itemrow" style="border:0; padding:0"><div class="grow"><strong>${esc(it.title)}</strong><div class="sub">${eachText(it.price)}</div>${meta}</div>${stepper(it.id, null, null, closed)}</div>${d}</div>`;
+    return `<div class="card"><div class="itemrow" style="border:0; padding:0"><div class="grow"><strong>${esc(it.title)}</strong><div class="sub">${eachText(it.price)}</div>${meta}</div>${stepper(it.id, null, null, closed)}</div>${d}${limitNote(it)}</div>`;
   }
 
   function orderPage(id) {
@@ -283,6 +302,7 @@
     if (b.dataset.act === 'shopinc' || b.dataset.act === 'shopdec') { bumpShop(Number(b.dataset.shop), b.dataset.act === 'shopinc' ? 1 : -1); return route(); }
     if (b.dataset.act === 'whole') {                        // one of every part, kept together
       const f = findItem(Number(b.dataset.item));
+      if (f.item.members.some((m) => roomFor(f.item, m.name, null) < 1)) { SITE.toast(`“${f.item.title}” can't be claimed as a whole set — part of it has reached its purchase limit.`, true); return; }
       f.item.members.forEach((m) => bump(f.item.id, m.name, null, 1));
       together[f.item.id] = true; saveBasket(); return route();
     }
@@ -307,7 +327,7 @@
         lines.push({ itemId: id, parts: basket.filter((l) => l.itemId === id).map((l) => ({ member: l.member, qty: l.qty })), together: !!together[id] });
       }
       const r = await api('POST', '/api/claims', { handle, lines });
-      if (!r.ok) { if (r.status === 404 || ['order_closed', 'item_closed', 'sold_out'].includes(r.json?.code)) await load(); return basketPage(errText(r)); }
+      if (!r.ok) { if (r.status === 404 || ['order_closed', 'item_closed', 'sold_out', 'limit_reached'].includes(r.json?.code)) await load(); return basketPage(errText(r)); }
       store.set('sos_handle', handle);
       done = { handle: r.json.handle, lines: basket.slice(), total: total(), placements: r.json.placements || [] };
       basket = []; together = {}; saveBasket();

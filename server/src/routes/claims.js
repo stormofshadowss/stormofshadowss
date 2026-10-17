@@ -178,7 +178,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
   // owe starts and any credit they hold is applied. The person sees it in My orders like any other claim. No email is sent.
   app.post('/api/admin/claims/add', requireAdmin, wrap(async (req, res) => {
     const b = z.object({
-      handle: z.string().min(1).max(40), createHandle: z.boolean().optional(),
+      handle: z.string().min(1).max(40), createHandle: z.boolean().optional(), overrideLimit: z.boolean().optional(),          // overrideLimit: go past an item's purchase limit knowingly
       status: z.enum(['requested', 'confirmed']),
       pipeline: z.enum(BULK_STAGES).optional(),
       lines: z.array(z.object({
@@ -199,7 +199,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
       if (!existing) joinerId = (await conn.query('INSERT INTO joiners (instagram_handle) VALUES (?)', [handle]))[0].insertId;
       await lockJoiner(conn, joinerId);
       const ids = [], placements = [];
-      for (const line of b.lines) { const r = await placeItemLine(conn, { joinerId, line, asAdmin: true }); ids.push(...r.ids); placements.push(...r.placements); }
+      for (const line of b.lines) { const r = await placeItemLine(conn, { joinerId, line, asAdmin: true, overrideLimit: !!b.overrideLimit }); ids.push(...r.ids); placements.push(...r.placements); }
       let confirmed = [], skippedTbc = 0;
       if (b.status === 'confirmed') {
         const sec = await secureClaims(conn, { claimIds: ids }, req.account.id);

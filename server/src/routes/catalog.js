@@ -1,5 +1,6 @@
 import { requireNotLive } from '../lib/launch.js';
 import { todayUK, datePassed, dayOf, ukDate } from '../lib/closing.js';
+import { hasOptions } from '../lib/claim-create.js';
 import { cancelPlan, cancelNow } from '../lib/cancel-order.js';
 import { z } from 'zod';
 import { deletionPlan, deleteCatalog, itemsOfOrder } from '../lib/delete-catalog.js';
@@ -35,13 +36,22 @@ async function loadOrders(pool, whereSql, params, { admin }) {
   if (!orders.length) return [];
   const ids = orders.map((o) => o.id);
   const [items] = await pool.query(
-    `SELECT i.id, i.order_id, i.item_type, i.title, i.cancelled_at, i.description, i.price, i.price_tbc, i.payment_deadline, i.close_date, i.closed_by_hand, i.requires_full_set, p.name AS proxy_name, im.filename AS image_file, im.width AS image_w, im.height AS image_h
+    `SELECT i.id, i.order_id, i.item_type, i.title, i.cancelled_at, i.description, i.price, i.price_tbc, i.payment_deadline, i.close_date, i.closed_by_hand, i.requires_full_set, i.purchase_limit, i.limit_scope, p.name AS proxy_name, im.filename AS image_file, im.width AS image_w, im.height AS image_h
        FROM items i LEFT JOIN proxies p ON p.id = i.proxy_id LEFT JOIN images im ON im.id = i.image_id WHERE i.order_id IN (?) ${admin ? '' : 'AND i.cancelled_at IS NULL'} ORDER BY i.sort_order, i.id`, [ids]);
   const itemIds = items.map((i) => i.id);
   const [members] = itemIds.length ? await pool.query('SELECT item_id, name, price FROM item_members WHERE item_id IN (?) ORDER BY sort_order, id', [itemIds]) : [[]];
   const [variants] = itemIds.length ? await pool.query('SELECT item_id, label FROM item_variants WHERE item_id IN (?) ORDER BY sort_order, id', [itemIds]) : [[]];
   const [counts] = itemIds.length ? await pool.query("SELECT item_id, COUNT(*) AS n FROM claims WHERE item_id IN (?) AND status <> 'cancelled' GROUP BY item_id", [itemIds]) : [[]];
   const countOf = Object.fromEntries(counts.map((c) => [c.item_id, c.n]));
+  // for items whose purchase limit counts each version / member / size on its own: how many of each are claimed
+  const byOptionIds = items.filter((i) => i.purchase_limit && i.limit_scope === 'option' && hasOptions(i.item_type)).map((i) => i.id);
+  const [optCounts] = byOptionIds.length ? await pool.query("SELECT item_id, COALESCE(member_name, variant_label) AS opt, COUNT(*) AS n FROM claims WHERE item_id IN (?) AND status <> 'cancelled' GROUP BY item_id, opt", [byOptionIds]) : [[]];
+  const limitOf = (i, names) => {
+    if (!i.purchase_limit) return null;
+    const n = i.purchase_limit, left = (used) => Math.max(0, n - Number(used || 0));
+    if (i.limit_scope === 'option' && hasOptions(i.item_type)) return { n, scope: 'option', options: Object.fromEntries(names.map((nm) => { const used = Number(optCounts.find((o) => o.item_id === i.id && o.opt === nm)?.n || 0); return [nm, { used, left: left(used) }]; })) };
+    const used = countOf[i.id] || 0; return { n, scope: 'item', used, left: left(used) };
+  };
   const setItemIds = items.filter((i) => i.item_type === 'set').map((i) => i.id);
   const [partCounts] = setItemIds.length ? await pool.query("SELECT item_id, member_name, COUNT(*) AS n FROM claims WHERE item_id IN (?) AND set_id IS NOT NULL AND status <> 'cancelled' GROUP BY item_id, member_name", [setItemIds]) : [[]];
   const [setRows] = setItemIds.length ? await pool.query('SELECT id, item_id, set_number, admin_decision FROM item_sets WHERE item_id IN (?) ORDER BY set_number', [setItemIds]) : [[]];
@@ -67,6 +77,7 @@ async function loadOrders(pool, whereSql, params, { admin }) {
         requiresFullSet: !!i.requires_full_set, wholeSetPrice: parts.some((m) => m.price === null) ? null : Math.round(parts.reduce((s, m) => s + m.price, 0) * 100) / 100 } : {}),
       variants: variants.filter((v) => v.item_id === i.id).map((v) => v.label),
       claimed: countOf[i.id] || 0,
+      limit: limitOf(i, i.item_type === 'size' ? variants.filter((v) => v.item_id === i.id).map((v) => v.label) : parts.map((m) => m.name)),
       ...(admin ? { proxy: i.proxy_name || o.proxy_name, ownPaymentDeadline: i.payment_deadline } : {}),
       };
     }),
@@ -233,6 +244,7 @@ export function catalogRoutes(app, { pool, cfg }) {
       members: z.array(z.union([z.string().trim().min(1).max(80), z.object({ name: z.string().trim().min(1).max(80), price: money.optional() })])).max(30).optional(),
       requiresFullSet: z.boolean().optional(), variants: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
       sizeBucket: z.enum(['XS', 'S', 'M', 'L', 'XL']).optional(), paymentDeadline: date, closeDate: date, proxy: z.string().trim().max(80).nullable().optional(),
+      purchaseLimit: z.number().int().min(1).max(9999).nullable().optional(), limitScope: z.enum(['item', 'option']).optional(),
     }).parse(req.body);
     if (b.priceTbc && b.price !== undefined) throw bad('Either enter a price or tick "price to be confirmed" — not both.');
     if (!b.priceTbc && b.price === undefined) throw bad('Enter a price, or tick "price to be confirmed".');
@@ -248,8 +260,8 @@ export function catalogRoutes(app, { pool, cfg }) {
       checkItemCloseDate(b.closeDate, o.close_date);
       const proxyId = await proxyIdFor(conn, b.proxy);
       const [r] = await conn.query(
-        'INSERT INTO items (order_id, item_type, title, description, price, price_tbc, size_bucket, payment_deadline, close_date, proxy_id, requires_full_set) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-        [orderId, b.type, b.title, b.description || null, b.priceTbc ? 0 : b.price, b.priceTbc ? 1 : 0, b.sizeBucket || 'M', b.paymentDeadline || null, b.closeDate || null, proxyId, b.requiresFullSet ? 1 : 0]);
+        'INSERT INTO items (order_id, item_type, title, description, price, price_tbc, size_bucket, payment_deadline, close_date, proxy_id, requires_full_set, purchase_limit, limit_scope) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        [orderId, b.type, b.title, b.description || null, b.priceTbc ? 0 : b.price, b.priceTbc ? 1 : 0, b.sizeBucket || 'M', b.paymentDeadline || null, b.closeDate || null, proxyId, b.requiresFullSet ? 1 : 0, b.purchaseLimit || null, hasOptions(b.type) && b.limitScope === 'option' ? 'option' : 'item']);
       for (const [i, m] of parts.entries()) await conn.query('INSERT INTO item_members (item_id, name, price, sort_order) VALUES (?,?,?,?)', [r.insertId, m.name, m.price, i]);
       for (const [i, v] of (b.variants || []).entries()) await conn.query('INSERT INTO item_variants (item_id, label, sort_order) VALUES (?,?,?)', [r.insertId, v, i]);
       await audit(conn, req.account.id, 'item.create', 'item', r.insertId);
@@ -262,10 +274,18 @@ export function catalogRoutes(app, { pool, cfg }) {
   app.patch('/api/admin/items/:id', requireAdmin, wrap(async (req, res) => {
     const id = Number(req.params.id);
     let repriced = 0;
-    const b = z.object({ paymentDeadline: date, closeDate: date, closed: z.boolean().optional(), proxy: z.string().trim().max(80).nullable().optional(), price: money.optional(), priceTbc: z.boolean().optional(), title: z.string().trim().min(1).max(160).optional(), description: z.string().trim().max(2000).nullable().optional() }).parse(req.body);
+    const b = z.object({ paymentDeadline: date, closeDate: date, closed: z.boolean().optional(), proxy: z.string().trim().max(80).nullable().optional(), price: money.optional(), priceTbc: z.boolean().optional(), purchaseLimit: z.number().int().min(1).max(9999).nullable().optional(), limitScope: z.enum(['item', 'option']).optional(), title: z.string().trim().min(1).max(160).optional(), description: z.string().trim().max(2000).nullable().optional() }).parse(req.body);
     await withTx(pool, async (conn) => {
-      const [[it]] = await conn.query('SELECT i.id, i.price, i.price_tbc, i.close_date, go.close_date AS go_close_date FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id = ? FOR UPDATE', [id]);
+      const [[it]] = await conn.query('SELECT i.id, i.item_type, i.price, i.price_tbc, i.close_date, go.close_date AS go_close_date FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id = ? FOR UPDATE', [id]);
       if (!it) throw notFound('No such item');
+      // the purchase limit: a number (or null/blank = none) and what it counts. Lowering it never cancels anything already claimed — it only stops NEW claims.
+      if (b.purchaseLimit !== undefined || b.limitScope !== undefined) {
+        const sets = [], vals = [];
+        if (b.purchaseLimit !== undefined) { sets.push('purchase_limit = ?'); vals.push(b.purchaseLimit || null); }
+        if (b.limitScope !== undefined) { sets.push('limit_scope = ?'); vals.push(hasOptions(it.item_type) && b.limitScope === 'option' ? 'option' : 'item'); }
+        await conn.query(`UPDATE items SET ${sets.join(', ')} WHERE id = ?`, [...vals, id]);
+        await audit(conn, req.account.id, 'item.limit', 'item', id, { limit: b.purchaseLimit, scope: b.limitScope });
+      }
       if (b.closeDate !== undefined) { checkItemCloseDate(b.closeDate, it.go_close_date); await conn.query('UPDATE items SET close_date = ? WHERE id = ?', [b.closeDate, id]); }
       if (b.closed !== undefined) {
         await conn.query('UPDATE items SET closed_by_hand = ? WHERE id = ?', [b.closed ? 1 : 0, id]);
