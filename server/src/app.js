@@ -3,6 +3,7 @@ import { createNotifier } from './lib/notify.js';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import helmet from 'helmet';
+import { viewAs } from './lib/view-as.js';
 import rateLimit from 'express-rate-limit';
 import { ZodError } from 'zod';
 import { HttpError } from './errors.js';
@@ -47,6 +48,8 @@ export function createApp({ cfg, pool, mailer, extraRoutes = [] }) {
     next();
   });
 
+  app.use(viewAs(pool));                                                                         // an admin opening a person's dashboard, read-only (lib/view-as.js)
+
   const notifier = createNotifier({ pool, mailer, cfg });
   app.locals.notifier = notifier;
   const ctx = { cfg, pool, mailer, notifier };
@@ -62,6 +65,8 @@ export function createApp({ cfg, pool, mailer, extraRoutes = [] }) {
       "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; frame-ancestors 'none'");
     res.sendFile(path.join(PUBLIC_DIR, 'preview.html'));
   });
+  const selfFrame = helmet.contentSecurityPolicy({ directives: { defaultSrc: ["'self'"], scriptSrc: ["'self'"], styleSrc: ["'self'", "'unsafe-inline'"], imgSrc: ["'self'", 'data:'], connectSrc: ["'self'"], formAction: ["'self'"], frameAncestors: ["'self'"], baseUri: ["'self'"], objectSrc: ["'none'"], upgradeInsecureRequests: cfg.cookieSecure ? [] : null } });
+  app.get('/my.html', (req, res, next) => (req.account?.isAdmin && req.query.viewAs ? selfFrame(req, res, next) : next()));       // everyone else (and everything else) stays unframeable
   app.use(express.static(PUBLIC_DIR, { index: 'index.html', maxAge: '5m' }));
 
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));

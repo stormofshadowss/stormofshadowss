@@ -226,3 +226,9 @@ button.avatar-link:hover .avatar-ring { filter:brightness(1.08); }
 .dot.free { background:transparent; border-color:var(--accent); }
 .dot.lock { background:var(--sold); border-color:var(--sold); opacity:1; }           /* taken, in a set the GOM has secured — red, never green (green could read as "open") */
 .dot.gone { background:var(--soft); border-color:var(--soft); opacity:.55; }
+
+/* READ-ONLY "VIEW AS" (the GOM looking at a person's dashboard): a banner, and every control switched off except the ones that only change what is DRAWN (the handle switcher, folding an order open/closed). */
+.viewas-banner { position:sticky; top:0; z-index:60; padding:9px 14px; text-align:center; font-weight:700; font-size:.88rem; background:var(--warn-bg); color:var(--warn-ink); border-bottom:2px solid var(--warn-line); }
+.viewas #view button, .viewas #view input, .viewas #view select, .viewas #view textarea { pointer-events:none; opacity:.55; }
+.viewas #view #sw, .viewas #view [data-act="toggle-go"], .viewas #view [data-act="open-all-go"], .viewas #view [data-act="close-all-go"] { pointer-events:auto; opacity:1; }
+.viewas [data-act="logout"] { display:none; }

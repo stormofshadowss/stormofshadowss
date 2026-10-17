@@ -100,14 +100,51 @@
           <div><button type="submit" class="sm">Block</button></div></div><p class="msg" data-msg hidden></p></form></div>`;
   }
 
+  // ── Look up a person: what they owe and why (and, if they've signed in, their dashboard exactly as they see it — read-only) ──
+  let look = { q: '', matches: [], result: null, view: 'owe', error: '' };
+  const CAT = { initials: 'item', ems: 'EMS', customs: 'customs', doms: 'postage', packaging: 'packaging' };
+  const pill = (p) => ({ pending: '<span class="pill warn">waiting to be verified</span>', confirmed: '<span class="pill ok">verified</span>', rejected: '<span class="pill dim">rejected</span>', reversed: '<span class="pill err">failed after verified</span>' }[p.status] || '');
+  // under an amount: what it is made of, but only when it is more than one thing (item + EMS + customs…)
+  const breakdown = (i) => { const parts = Object.keys(CAT).filter((k) => i.owedBy[k] > 0.004); return parts.length > 1 ? `<div class="sub">${parts.map((k) => `${CAT[k]} ${money(i.owedBy[k])}`).join(' · ')}</div>` : ''; };
+  function lookupResult(r) {
+    const owe = look.view === 'owe' || !r.accountId;
+    const toggle = `<span role="group" aria-label="What to show" style="display:inline-flex; gap:6px"><button type="button" class="sm ${owe ? '' : 'secondary'}" data-act="due-view" data-view="owe" aria-pressed="${owe}">What they owe</button><button type="button" class="sm ${owe ? 'secondary' : ''}" data-act="due-view" data-view="dash" aria-pressed="${!owe}" ${r.accountId ? '' : 'disabled title="They haven\'t signed in yet, so there is no dashboard to show"'}>Their dashboard</button></span>`;
+    const head = `<div class="row" style="margin:14px 0 8px"><div><strong data-due-handle>@${esc(r.handle)}</strong>${r.many ? ` <span class="sub">${r.handles.map((h) => `@${esc(h.handle)}`).join(' · ')}</span>` : ''}${r.email ? ` <span class="sub">· ${esc(r.email)}</span>` : ' <span class="sub">· not signed in yet</span>'}</div>${toggle}</div>`;
+    if (!owe) return `${head}<iframe class="viewframe" data-due-frame title="@${esc(r.handle)}'s dashboard, read-only" src="/my.html?viewAs=${r.accountId}" loading="lazy" style="width:100%; height:78vh; border:1px solid var(--line); border-radius:14px; background:var(--page)"></iframe>
+      <p class="sub" style="margin:6px 0 0">Exactly what they see, and read-only — nothing you press there can change anything. <a href="/my.html?viewAs=${r.accountId}" target="_blank" rel="noopener">Open it in its own tab</a>.</p>`;
+    const items = r.items.length ? `<div class="scroll"><table class="grid" data-due-items><thead><tr><th>Item</th>${r.many ? '<th>Handle</th>' : ''}<th>Group order</th><th>Owes</th><th>Paid</th><th>Due</th></tr></thead><tbody>${r.items.map((i) => `<tr><td>${esc(i.label)}</td>${r.many ? `<td>@${esc(i.handle)}</td>` : ''}<td>${esc(i.order)}</td><td><strong>${money(i.owed)}</strong>${breakdown(i)}</td><td>${money(i.paid)}</td><td class="nowrap">${i.payBy ? fmtDate(i.payBy) : '—'}${i.overdue ? ` <span class="pill err">overdue ${i.daysLate} day${i.daysLate === 1 ? '' : 's'}</span>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '';
+    const handlesTable = r.many ? `<div class="scroll"><table class="grid" data-due-handles><thead><tr><th>Handle</th><th>Owes</th><th>Paid</th><th>Credit</th></tr></thead><tbody>${r.perHandle.map((h) => `<tr><td>@${esc(h.handle)}</td><td>${money(h.owed)}</td><td>${money(h.paid)}</td><td>${money(h.credit)}</td></tr>`).join('')}</tbody></table></div>` : '';
+    const pays = [...r.payments.waiting, ...r.payments.recent, ...r.payments.failed, ...r.payments.rejected].sort((a, b) => b.id - a.id);
+    const activity = pays.length || r.credit.recent.length ? `<details style="margin-top:10px"><summary>Recent payments and credit</summary>${pays.length ? `<div class="scroll"><table class="grid"><thead><tr><th>Sent</th>${r.many ? '<th>Handle</th>' : ''}<th>Amount</th><th>Method</th><th></th></tr></thead><tbody>${pays.map((p) => `<tr><td class="nowrap">${fmtDate(p.date)}</td>${r.many ? `<td>@${esc(p.handle)}</td>` : ''}<td>${money(p.amount)}</td><td>${esc(p.method)}${p.reference ? ` <span class="sub">${esc(p.reference)}</span>` : ''}</td><td>${pill(p)}${p.reason ? ` <span class="sub">${esc(p.reason)}</span>` : ''}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      ${r.credit.recent.length ? `<div class="scroll"><table class="grid"><thead><tr><th>Date</th>${r.many ? '<th>Handle</th>' : ''}<th>Credit</th><th>Change</th><th>Why</th></tr></thead><tbody>${r.credit.recent.map((l) => `<tr><td class="nowrap">${fmtDate(l.date)}</td>${r.many ? `<td>@${esc(l.handle)}</td>` : ''}<td>${esc(l.kind.replace('_', ' '))}</td><td>${l.effect >= 0 ? '+' : '−'}${money(Math.abs(l.effect))}</td><td class="sub">${esc(l.reason || '')}</td></tr>`).join('')}</tbody></table></div>` : ''}</details>` : '';
+    return `${head}<ul data-due-explanation style="margin:0 0 10px 18px">${r.explanation.map((l) => `<li style="margin:3px 0">${esc(l)}</li>`).join('')}</ul>${handlesTable}${items}${activity}`;
+  }
+  function lookupCard() {
+    return `<div class="card" id="lookupCard"><h2>Look up a person</h2><p class="sub" style="margin-top:0">See what someone owes and why — and, if they've signed in, their dashboard exactly as they see it (read-only).</p>
+      <form data-form="due-lookup" class="btn-row" style="margin:0"><input id="dueSearch" name="handle" list="dueHandles" placeholder="@handle" value="${esc(look.q)}" autocomplete="off" aria-label="Handle to look up"><datalist id="dueHandles">${look.matches.map((h) => `<option value="${esc(h)}">`).join('')}</datalist><button type="submit" class="sm">Look up</button></form>
+      <p class="msg err" data-due-error style="margin-top:8px" ${look.error ? '' : 'hidden'}>${esc(look.error)}</p>${look.result ? lookupResult(look.result) : ''}</div>`;
+  }
+  async function lookupGo() {
+    const handle = String($('#dueSearch', root).value || look.q).trim().replace(/^@+/, '').toLowerCase(); look.q = handle;
+    if (!handle) { look.error = 'Enter an Instagram handle.'; look.result = null; return draw(); }
+    const r = await api('GET', `/api/admin/people/${encodeURIComponent(handle)}/due`);
+    if (!r.ok) { look.error = r.status === 404 ? `No one on the site has the handle @${handle}.` : errText(r); look.result = null; return draw(); }
+    look.error = ''; look.result = r.json; look.view = 'owe'; draw();
+  }
+  function dueInput(e) {
+    look.q = e.target.value; clearTimeout(root._due);
+    root._due = setTimeout(async () => { const h = look.q.trim().replace(/^@+/, ''); if (!h) { look.matches = []; return; } const r = await api('GET', `/api/admin/joiners/lookup?q=${encodeURIComponent(h)}`); look.matches = r.json?.matches || []; const dl = $('#dueHandles', root); if (dl) dl.innerHTML = look.matches.map((m) => `<option value="${esc(m)}">`).join(''); }, 160);
+  }
+
   function draw() {
     const typed = $('#inviteMsg', root); if (typed) inv.template = typed.value;                    // keep a message you've edited when the page redraws
-    root.innerHTML = `<h1 style="margin:18px 0 10px">People</h1>${requestsCard()}${invitesCard()}${linksCard()}${flaggedCard()}`;
+    root.innerHTML = `<h1 style="margin:18px 0 10px">People</h1>${lookupCard()}${requestsCard()}${invitesCard()}${linksCard()}${flaggedCard()}`;
   }
 
   async function onClick(e) {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const act = b.dataset.act;
+    if (act === 'due-view') { if (b.dataset.view === 'dash' && !look.result?.accountId) return; look.view = b.dataset.view; return draw(); }
     if (act === 'approve' || act === 'decline') {
       const r = await api('POST', `/api/admin/handle-requests/${b.dataset.id}/${act}`, {});
       if (!r.ok) return GOM.toast(errText(r), true);
@@ -138,7 +175,8 @@
   }
 
   async function onSubmit(e) {
-    const form = e.target; if (form.dataset.form !== 'block') return;
+    const form = e.target; if (form.dataset.form === 'due-lookup') { e.preventDefault(); return lookupGo(); }
+    if (form.dataset.form !== 'block') return;
     e.preventDefault();
     const m = $('[data-msg]', form), handle = form.elements.handle.value.trim(), reason = form.elements.reason.value.trim();
     const say = (t) => { m.textContent = t; m.className = 'msg'; m.hidden = false; };
@@ -165,7 +203,7 @@
     badgeCount: async () => ((await api('GET', '/api/admin/handle-requests')).json?.requests || []).length,
     async render(el) {
       await render(el); el.onclick = onClick; el.onsubmit = onSubmit; el.onchange = onChange;
-      el.oninput = (e) => { if (e.target.id !== 'inviteSearch') return; inv.q = e.target.value.trim(); clearTimeout(el._t); el._t = setTimeout(async () => { const pos = e.target.selectionStart; await render(el); const s = $('#inviteSearch', el); s.focus(); s.setSelectionRange(pos, pos); }, 150); };
+      el.oninput = (e) => { if (e.target.id === 'dueSearch') return dueInput(e); if (e.target.id !== 'inviteSearch') return; inv.q = e.target.value.trim(); clearTimeout(el._t); el._t = setTimeout(async () => { const pos = e.target.selectionStart; await render(el); const s = $('#inviteSearch', el); s.focus(); s.setSelectionRange(pos, pos); }, 150); };
     },
   });
 })();

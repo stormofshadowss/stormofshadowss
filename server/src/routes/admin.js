@@ -10,7 +10,7 @@ import { combineParcels, uncombineParcel, withdrawInvitation, feesSet, MAX_PEOPL
 import { normalizeHandle, isValidHandle } from '../lib/handles.js';
 import { round2 } from '../lib/money.js';
 import { storageCase } from '../lib/storage.js';
-import { reversePayments, DryRunDone } from '../lib/payment-reverse.js';
+import { reversePayments, reapplyPayments, DryRunDone } from '../lib/payment-reverse.js';
 
 export function adminRoutes(app, { pool, notifier }) {
   const admin = [requireAdmin];
@@ -85,6 +85,23 @@ export function adminRoutes(app, { pool, notifier }) {
         const full = { ...result, rejectedParts: waiting.length };
         if (b.dryRun) throw new DryRunDone(full);
         return full;
+      });
+      res.json({ ok: true, ...out });
+    } catch (e) { if (e instanceof DryRunDone) return res.json({ ok: true, dryRun: true, ...e.result }); throw e; }
+  }));
+
+  // RE-APPLY a verified payment: put the same money where the due-first order would send it now (see lib/payment-reverse.js). {dryRun:true} shows what would move, then rolls back. For a combined payment this covers every verified part.
+  app.post('/api/admin/payments/:id/reapply', admin, wrap(async (req, res) => {
+    const b = z.object({ dryRun: z.boolean().optional() }).parse(req.body || {}); const id = Number(req.params.id);
+    try {
+      const out = await withTx(pool, async (conn) => {
+        const [[p]] = await conn.query('SELECT id, batch_key FROM payments WHERE id = ?', [id]); if (!p) throw notFound('No such payment');
+        let ids = [id];
+        if (p.batch_key) { const [rows] = await conn.query("SELECT id FROM payments WHERE batch_key = ? AND status = 'confirmed' ORDER BY id", [p.batch_key]); if (rows.length) ids = rows.map((r) => r.id); }
+        const result = await reapplyPayments(conn, ids);
+        if (result.changed && !b.dryRun) await audit(conn, req.account.id, 'payment.reapply', 'payment', id, { ids, moved: result.movedTotal, lines: result.moves.map((m) => ({ claimId: m.claimId, category: m.category, change: m.change })) });
+        if (b.dryRun) throw new DryRunDone(result);
+        return result;
       });
       res.json({ ok: true, ...out });
     } catch (e) { if (e instanceof DryRunDone) return res.json({ ok: true, dryRun: true, ...e.result }); throw e; }

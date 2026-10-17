@@ -1,5 +1,5 @@
 import { conflict, notFound } from '../errors.js';
-import { lockJoiner, siblingsOf, creditBalance, addLedger, sweepCredit, setPaid } from './ledger.js';
+import { lockJoiner, siblingsOf, creditBalance, addLedger, sweepCredit, setPaid, distribute } from './ledger.js';
 import { round2 } from './money.js';
 
 // A payment the GOM VERIFIED can still fail days later (a bank transfer that bounces). Marking it failed puts things back as they were before it arrived:
@@ -77,4 +77,49 @@ async function unreadyShopClaim(conn, a) {
   const [[inParcel]] = await conn.query('SELECT COUNT(*) AS n FROM parcel_items WHERE claim_id = ?', [a.claimId ?? a.claim_id]);
   if (inParcel.n) return;
   await conn.query("UPDATE claims SET pipeline = 'awaiting fulfillment', ready_to_pack_date = NULL WHERE id = ? AND leftover_item_id IS NOT NULL AND pipeline = 'ready to pack / on hand'", [a.claimId ?? a.claim_id]);
+}
+
+// RE-APPLY a verified payment: it paid the wrong items (before payments were ordered by due date, one could clear a NEW item while older ones stayed overdue). This undoes where its money went and puts
+// the SAME money where it would go now — what is due first. What the person owes IN TOTAL does not change; only which lines are marked paid. Credit or tips the payment made are left alone.
+// If part of what it paid has since been changed (a cost edited, a claim cancelled) it refuses rather than guess. Returns exactly which lines lose and gain money, so the GOM can see it first.
+export async function reapplyPayments(conn, paymentIds) {
+  const ids = [...new Set(paymentIds)].sort((a, b) => a - b);
+  const [owners] = await conn.query('SELECT id, joiner_id FROM payments WHERE id IN (?)', [ids]);
+  if (owners.length !== ids.length) throw notFound('No such payment');
+  for (const jid of [...new Set(owners.map((r) => r.joiner_id))].sort((a, b) => a - b)) await lockJoiner(conn, jid);
+  const [pays] = await conn.query('SELECT id, joiner_id, order_id, amount, status FROM payments WHERE id IN (?) ORDER BY id FOR UPDATE', [ids]);
+  for (const p of pays) if (p.status !== 'confirmed') throw conflict('Only a payment you have already verified can be re-applied', 'not_confirmed');
+  const key = (a) => `${a.claim_id}|${a.category}`, gone = new Map(), came = new Map(), info = new Map();
+  for (const p of pays) {
+    await conn.query('SAVEPOINT reapply_one');
+    const [allocs] = await conn.query(
+      'SELECT pa.claim_id, pa.category, pa.amount, c.label, c.leftover_item_id, j.instagram_handle AS handle FROM payment_allocations pa JOIN claims c ON c.id = pa.claim_id JOIN joiners j ON j.id = c.joiner_id WHERE pa.payment_id = ? ORDER BY pa.id', [p.id]);
+    if (!allocs.length) { await conn.query('RELEASE SAVEPOINT reapply_one'); continue; }
+    let applied = 0; const g = new Map(), c = new Map(), inf = new Map();
+    for (const a of allocs) {                                                                                         // 1. take it back off the lines it paid
+      const [[cc]] = await conn.query('SELECT cost, paid FROM claim_costs WHERE claim_id = ? AND category = ? FOR UPDATE', [a.claim_id, a.category]);
+      if (!cc || Number(cc.paid) + 0.004 < Number(a.amount)) throw conflict("Part of what this payment paid has since been changed (a cost was edited, or a claim cancelled), so it can't be re-applied automatically.", 'cannot_reapply');
+      await setPaid(conn, a.claim_id, a.category, round2(Number(cc.paid) - Number(a.amount)), cc.cost);
+      g.set(key(a), round2((g.get(key(a)) || 0) + Number(a.amount))); inf.set(key(a), { handle: a.handle, claimId: a.claim_id, label: a.label, category: a.category, shop: a.leftover_item_id });
+      applied = round2(applied + Number(a.amount));
+    }
+    await conn.query('DELETE FROM payment_allocations WHERE payment_id = ?', [p.id]);
+    const left = await distribute(conn, p.joiner_id, p.order_id, applied, p.id);                                       // 2. put the same money where it goes NOW
+    if (left > 0.004) throw conflict("Part of what this payment paid can no longer be placed on anything they owe, so it can't be re-applied automatically.", 'cannot_reapply');
+    const [now] = await conn.query('SELECT pa.claim_id, pa.category, pa.amount, c.label, c.leftover_item_id, j.instagram_handle AS handle FROM payment_allocations pa JOIN claims c ON c.id = pa.claim_id JOIN joiners j ON j.id = c.joiner_id WHERE pa.payment_id = ?', [p.id]);
+    for (const a of now) { c.set(key(a), round2((c.get(key(a)) || 0) + Number(a.amount))); inf.set(key(a), { handle: a.handle, claimId: a.claim_id, label: a.label, category: a.category, shop: a.leftover_item_id }); }
+    const same = g.size === c.size && [...g].every(([k, v]) => Math.abs((c.get(k) || 0) - v) < 0.005);
+    if (same) { await conn.query('ROLLBACK TO SAVEPOINT reapply_one'); await conn.query('RELEASE SAVEPOINT reapply_one'); continue; }          // already where it belongs: leave every row exactly as it was
+    await conn.query('RELEASE SAVEPOINT reapply_one');
+    for (const [k, v] of g) gone.set(k, round2((gone.get(k) || 0) + v)); for (const [k, v] of c) came.set(k, round2((came.get(k) || 0) + v)); for (const [k, v] of inf) info.set(k, v);
+  }
+  const moves = [];
+  for (const k of new Set([...gone.keys(), ...came.keys()])) {
+    const delta = round2((came.get(k) || 0) - (gone.get(k) || 0)); if (Math.abs(delta) < 0.005) continue;
+    const i = info.get(k); moves.push({ ...i, change: delta });
+    if (delta < 0 && i.shop) { const [[cc]] = await conn.query("SELECT cost, paid FROM claim_costs WHERE claim_id = ? AND category = 'initials'", [i.claimId]); if (cc && Number(cc.paid) + 0.004 < Number(cc.cost)) await unreadyShopClaim(conn, { claim_id: i.claimId, leftover_item_id: i.shop }); }
+  }
+  moves.sort((a, b) => (a.change < 0 ? 0 : 1) - (b.change < 0 ? 0 : 1) || (a.change < 0 ? a.change - b.change : a.claimId - b.claimId));          // what loses money first, then what gains (in the order it is paid)
+  const total = round2(pays.reduce((n, p) => n + Number(p.amount), 0));
+  return { payments: pays.map((p) => ({ id: p.id, amount: Number(p.amount) })), total, changed: moves.length > 0, movedTotal: round2(moves.filter((m) => m.change > 0).reduce((n, m) => n + m.change, 0)), moves: moves.map(({ shop, ...m }) => m) };
 }

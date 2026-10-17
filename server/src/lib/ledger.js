@@ -26,17 +26,39 @@ export async function creditBalance(conn, joinerId) {
 
 // Cost lines still owing on a joiner's confirmed claims: oldest claim first,
 // Initials -> EMS -> Customs -> Doms. Locked for the rest of the transaction.
+// WHAT A PAYMENT (OR CREDIT) PAYS OFF, in this order: what is DUE FIRST — the claim with the earliest pay-by date (so anything overdue comes before anything newer, whatever order the claims were
+// created in: imports and claims the GOM adds later get higher claim numbers than things claimed more recently); a claim with no due date comes last. Ties go to the older claim, and within a
+// claim it's item cost, then EMS, customs, postage, packaging. The lines are read first (to learn the due dates) and then LOCKED claim-by-claim, exactly as before, so concurrent flows still queue up
+// the same way — the items and group orders are only read, never locked here.
+const CAT_ORDER = ['initials', 'ems', 'customs', 'doms', 'packaging'];
+const paidFirst = (due) => (x, y) => { const dx = due(x), dy = due(y); return (dx === null) - (dy === null) || (dx < dy ? -1 : dx > dy ? 1 : 0) || x.claim_id - y.claim_id || CAT_ORDER.indexOf(x.category) - CAT_ORDER.indexOf(y.category); };
 export async function owingLines(conn, joinerId, orderId = null) {
   const params = [joinerId];
   let scope = '';
   if (orderId) { scope = 'AND c.order_id = ?'; params.push(orderId); }
+  const [seen] = await conn.query(
+    `SELECT DISTINCT cc.claim_id, COALESCE(c.pay_by, i.payment_deadline, go.payment_deadline) AS due
+       FROM claim_costs cc JOIN claims c ON c.id = cc.claim_id LEFT JOIN items i ON i.id = c.item_id LEFT JOIN group_orders go ON go.id = c.order_id
+      WHERE c.joiner_id = ? AND c.status = 'confirmed' ${scope} AND cc.cost > cc.paid`, params);
+  if (!seen.length) return [];
+  const due = new Map(seen.map((r) => [r.claim_id, r.due ? String(r.due).slice(0, 10) : null]));
   const [rows] = await conn.query(
-    `SELECT cc.claim_id, cc.category, cc.cost, cc.paid
-       FROM claim_costs cc JOIN claims c ON c.id = cc.claim_id
-      WHERE c.joiner_id = ? AND c.status = 'confirmed' ${scope} AND cc.cost > cc.paid
-      ORDER BY c.id, FIELD(cc.category, 'initials', 'ems', 'customs', 'doms', 'packaging')
-      FOR UPDATE`, params);
-  return rows;
+    `SELECT cc.claim_id, cc.category, cc.cost, cc.paid FROM claim_costs cc JOIN claims c ON c.id = cc.claim_id
+      WHERE cc.claim_id IN (?) AND c.status = 'confirmed' AND cc.cost > cc.paid
+      ORDER BY cc.claim_id, FIELD(cc.category, 'initials', 'ems', 'customs', 'doms', 'packaging') FOR UPDATE`, [[...due.keys()]]);
+  return rows.sort(paidFirst((r) => due.get(r.claim_id)));
+}
+
+// The same lines for SEVERAL handles together (a read — nothing is locked), in the order they would be paid: used to split ONE combined payment across a person's handles, so that what is
+// overdue on any handle is cleared before anything newer on another.
+export async function owingPlan(conn, joinerIds, orderId = null) {
+  const params = [joinerIds]; let scope = '';
+  if (orderId) { scope = 'AND c.order_id = ?'; params.push(orderId); }
+  const [rows] = await conn.query(
+    `SELECT cc.claim_id, c.joiner_id AS joinerId, cc.category, cc.cost, cc.paid, COALESCE(c.pay_by, i.payment_deadline, go.payment_deadline) AS due
+       FROM claim_costs cc JOIN claims c ON c.id = cc.claim_id LEFT JOIN items i ON i.id = c.item_id LEFT JOIN group_orders go ON go.id = c.order_id
+      WHERE c.joiner_id IN (?) AND c.status = 'confirmed' ${scope} AND cc.cost > cc.paid`, params);
+  return rows.map((r) => ({ ...r, cost: Number(r.cost), paid: Number(r.paid), due: r.due ? String(r.due).slice(0, 10) : null })).sort(paidFirst((r) => r.due));
 }
 
 export async function owedInScope(conn, joinerId, orderId = null) {

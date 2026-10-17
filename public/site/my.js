@@ -30,6 +30,7 @@
     if (!m.ok) { S.me = null; return false; }
     S.me = m.json;
     const handles = S.me.handles.map((h) => h.handle); S.handles = handles; S.primary = handles[0] || null;
+    if (SITE.viewAs) { const b = $('.viewas-banner'); if (b) b.textContent = `Read-only view of ${S.me.account.email}${handles.length ? ` (${handles.map((h) => `@${h}`).join(', ')})` : ''} — exactly what they see. Nothing here can be changed.`; }
     if (handles.length > 1) { if (!S.handle || (S.handle !== 'all' && !handles.includes(S.handle))) S.handle = 'all'; }      // several handles: all together, until they choose one
     else S.handle = handles[0] || null;
     S.summary = S.address = null; S.parcels = []; S.invites = []; S.fixed = { fixed: [], requests: [] };
@@ -74,7 +75,7 @@
     const tile = (label, n, cls = '') => `<div class="tile ${cls}"><div class="sub" style="color:inherit">${label}</div><div class="n">${money(n)}</div></div>`;
     const card = (href, title, hint) => `<a class="gocard" href="${href}"><strong>${title}</strong><span class="sub">${hint}</span></a>`;
     const settingsCard = card('#/settings', 'My settings', m.pending.length ? `${m.pending.length} handle${m.pending.length === 1 ? '' : 's'} waiting for the GOM` : 'handles, email & preferences');
-    view.innerHTML = `<div class="row" style="margin:18px 0 8px"><h1 style="margin:0">My orders</h1><span class="muted">${handles.length === 1 ? `<strong>@${esc(handles[0])}</strong> · ` : ''}${esc(m.account.email)} · <a href="#" data-act="logout">Sign out</a></span></div>
+    view.innerHTML = `<div class="row" style="margin:18px 0 8px"><h1 style="margin:0">My orders</h1><span class="muted">${handles.length === 1 ? `<strong>@${esc(handles[0])}</strong> · ` : ''}${esc(m.account.email)}${SITE.viewAs ? '' : ' · <a href="#" data-act="logout">Sign out</a>'}</span></div>
       ${handles.length > 1 ? `<div class="card"><label for="sw">Viewing</label><select id="sw" data-act="switch"><option value="all" ${S.handle === 'all' ? 'selected' : ''}>All my handles</option>${handles.map((h) => `<option value="${esc(h)}" ${h === S.handle ? 'selected' : ''}>@${esc(h)}</option>`).join('')}</select></div>` : ''}
       ${late.length ? `<div class="card overdue-notice" data-overdue-notice role="alert"><strong>You have overdue payments</strong><div>${money(lateTotal)} is overdue across ${late.length} item${late.length === 1 ? '' : 's'} (${lateGos.slice(0, 3).map(esc).join(', ')}${lateGos.length > 3 ? ` and ${lateGos.length - 3} more` : ''}).</div><div class="btn-row" style="margin-top:10px"><a class="pillbtn" href="#/pay">Pay now</a><a class="pillbtn alt" href="#/ongoing">See which items</a></div></div>` : ''}
       ${S.invites.length ? `<div class="card" data-invite-notice style="background:var(--paper)"><strong>${S.invites.length === 1 ? `@${esc(S.invites[0].fromHandle)} has asked` : `${S.invites.length} people have asked`} to ship a parcel together with yours</strong><div class="sub">One parcel, one address — you choose which of your items go in. Nothing happens unless you say yes.</div><a class="pillbtn" href="#/ship" style="margin-top:8px">Have a look</a></div>` : ''}

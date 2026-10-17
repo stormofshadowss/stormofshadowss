@@ -10,7 +10,19 @@
   SITE.views = {};   // joiner sub-pages register themselves here (pay, address, ship, …)
   SITE.normalizeHandle = (v) => String(v || '').trim().toLowerCase().replace(/^@/, '');
 
+  // READ-ONLY "VIEW AS" (the GOM looking at a person's dashboard from People → look up): /my.html?viewAs=<account>. Reads of /api/me and /api/my/… go through the GOM-only view-as route (the real
+  // joiner endpoints, as that person); anything that would CHANGE something is refused right here (and again by the server).
+  SITE.viewAs = (() => { const v = new URLSearchParams(location.search).get('viewAs'); return /^\d+$/.test(v || '') ? Number(v) : null; })();
+  if (SITE.viewAs) {
+    document.documentElement.classList.add('viewas');
+    const banner = () => { const b = document.createElement('div'); b.className = 'viewas-banner'; b.setAttribute('role', 'status'); b.textContent = "Read-only view — you're seeing this person's dashboard exactly as they see it. Nothing here can be changed."; document.body.prepend(b); };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', banner); else banner();
+  }
   SITE.api = async (method, path, body) => {
+    if (SITE.viewAs) {
+      if (method !== 'GET') return { ok: false, status: 403, json: { error: 'This is a read-only view — nothing can be changed from here.', code: 'read_only' } };
+      if (/^\/api\/(me|my)(\/|\?|$)/.test(path)) path = path.replace(/^\/api\//, `/api/admin/view-as/${SITE.viewAs}/`);
+    }
     const res = await fetch(path, {
       method,
       headers: { 'X-Requested-With': 'sos', ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },

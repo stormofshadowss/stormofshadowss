@@ -5,6 +5,7 @@
   let methodsOpen = null;            // null = decide from the data (open only when there are no methods yet); true/false once you've opened or saved it
   const filter = { status: 'pending', q: '' };
   let ledgerHandle = '';
+  let reapplying = null;             // { id, plan, busy } — the "Re-apply…" panel that is open (a preview: nothing has changed yet)
   let reversing = null;              // { id, plan, reason, busy } — the "Payment failed…" panel that is open (the plan is a preview: nothing has changed yet)
 
   const when = (iso) => `${fmtDate((iso || '').slice(0, 10))} ${(iso || '').slice(11, 16)}`;
@@ -43,10 +44,22 @@
       <td class="nowrap"><strong>${money(p.amount)}</strong></td><td>${esc(p.method)}</td>
       <td>${p.reference ? esc(p.reference) : '<span class="sub">no reference</span>'}<div class="sub">${p.payerName ? esc(p.payerName) + ' ' : ''}${name}</div></td><td>${extra}</td>
       <td class="nowrap">${p.status === 'pending' ? `<button class="sm" data-act="verify" data-id="${p.id}">Verify</button> <button class="sm secondary" data-act="reject" data-id="${p.id}">Reject</button>`
-        : p.status === 'confirmed' ? `<span class="pill ok">confirmed</span> <button class="sm secondary danger" data-act="reverse" data-id="${p.id}" title="It was verified, but the money never arrived (e.g. a bank transfer that bounced)">Payment failed…</button>`
+        : p.status === 'confirmed' ? `<span class="pill ok">confirmed</span> <button class="sm secondary danger" data-act="reverse" data-id="${p.id}" title="It was verified, but the money never arrived (e.g. a bank transfer that bounced)">Payment failed…</button> <button class="sm secondary" data-act="reapply" data-id="${p.id}" title="Put this payment's money on what is due first (overdue before newer items)">Re-apply…</button>`
         : p.status === 'reversed' ? `<span class="pill err" data-reversed>failed after it was received</span><div class="sub">${when(p.reversedAt)}${p.reverseReason ? ` · ${esc(p.reverseReason)}` : ''}</div>`
         : `<span class="pill dim">${p.status}</span>`}</td></tr>`;
   }
+  // The "Re-apply…" panel: where the money would move to, before anything does
+  const WHAT = { initials: 'item cost', ems: 'EMS', customs: 'customs', doms: 'postage', packaging: 'packaging' };
+  function reapplyPanel() {
+    const r = reapplying, plan = r?.plan, cell = (c) => `<tr data-reapply-panel><td colspan="8"><div class="card" style="margin:0; border:2px solid var(--accent)">${c}</div></td></tr>`;
+    if (!plan) return cell('<p class="sub" style="margin:0">Checking where this payment would go…</p>');
+    if (!plan.changed) return cell(`<strong>Nothing to move</strong><p style="margin:6px 0 8px">This ${money(plan.total)} payment is already on what is due first.</p><div class="btn-row"><button class="sm secondary" data-act="reapply-cancel">Close</button></div>`);
+    const row = (m) => `<li>${esc(m.label)} <span class="sub">@${esc(m.handle)} · ${esc(WHAT[m.category] || m.category)}</span> — ${m.change < 0 ? `<strong>${money(-m.change)}</strong> no longer counted as paid (owed again)` : `<strong>${money(m.change)}</strong> counted as paid`}</li>`;
+    return cell(`<strong>Re-apply this ${money(plan.total)} payment</strong><p style="margin:6px 0 4px">It would move <strong>${money(plan.movedTotal)}</strong> so it pays what is due first:</p><ul style="margin:0 0 8px 18px" data-reapply-moves>${plan.moves.map(row).join('')}</ul>
+      <p class="sub" style="margin:0 0 8px">What they owe <strong>in total</strong> does not change — only which items count as paid. The payment itself stays as it is, and no email is sent.</p>
+      <p class="msg err" data-reapply-error hidden></p><div class="btn-row"><button class="sm" data-act="reapply-go" ${r.busy ? 'disabled' : ''}>${r.busy ? 'Working…' : 'Re-apply'}</button><button class="sm secondary" data-act="reapply-cancel">Cancel</button></div>`);
+  }
+
   // The "Payment failed…" panel: exactly what would change, before anything does
   function reversePanel() {
     const r = reversing, plan = r?.plan;
@@ -77,16 +90,16 @@
       <td>${over ? `<strong>${money(over.overpayAmount)}</strong> extra → <span class="pill ${over.overpayChoice === 'tip' ? 'ok' : ''}">${over.overpayChoice === 'tip' ? 'tip' : 'credit'}</span>${over.overpayNote ? `<div class="sub">“${esc(over.overpayNote)}”</div>` : ''}` : '—'}</td>
       <td class="nowrap">${pending.length ? `<button class="sm" data-act="verify-batch" data-key="${esc(first.batchKey)}">Verify all${pending.length < rows.length ? ` (${pending.length} left)` : ''}</button> <button class="sm secondary" data-act="reject-batch" data-key="${esc(first.batchKey)}">Reject all</button>`
         : status === 'reversed' ? `<span class="pill err" data-reversed>failed after it was received</span><div class="sub">${when(rows[0].reversedAt)}${rows[0].reverseReason ? ` · ${esc(rows[0].reverseReason)}` : ''}</div>`
-        : `<span class="pill ${status === 'confirmed' ? 'ok' : 'dim'}">${status}</span>${rows.some((p) => p.status === 'confirmed') ? ` <button class="sm secondary danger" data-act="reverse" data-id="${rows.find((p) => p.status === 'confirmed').id}" title="It was verified, but the money never arrived">Payment failed…</button>` : ''}`}</td></tr>`;
+        : `<span class="pill ${status === 'confirmed' ? 'ok' : 'dim'}">${status}</span>${rows.some((p) => p.status === 'confirmed') ? ` <button class="sm secondary danger" data-act="reverse" data-id="${rows.find((p) => p.status === 'confirmed').id}" title="It was verified, but the money never arrived">Payment failed…</button> <button class="sm secondary" data-act="reapply" data-id="${rows.find((p) => p.status === 'confirmed').id}" title="Put this payment's money on what is due first (overdue before newer items)">Re-apply…</button>` : ''}`}</td></tr>`;
   }
   // rows in the order shown, with each combined payment's rows gathered into one entry at the place its first row appears
   function lines(list) {
     const seen = new Set(), out = [];
     for (const p of list) {
-      if (!p.batchKey) { out.push(paymentRow(p) + (reversing && reversing.id === p.id ? reversePanel() : '')); continue; }
+      if (!p.batchKey) { out.push(paymentRow(p) + (reversing && reversing.id === p.id ? reversePanel() : '') + (reapplying && reapplying.id === p.id ? reapplyPanel() : '')); continue; }
       if (seen.has(p.batchKey)) continue; seen.add(p.batchKey);
       const rows = list.filter((x) => x.batchKey === p.batchKey).sort((x, y) => x.id - y.id);
-      out.push((rows.length > 1 ? batchRow(rows) : paymentRow(p)) + (reversing && rows.some((x) => x.id === reversing.id) ? reversePanel() : ''));
+      out.push((rows.length > 1 ? batchRow(rows) : paymentRow(p)) + (reversing && rows.some((x) => x.id === reversing.id) ? reversePanel() : '') + (reapplying && rows.some((x) => x.id === reapplying.id) ? reapplyPanel() : ''));
     }
     return out;
   }
@@ -130,8 +143,25 @@
     if (!b) return;
     const p = payments.find((x) => x.id === Number(b.dataset.id));
     switch (b.dataset.act) {
+      case 'reapply': {
+        reversing = null; reapplying = { id: Number(b.dataset.id), plan: null, busy: false }; draw();
+        const r = await api('POST', `/api/admin/payments/${reapplying.id}/reapply`, { dryRun: true });
+        if (!r.ok) { reapplying = null; draw(); return GOM.toast(errText(r), true); }
+        if (reapplying) { reapplying.plan = r.json; draw(); $('[data-reapply-panel]', root)?.scrollIntoView?.({ block: 'center' }); }
+        break;
+      }
+      case 'reapply-cancel': reapplying = null; draw(); break;
+      case 'reapply-go': {
+        if (!reapplying?.plan?.changed || reapplying.busy) return;
+        const keep = reapplying; keep.busy = true; draw();
+        const r = await api('POST', `/api/admin/payments/${keep.id}/reapply`, {});
+        if (!r.ok) { keep.busy = false; draw(); const m = $('[data-reapply-error]', root); if (m) { m.textContent = errText(r); m.hidden = false; } return; }
+        reapplying = null; await render(root);
+        GOM.toast(`Re-applied: ${money(r.json.movedTotal)} now pays what was due first.`);
+        break;
+      }
       case 'reverse': {
-        reversing = { id: Number(b.dataset.id), plan: null, reason: '', busy: false }; draw();
+        reapplying = null; reversing = { id: Number(b.dataset.id), plan: null, reason: '', busy: false }; draw();
         const r = await api('POST', `/api/admin/payments/${reversing.id}/reverse`, { dryRun: true });
         if (!r.ok) { reversing = null; draw(); return GOM.toast(errText(r), true); }
         if (reversing) { reversing.plan = r.json; draw(); $('[data-reverse-panel]', root)?.scrollIntoView?.({ block: 'center' }); }
@@ -149,7 +179,7 @@
       }
       case 'verify-batch': {
         const rows = payments.filter((x) => x.batchKey === b.dataset.key && x.status === 'pending').sort((x, y) => x.id - y.id), total = rows.reduce((n, x) => n + Number(x.amount), 0);
-        const ok = await GOM.confirm(`Mark the ${money(total)} payment as received?\n\nIt is ONE transfer covering ${rows.length} of this person's handles, split as: ${rows.map((x) => `@${x.handle} ${money(x.amount)}`).join(', ')}.\n\nEach part is applied to what that handle owes (item cost first, then EMS, customs, postage).${rows.some((x) => x.overpayAmount) ? `\n\nThey paid ${money(rows.find((x) => x.overpayAmount).overpayAmount)} extra and chose for it to be ${rows.find((x) => x.overpayAmount).overpayChoice === 'tip' ? 'a tip' : 'credit'}.` : ''}`, { ok: 'Mark all as received', cancel: 'Not yet' });
+        const ok = await GOM.confirm(`Mark the ${money(total)} payment as received?\n\nIt is ONE transfer covering ${rows.length} of this person's handles, split as: ${rows.map((x) => `@${x.handle} ${money(x.amount)}`).join(', ')}.\n\nEach part is applied to what that handle owes, whatever is due first (overdue before newer items); within an item: item cost, then EMS, customs, postage, packaging.${rows.some((x) => x.overpayAmount) ? `\n\nThey paid ${money(rows.find((x) => x.overpayAmount).overpayAmount)} extra and chose for it to be ${rows.find((x) => x.overpayAmount).overpayChoice === 'tip' ? 'a tip' : 'credit'}.` : ''}`, { ok: 'Mark all as received', cancel: 'Not yet' });
         if (!ok) return;
         const r = await api('POST', `/api/admin/payments/batch/${encodeURIComponent(b.dataset.key)}/verify`, {});
         await render(root); GOM.refreshBadges();
@@ -168,7 +198,7 @@
       case 'add-method': $('#methodRows', root).insertAdjacentHTML('beforeend', methodRow({ method: '', accountInfo: '' })); break;
       case 'remove-method': b.closest('[data-mrow]').remove(); break;
       case 'verify': {
-        const ok = await GOM.confirm(`Mark the ${money(p.amount)} payment from @${p.handle} as received?\n\nIt will be applied to what they owe (item cost first, then EMS, customs, postage).${p.overpayAmount ? `\n\nThey paid ${money(p.overpayAmount)} extra and chose for it to be ${p.overpayChoice === 'tip' ? 'a tip' : 'credit'}.` : ''}${p.payerIsAddressName === false ? `\n\nNote: it was paid under a different name (${p.payerName}).` : ''}`, { ok: 'Yes, it arrived' });
+        const ok = await GOM.confirm(`Mark the ${money(p.amount)} payment from @${p.handle} as received?\n\nIt will be applied to what they owe, whatever is due first (overdue before newer items); within an item: item cost, then EMS, customs, postage, packaging.${p.overpayAmount ? `\n\nThey paid ${money(p.overpayAmount)} extra and chose for it to be ${p.overpayChoice === 'tip' ? 'a tip' : 'credit'}.` : ''}${p.payerIsAddressName === false ? `\n\nNote: it was paid under a different name (${p.payerName}).` : ''}`, { ok: 'Yes, it arrived' });
         if (!ok) return;
         const r = await api('POST', `/api/admin/payments/${p.id}/verify`, {});
         await render(root); GOM.refreshBadges();

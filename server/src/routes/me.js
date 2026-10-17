@@ -7,7 +7,7 @@ import { withTx } from '../db.js';
 import { shareAddress } from '../lib/address-share.js';
 import { bad, conflict, forbidden, notFound, HttpError } from '../errors.js';
 import { resolveJoiner } from '../lib/joiner.js';
-import { owedInScope, lockJoiner, creditBalance } from '../lib/ledger.js';
+import { owedInScope, owingPlan, lockJoiner, creditBalance } from '../lib/ledger.js';
 import { queuePosition, markParcelReceived } from '../lib/parcels.js';
 import { validateShippable, inviteCompanions, acceptCompanion, declineCompanion, withdrawInvitation, leaveParcel } from '../lib/combine.js';
 import { feeModeOf } from '../lib/parcels.js';
@@ -79,7 +79,7 @@ export function meRoutes(app, { pool }) {
   // ── delivery details ──
   app.get('/api/my/address', auth, wrap(async (req, res) => {
     const joiner = await resolveJoiner(pool, req);
-    await withTx(pool, (conn) => shareAddress(conn, req.account.id));                          // a person with several handles has ONE address: bring them into line
+    if (!req.viewAs) await withTx(pool, (conn) => shareAddress(conn, req.account.id));         // a person with several handles has ONE address: bring them into line (never when the GOM is just looking)
     const [[a]] = await pool.query('SELECT full_name AS fullName, address, email, phone, confirmed_at AS confirmedAt FROM addresses WHERE joiner_id = ?', [joiner.id]);
     res.json({ address: a || null });
   }));
@@ -177,8 +177,10 @@ export function meRoutes(app, { pool }) {
     if (!b.reference && !payerName) throw bad("Add a transaction ID or the payer's name so it can be matched.", 'reference_required');
     const extra = round2(b.amount - total);
     if (extra > 0.004 && !b.overpay) throw bad(`You're paying £${extra.toFixed(2)} more than you owe — choose whether that's credit for next time or a tip.`, 'overpay_choice_required');
-    let remaining = round2(Math.min(b.amount, total)); const parts = [];
-    for (const x of owes) { if (x.owed <= 0.004 || remaining <= 0.004) continue; const a = round2(Math.min(x.owed, remaining)); remaining = round2(remaining - a); parts.push({ j: x.j, amount: a }); }
+    // split the money across the handles in the order it would be PAID — what is due first, on whichever handle — so an overdue item on one handle is cleared before a newer item on another
+    let remaining = round2(Math.min(b.amount, total)); const share = new Map();
+    for (const line of await owingPlan(pool, payers.map((p) => p.id), orderId)) { if (remaining <= 0.004) break; const a = round2(Math.min(round2(line.cost - line.paid), remaining)); share.set(line.joinerId, round2((share.get(line.joinerId) || 0) + a)); remaining = round2(remaining - a); }
+    const parts = payers.filter((p) => share.has(p.id)).map((p) => ({ j: p, amount: share.get(p.id) }));
     if (extra > 0.004) parts[0].amount = round2(parts[0].amount + extra);
     const batchKey = randomBytes(8).toString('hex');
     const made = await withTx(pool, async (conn) => {
