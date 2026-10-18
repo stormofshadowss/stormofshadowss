@@ -213,3 +213,36 @@ test('joiner: a mixed-price set words the swap with the real total, and HTML in 
   assert.equal(p.window.pwned, undefined);
   p.close();
 });
+
+// ───────────── the GOM: suggestions while typing a fixed claimer's handle ─────────────
+const typeHandle = async (p, text) => { const i = p.q('form[data-form="add-fixed"] input[name="handle"]'); i.value = text; i.dispatchEvent(new p.window.Event('input', { bubbles: true })); await new Promise((r) => setTimeout(r, 450)); await p.settle(); return i; };
+const suggested = (p) => p.qa('#fixedHandles option', p.q('form[data-form="add-fixed"]')).map((o) => o.value).sort();
+const hint = (p) => { const h = p.q('form[data-form="add-fixed"] [data-fixed-hint]'); return h.hidden ? '' : p.text(h); };
+
+test('GOM: typing a fixed claimer\'s handle suggests people already on the site (any case, with or without @), narrowing as you type — and the box is never rebuilt under your cursor', async () => {
+  const [a, b] = [`suggest_ann${++N}`, `suggest_ben${N}`]; await member(a); await member(b); await newItem('Suggest set'); const p = await gomPage(app, admin); await openFixed(p, `Suggest set ${N}`);
+  const box = await typeHandle(p, `suggest_`); assert.equal(box.getAttribute('list'), 'fixedHandles', 'the box is connected to the suggestion list'); assert.ok(p.q('datalist#fixedHandles', p.q('form[data-form="add-fixed"]')));
+  assert.deepEqual(suggested(p), [a, b], 'both people on the site are suggested'); assert.equal(p.q('form[data-form="add-fixed"] input[name="handle"]'), box, 'the same box: your cursor stays put');
+  await typeHandle(p, `@SUGGEST_A`); assert.deepEqual(suggested(p), [`@${a}`], 'narrowed — and with an "@" the suggestions carry it too (a browser only offers what matches what you typed)'); assert.equal(box.value, '@SUGGEST_A', 'what you typed is left exactly as typed'); await typeHandle(p, 'SUGGEST_A'); assert.deepEqual(suggested(p), [a], 'capitals are fine, and without an "@" the suggestions have none'); assert.equal(box.value, 'SUGGEST_A');
+  await typeHandle(p, 'zzz_nobody_here'); assert.deepEqual(suggested(p), [], 'no match: no suggestions'); await typeHandle(p, ''); assert.deepEqual(suggested(p), []); assert.equal(hint(p), '', 'nothing typed: no note');
+  assert.deepEqual([p.errors, p.native], [[], 0]); p.close();
+});
+
+test('GOM: choosing a suggestion adds that existing person (no duplicate is created); a handle that is NOT on the site is fine too — a short note says they will be added as a new person, and they are', async () => {
+  const known = `suggest_cat${++N}`; await member(known); const item = await newItem('Mixed set'); const p = await gomPage(app, admin); await openFixed(p, `Mixed set ${N}`);
+  const form = () => p.q('form[data-form="add-fixed"]'); await typeHandle(p, known); assert.equal(hint(p), '', 'someone already on the site: no note'); form().elements.member.value = 'Han'; await p.submit(form()); await new Promise((r) => setTimeout(r, 250)); await p.settle();
+  assert.equal((await app.q('SELECT COUNT(*) AS n FROM joiners WHERE instagram_handle = ?', [known]))[0].n, 1, 'the existing person, not a second one');
+  const fresh = `brand_new${N}`; await typeHandle(p, fresh); assert.equal(hint(p), `@${fresh} isn't on the site yet — that's fine, they'll be added as a new person.`); form().elements.member.value = 'Felix'; await p.submit(form()); await new Promise((r) => setTimeout(r, 250)); await p.settle();
+  assert.deepEqual((await fixedOf(item)).map((f) => f.handle).sort(), [known, fresh].sort(), 'both were added'); assert.equal((await app.q('SELECT COUNT(*) AS n FROM joiners WHERE instagram_handle = ?', [fresh]))[0].n, 1, 'and the new person now exists'); p.close();
+});
+
+test('GOM: a blocked handle is flagged as you type (before you press Add), and is still refused', async () => {
+  const bad = `blocked_sug${++N}`; await member(bad); await api('POST', '/api/admin/joiners/block', { handle: bad, reason: 'test' }); await newItem('Blocked set'); const p = await gomPage(app, admin); await openFixed(p, `Blocked set ${N}`);
+  await typeHandle(p, bad); assert.equal(hint(p), `@${bad} is blocked — unblock them on the People tab first.`); const form = () => p.q('form[data-form="add-fixed"]'); form().elements.handle.value = bad; await p.submit(form()); await new Promise((r) => setTimeout(r, 250)); assert.match(p.text(p.q('[data-msg]', form())), /blocked/); p.close();
+});
+
+test('GOM: the note is only shown for what is typed NOW (an old answer never lingers while you keep typing)', async () => {
+  const known = `suggest_dan${++N}`; await member(known); await newItem('Stale set'); const p = await gomPage(app, admin); await openFixed(p, `Stale set ${N}`);
+  await typeHandle(p, 'someone_new_one'); assert.match(hint(p), /isn't on the site yet/); const i = p.q('form[data-form="add-fixed"] input[name="handle"]'); i.value = known; i.dispatchEvent(new p.window.Event('input', { bubbles: true })); assert.equal(hint(p), '', 'the instant you change it, the old note goes');
+  await new Promise((r) => setTimeout(r, 450)); await p.settle(); assert.equal(hint(p), '', 'and a person on the site gets no note'); p.close();
+});

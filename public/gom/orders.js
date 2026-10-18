@@ -142,7 +142,7 @@
       ${fixedList.length ? fixedList.map((f) => `<tr data-fixed="${f.id}"><td>@${esc(f.handle)}</td><td>${esc(f.member)}</td><td>Set ${f.setNumber}</td>
         <td><span class="pill ${f.setDecision === 'secured' ? 'ok' : 'warn'}">${f.setDecision === 'secured' ? 'set secured' : 'not secured yet'}</span></td>
         <td><button class="sm secondary" data-act="remove-fixed" data-id="${f.id}" data-handle="${esc(f.handle)}" data-member="${esc(f.member)}">Remove</button></td></tr>`).join('') : '<tr><td colspan="5" class="muted">No fixed claimers yet.</td></tr>'}</tbody></table></div>
-      <form data-form="add-fixed" data-id="${it.id}" style="margin-top:12px"><div class="formgrid"><div><label>Instagram handle</label><input name="handle" placeholder="@handle" autocomplete="off"></div>
+      <form data-form="add-fixed" data-id="${it.id}" style="margin-top:12px"><div class="formgrid"><div><label>Instagram handle</label><input name="handle" list="fixedHandles" placeholder="@handle" autocomplete="off"><datalist id="fixedHandles"></datalist><div class="sub" data-fixed-hint hidden></div></div>
         <div><label>Member</label><select name="member">${it.members.map((m) => `<option>${esc(m.name)}</option>`).join('')}</select></div><div><button type="submit" class="sm">Add fixed claimer</button></div></div><p class="msg" data-msg hidden></p></form>
       ${others.length ? `<form data-form="copy-fixed" data-id="${it.id}" style="margin-top:12px"><div class="formgrid"><div class="span2"><label>Copy the regulars from another comeback</label><select name="from">${others.map((x) => `<option value="${x.id}">${esc(x.label)}</option>`).join('')}</select></div><div><button type="submit" class="sm secondary">Copy them over</button></div></div><p class="msg" data-msg hidden></p></form>` : ''}</div>`;
   }
@@ -393,9 +393,31 @@
     if (e.target.name === 'type' && e.target.form) syncTypeFields(e.target.form);
   }
 
+  // Fixed claimers: as you type a handle, people already signed up to the site are suggested. Anyone else is fine too — they're added as a new person. Updated IN PLACE, so the cursor never moves.
+  let fixedLook = { for: '', exact: false, blocked: false, matches: [] }, fixedTimer = null;
+  const fixedHandle = (v) => String(v || '').trim().replace(/^@+/, '').toLowerCase();
+  function fixedHint(form) {
+    const h = fixedHandle(form.elements.handle.value), hint = $('[data-fixed-hint]', form), fresh = h && fixedLook.for === h;                   // only once the server has answered for exactly what is typed
+    const text = fresh && fixedLook.blocked ? `@${h} is blocked — unblock them on the People tab first.` : fresh && !fixedLook.exact ? `@${h} isn't on the site yet — that's fine, they'll be added as a new person.` : '';
+    hint.hidden = !text; hint.textContent = text;
+    // a browser only offers suggestions that match what's typed, so if you type or paste "@maiju" the suggestions carry the "@" too (the server accepts either)
+    const at = /^\s*@/.test(form.elements.handle.value) ? '@' : '', dl = $('#fixedHandles', form); if (dl) dl.innerHTML = fixedLook.matches.map((x) => `<option value="${at}${esc(x)}">`).join('');
+  }
+  function fixedLookupLater(form) {
+    clearTimeout(fixedTimer);
+    fixedTimer = setTimeout(async () => {
+      const h = fixedHandle(form.elements.handle.value);
+      if (!h) { fixedLook = { for: '', exact: false, blocked: false, matches: [] }; return fixedHint(form); }
+      const r = await api('GET', `/api/admin/joiners/lookup?q=${encodeURIComponent(h)}`);
+      if (!r.ok || fixedHandle(form.elements.handle.value) !== h) return;                                      // the answer is for something no longer typed
+      fixedLook = { for: h, exact: !!r.json.exact, blocked: !!r.json.blocked, matches: r.json.matches || [] }; fixedHint(form);
+    }, 160);
+  }
+
   GOM.registerTab({
     id: 'orders', label: 'Group Orders',
     async render(el) { await render(el); el.onclick = onClick; el.onsubmit = onSubmit; el.onchange = onChange; el.oninput = (e) => {
+      if (e.target.matches?.('form[data-form="add-fixed"] input[name="handle"]')) { fixedHint(e.target.form); fixedLookupLater(e.target.form); return; }
       if (e.target.id === 'orderSearch') {                                                   // only the LIST is redrawn, so the cursor stays in the box
         { const d = $('#closedOrders', root); if (d) closedOpen = d.open; }
         orderQ = e.target.value; $('#orderList', root).innerHTML = listHtml(); return;
