@@ -1,4 +1,10 @@
-import { JSDOM } from 'jsdom';
+import { JSDOM, ResourceLoader } from 'jsdom';
+
+// Frames are NOT loaded in these tests: a frame is a separate mini-page with no fetch(), so whether it errored depended on whether it finished loading before the test ended (a flaky failure). What is shown
+// inside the People tab's dashboard frame is covered by opening that page directly (ui-view-as.test.js); the frame tests only check the frame is pointed at the right place.
+class NoFrames extends ResourceLoader {
+  fetch(url, options) { return options?.element?.localName === 'iframe' ? Promise.resolve(Buffer.from('<!doctype html><title>frame — not loaded in tests</title>')) : super.fetch(url, options); }
+}
 
 // Opens a real page from the running test server in a simulated browser. Its fetch() talks to the real API and
 // database, with its own cookie jar — so what these tests exercise is exactly what a person's browser would.
@@ -7,7 +13,7 @@ export async function openPage(app, path, { cookies = [], init } = {}) {
   let inflight = 0;
   const errors = [];
   const dom = await JSDOM.fromURL(`${app.base}${path}`, {
-    runScripts: 'dangerously', resources: 'usable', pretendToBeVisual: true,
+    runScripts: 'dangerously', resources: new NoFrames(), pretendToBeVisual: true,
     beforeParse(window) {
       if (init) init(window);
       window.fetch = async (url, opts = {}) => {

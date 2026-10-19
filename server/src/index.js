@@ -24,6 +24,7 @@ import { launchRoutes } from './routes/launch.js';
 import { incomingRoutes } from './routes/incoming.js';
 import { claimFixRoutes } from './routes/claim-fix.js';
 import { peopleDueRoutes } from './routes/people-due.js';
+import { benefitRoutes } from './routes/benefits.js';
 
 const cfg = loadConfig();
 if (cfg.prod && cfg.mail.mode === 'console') console.warn('WARNING: SMTP is not configured, so sign-in links are printed to this log instead of emailed.');
@@ -47,7 +48,7 @@ if ((await adminCount(pool)) === 0) {
   console.warn('\nNO ADMIN ACCOUNT YET. Either set INITIAL_ADMIN_USERNAME and INITIAL_ADMIN_PASSWORD in your settings and restart, or create one with:\n   docker exec -it <the app container> node src/admin-cli.js create\n   (or, with the clone install:  docker compose run --rm app node src/admin-cli.js create)\n');
 }
 const mailer = createMailer(cfg);
-const app = createApp({ cfg, pool, mailer, extraRoutes: [catalogRoutes, claimRoutes, meRoutes, adminRoutes, setRoutes, fixedRoutes, boxRoutes, proxyRoutes, shopRoutes, imageRoutes, importRoutes, inviteRoutes, cancelRequestRoutes, settingsRoutes, launchRoutes, incomingRoutes, claimFixRoutes, peopleDueRoutes] });
+const app = createApp({ cfg, pool, mailer, extraRoutes: [catalogRoutes, claimRoutes, meRoutes, adminRoutes, setRoutes, fixedRoutes, boxRoutes, proxyRoutes, shopRoutes, imageRoutes, importRoutes, inviteRoutes, cancelRequestRoutes, settingsRoutes, launchRoutes, incomingRoutes, claimFixRoutes, peopleDueRoutes, benefitRoutes] });
 // Uploaded pictures need a folder the app can write to. Say so loudly at start-up rather than failing later, when someone uploads one.
 try { await fs.mkdir(cfg.uploadsDir, { recursive: true }); await fs.access(cfg.uploadsDir, fs.constants.W_OK); }
 catch { console.error(`WARNING: the pictures folder (${cfg.uploadsDir}) can't be written to, so picture uploads will fail. In Docker, run:  chown -R 1000:1000 <DATA_DIR>/uploads   then restart the app.`); }

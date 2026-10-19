@@ -109,7 +109,7 @@
 
   function itemsPanel() {
     const o = currentOrder();
-    return `<div class="card" id="itemsPanel"><div class="row"><h2 style="margin:0">Items — ${esc(o.title)}</h2><button class="sm secondary" data-act="close-items">Close</button></div>
+    return `<div class="card" id="itemsPanel"><div class="row"><h2 style="margin:0">Items — ${esc(o.title)}</h2><div class="btn-row" style="margin:0"><button class="sm secondary" data-act="benefits" title="Spend £X on these items, get N photocards">Purchase benefits</button><button class="sm secondary" data-act="close-items">Close</button></div></div>
       <div class="scroll"><table class="grid"><thead><tr><th>Item</th><th>Type</th><th>Price</th><th>Pay by</th><th>Closes</th><th>Proxy</th><th>Parts / sizes</th><th>Claimed</th><th></th></tr></thead>
       <tbody>${o.items.length ? o.items.map(itemRow).join('') : '<tr><td colspan="9" class="muted">No items yet — add the first one below.</td></tr>'}</tbody></table></div>
       <h2 style="margin-top:20px">Add an item</h2>
@@ -145,6 +145,50 @@
       <form data-form="add-fixed" data-id="${it.id}" style="margin-top:12px"><div class="formgrid"><div><label>Instagram handle</label><input name="handle" list="fixedHandles" placeholder="@handle" autocomplete="off"><datalist id="fixedHandles"></datalist><div class="sub" data-fixed-hint hidden></div></div>
         <div><label>Member</label><select name="member">${it.members.map((m) => `<option>${esc(m.name)}</option>`).join('')}</select></div><div><button type="submit" class="sm">Add fixed claimer</button></div></div><p class="msg" data-msg hidden></p></form>
       ${others.length ? `<form data-form="copy-fixed" data-id="${it.id}" style="margin-top:12px"><div class="formgrid"><div class="span2"><label>Copy the regulars from another comeback</label><select name="from">${others.map((x) => `<option value="${x.id}">${esc(x.label)}</option>`).join('')}</select></div><div><button type="submit" class="sm secondary">Copy them over</button></div></div><p class="msg" data-msg hidden></p></form>` : ''}</div>`;
+  }
+  // PURCHASE BENEFITS ("spend £X on these items, get N photocards"): you define the offer (what counts, the free bonus item); the site shows who qualifies; you press Add. Repeating, per person (all their handles together).
+  let benefitsFor = null, benefitOffers = [], benefitEdit = null, benefitOpen = null, benefitData = null, benefitAll = false;
+  const loadBenefits = async () => { const r = await api('GET', `/api/admin/orders/${benefitsFor}/benefits`); benefitOffers = r.json?.offers || []; };
+  const loadWho = async () => { if (!benefitOpen) { benefitData = null; return; } const r = await api('GET', `/api/admin/benefits/${benefitOpen}${benefitAll ? '?all=1' : ''}`); benefitData = r.ok ? r.json : null; };
+  function whoTable(b) {
+    const d = benefitData; if (!d) return '<p class="sub">Loading…</p>';
+    const rows = d.people.map((p) => `<tr data-bp="${p.key}"><td>@${esc(p.handles[0])}${p.handles.length > 1 ? ` <span class="sub">(also ${p.handles.slice(1).map((h) => `@${esc(h)}`).join(', ')})</span>` : ''}${p.blocked ? ' <span class="pill err">blocked</span>' : ''}</td>
+      <td>${money(p.spend)}</td><td>${p.entitled}</td><td>${p.given}</td><td>${p.toAdd ? `<strong>${p.toAdd}</strong>` : p.over ? `<span class="pill warn" title="They have more than they now qualify for (a claim was probably cancelled). Nothing is taken away automatically — review it in Claims.">${p.over} too many</span>` : `<span class="sub">${money(p.toGo)} to go</span>`}</td>
+      <td>${p.toAdd ? `<button class="sm" data-act="benefit-add" data-id="${b.id}" data-key="${p.key}">Add ${p.toAdd}</button>` : ''}</td></tr>`).join('');
+    return `<div class="scroll" style="margin-top:8px"><table class="grid" data-who><thead><tr><th>Person</th><th>Spent</th><th>Earned</th><th>Added</th><th>To add</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="6" class="muted">Nobody qualifies yet.</td></tr>`}</tbody></table></div>
+      <div class="row" style="margin-top:8px"><label class="chk" style="margin:0"><input type="checkbox" data-act="benefit-all" ${benefitAll ? 'checked' : ''}> Show everyone with spend (${d.everyone})</label>${d.totals.toAdd ? `<button class="sm" data-act="benefit-add-all" data-id="${b.id}">Add everyone (${d.totals.qualifying} ${d.totals.qualifying === 1 ? 'person' : 'people'}, ${d.totals.toAdd})</button>` : ''}</div>`;
+  }
+  function benefitCard(b) {
+    return `<div class="card" style="margin:10px 0" data-benefit="${b.id}"><div class="row"><div><strong>${esc(b.title)}</strong>
+      <div class="sub">Spend <strong>${money(b.threshold)}</strong> on ${b.items.map((i) => esc(i.title)).join(', ')} → get <strong>${b.quantity} × ${esc(b.bonusTitle)}</strong>, again for every ${money(b.threshold)} spent.</div></div>
+      <div class="btn-row" style="margin:0"><button class="sm" data-act="benefit-who" data-id="${b.id}">${benefitOpen === b.id ? 'Hide' : 'Who qualifies'}${b.qualifying ? ` (${b.qualifying})` : ''}</button><button class="sm secondary" data-act="benefit-edit" data-id="${b.id}">Edit</button><button class="sm secondary danger" data-act="benefit-delete" data-id="${b.id}">Delete</button></div></div>
+      <div class="sub" data-benefit-summary>${b.qualifying ? `<strong>${b.qualifying} ${b.qualifying === 1 ? 'person qualifies' : 'people qualify'}</strong> — ${b.toAdd} to add` : 'Nobody has anything to add right now.'}${b.over ? ` · ${b.over} ${b.over === 1 ? 'person has' : 'people have'} more than they now qualify for (see Claims)` : ''}</div>
+      ${benefitOpen === b.id ? whoTable(b) : ''}</div>`;
+  }
+  function benefitForm() {
+    const o = currentOrder(), cur = benefitEdit === 'new' ? null : benefitOffers.find((x) => x.id === benefitEdit);
+    const live = o.items.filter((i) => !i.cancelled), free = live.filter((i) => ['normal', 'random'].includes(i.type) && i.price === 0), counts = live.filter((i) => i.price !== 0);
+    if (!free.length) return `<div class="card" style="margin:10px 0"><p style="margin:0 0 8px"><strong>First add a free item.</strong> The benefit is a claim on a <strong>free (£0) plain item</strong> in this group order — that's what people receive (e.g. “Store photocard”). Add it in the items list above, then come back here.</p><div class="btn-row"><button type="button" class="sm secondary" data-act="benefit-cancel">Close</button></div></div>`;
+    const ticked = new Set(cur ? cur.items.map((i) => i.id) : []);
+    return `<form data-form="benefit" data-id="${cur ? cur.id : ''}" class="card" style="margin:10px 0"><strong>${cur ? 'Edit the offer' : 'New offer'}</strong><div class="formgrid" style="margin-top:8px">
+      <div class="span2"><label>Name</label><input name="title" maxlength="120" required value="${esc(cur?.title || '')}" placeholder="e.g. Spend £30, get a photocard"></div>
+      <div><label>Spend (£)</label><input name="threshold" type="number" step="0.01" min="0.01" required inputmode="decimal" value="${cur ? cur.threshold : ''}"></div>
+      <div><label>Get (quantity)</label><input name="quantity" type="number" min="1" max="99" required inputmode="numeric" value="${cur ? cur.quantity : 1}"></div>
+      <div class="span2"><label>The bonus item people receive (a free item in this order)</label><select name="bonusItemId">${free.map((i) => `<option value="${i.id}" ${cur?.bonusItemId === i.id ? 'selected' : ''}>${esc(i.title)}</option>`).join('')}</select></div></div>
+      <div class="row" style="margin:10px 0 4px"><span class="sub">What counts toward the spend — tick the items that are part of the offer:</span><button type="button" class="sm secondary" data-act="benefit-tick-all">Tick all</button></div>
+      <div data-benefit-items>${counts.length ? counts.map((i) => `<label class="chk" style="display:flex; margin:2px 0"><input type="checkbox" name="items" value="${i.id}" ${ticked.has(i.id) ? 'checked' : ''}> ${esc(i.title)} <span class="sub">&nbsp;${money(i.price)}</span></label>`).join('') : '<p class="sub">This order has no priced items yet.</p>'}</div>
+      <p class="msg err" data-msg hidden></p><div class="btn-row"><button type="submit">Save offer</button><button type="button" class="secondary" data-act="benefit-cancel">Cancel</button></div></form>`;
+  }
+  function benefitsPanel() {
+    return `<div class="card" id="benefitsPanel"><div class="row"><h2 style="margin:0">Purchase benefits — ${esc(currentOrder().title)}</h2><div class="btn-row" style="margin:0">${benefitEdit ? '' : '<button class="sm" data-act="benefit-new">+ New offer</button>'}<button class="sm secondary" data-act="close-benefits">Close</button></div></div>
+      <p class="sub">“Spend £X on these items, get N photocards.” You choose what counts and the free bonus item; the site then shows <strong>who qualifies</strong> and you press <strong>Add</strong>. It repeats for every full amount spent. A person's handles count together, only <strong>secured</strong> claims count, and postage and fees never do.</p>
+      ${benefitOffers.length ? benefitOffers.map(benefitCard).join('') : (benefitEdit ? '' : '<p class="muted">No offers on this group order yet.</p>')}${benefitEdit ? benefitForm() : ''}</div>`;
+  }
+  async function grantBenefit(offerId, people) {
+    const r = await api('POST', `/api/admin/benefits/${offerId}/grant`, { people }); if (!r.ok) return GOM.toast(errText(r), true);
+    const j = r.json, offer = benefitOffers.find((x) => x.id === offerId); await loadBenefits(); await loadWho(); draw();
+    const said = j.added ? `Added ${j.added} × “${offer?.bonusTitle || 'bonus'}” to ${j.granted.length === 1 ? `@${j.granted[0].handle}` : `${j.granted.length} people`}.` : 'Nothing to add — they already have it.';
+    GOM.toast(j.failed.length ? `${said} Couldn't add for ${j.failed.map((f) => `@${f.handle} (${f.error})`).join('; ')}` : said, !!j.failed.length);
   }
   async function loadFixed() { const r = await api('GET', `/api/admin/items/${fixedFor}/fixed`); fixedList = r.json?.fixed || []; }
 
@@ -193,7 +237,7 @@
       ${cancelPanel()}
       <div class="card"><input id="orderSearch" type="search" placeholder="Search group orders by name…" value="${esc(orderQ)}" aria-label="Search group orders" autocomplete="off"></div>
       <div id="orderList">${listHtml()}</div>
-      ${itemsFor ? itemsPanel() : ''}${itemsFor && fixedFor ? fixedPanel() : ''}`;
+      ${itemsFor ? itemsPanel() : ''}${itemsFor && fixedFor ? fixedPanel() : ''}${itemsFor && benefitsFor === itemsFor ? benefitsPanel() : ''}`;
     $$('form[data-form="new-item"]', root).forEach(syncTypeFields);
   }
 
@@ -283,6 +327,12 @@
       });
       if (!r.ok) return showMsg(form, errText(r));
       editingId = null; await reload(true); GOM.toast('Saved.');
+    } else if (kind === 'benefit') {
+      const itemIds = $$('input[name="items"]:checked', form).map((c) => Number(c.value)); if (!itemIds.length) return showMsg(form, 'Tick at least one item that counts toward the spend.');
+      const data = { title: val(form, 'title'), threshold: Number(val(form, 'threshold')), quantity: Number(val(form, 'quantity')), bonusItemId: Number(val(form, 'bonusItemId')), itemIds };
+      const r = form.dataset.id ? await api('PATCH', `/api/admin/benefits/${form.dataset.id}`, data) : await api('POST', `/api/admin/orders/${benefitsFor}/benefits`, data);
+      if (!r.ok) return showMsg(form, errText(r));
+      benefitEdit = null; await loadBenefits(); if (benefitOpen) await loadWho(); draw(); GOM.toast('Offer saved.');
     } else if (kind === 'new-item') {
       if (!form.elements.priceTbc.checked && val(form, 'price') === '') return showMsg(form, 'Enter a price, or tick "price to be confirmed".');   // an empty box must never become £0.00
       const type = val(form, 'type');
@@ -329,8 +379,27 @@
       case 'toggle-new': showNew = !showNew; editingId = null; draw(); break;
       case 'edit-order': editingId = id; showNew = false; draw(); break;
       case 'cancel-edit': editingId = null; draw(); break;
-      case 'open-items': itemsFor = id; editingItem = null; draw(); $('#itemsPanel', root)?.scrollIntoView?.(); break;
-      case 'close-items': itemsFor = null; editingItem = null; fixedFor = null; draw(); break;
+      case 'benefits': benefitsFor = itemsFor; benefitEdit = null; benefitOpen = null; benefitData = null; benefitAll = false; await loadBenefits(); draw(); $('#benefitsPanel', root)?.scrollIntoView?.(); break;
+      case 'close-benefits': benefitsFor = null; benefitEdit = null; benefitOpen = null; draw(); break;
+      case 'benefit-new': benefitEdit = 'new'; draw(); break;
+      case 'benefit-edit': benefitEdit = id; draw(); break;
+      case 'benefit-cancel': benefitEdit = null; draw(); break;
+      case 'benefit-tick-all': $$('[data-benefit-items] input[type="checkbox"]', root).forEach((c) => { c.checked = true; }); break;
+      case 'benefit-who': benefitOpen = benefitOpen === id ? null : id; benefitData = null; draw(); await loadWho(); draw(); break;
+      case 'benefit-all': benefitAll = b.checked; await loadWho(); draw(); break;
+      case 'benefit-add': await grantBenefit(id, [b.dataset.key]); break;
+      case 'benefit-add-all': {
+        const t = benefitData?.totals, offer = benefitOffers.find((x) => x.id === id); if (!t?.toAdd) break;
+        if (await GOM.confirm(`Add ${t.toAdd} × “${offer?.bonusTitle}” to ${t.qualifying} ${t.qualifying === 1 ? 'person' : 'people'}?\n\nEach person gets what their spend has earned, as a free claim waiting to be ordered.`, { ok: 'Add them all', cancel: 'Not yet' })) await grantBenefit(id, 'all');
+        break;
+      }
+      case 'benefit-delete': {
+        const offer = benefitOffers.find((x) => x.id === id); if (!(await GOM.confirm(`Delete the offer “${offer?.title}”?`, { ok: 'Delete it', cancel: 'Keep it' }))) break;
+        const r = await api('DELETE', `/api/admin/benefits/${id}`); if (!r.ok) { GOM.toast(errText(r), true); break; }
+        if (benefitOpen === id) { benefitOpen = null; benefitData = null; } await loadBenefits(); draw(); GOM.toast('Offer deleted.'); break;
+      }
+      case 'open-items': benefitsFor = null; benefitEdit = null; itemsFor = id; editingItem = null; draw(); $('#itemsPanel', root)?.scrollIntoView?.(); break;
+      case 'close-items': itemsFor = null; editingItem = null; fixedFor = null; benefitsFor = null; benefitEdit = null; draw(); break;
       case 'fixed': fixedFor = id; await loadFixed(); draw(); break;
       case 'close-fixed': fixedFor = null; draw(); break;
       case 'remove-fixed': {

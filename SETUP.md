@@ -456,3 +456,19 @@ Any item can have a **purchase limit**: **at most N across everyone, first come 
 
 ### Fixed claimers: handle suggestions
 In the **Fixed claimers** panel (Group Orders → an item → *Fixed claimers*), the **Instagram handle** box now **suggests people already signed up to the site** as you type — pick one, or keep typing. It works with or without an **@** and in any case (if you type an "@", the suggestions carry it too). **Anyone who isn't on the site is fine** — just type their handle; a short note under the box says *"@name isn't on the site yet — that's fine, they'll be added as a new person"*, and they are. A **blocked** handle is flagged as you type (*"@name is blocked — unblock them on the People tab first"*) and is still refused when you press Add.
+
+### Purchase benefits ("spend £X, get N photocards")
+For store promotions like *spend ₩… and get a photocard*: **Group Orders → an order's items → Purchase benefits → + New offer.**
+1. **First add a free item** to the group order — a plain item priced **£0** (e.g. *Store benefit photocard*). That's what people receive. (Sizes, members and sets can't be the bonus.)
+2. **Make the offer:** a name, **Spend £**, **Get (quantity)**, the **bonus item**, and **tick the items that count toward the spend** (*Tick all* is there for convenience).
+3. **Who qualifies** shows each person's **Spent / Earned / Added / To add**. Press **Add N** next to a person, or **Add everyone** (it asks first). It is **never automatic**.
+
+How it counts (so the numbers are never a surprise):
+- **Repeating:** every full amount spent earns the quantity again (£90 on a £30 offer = 3 × the quantity).
+- **Per person — all their handles together** — and the bonus is added to the handle that spent most.
+- **Only secured claims** on the **ticked** items count, and only the **item cost** (not postage, EMS or fees). A request, or a cancelled claim, doesn't count. It's exact to the penny.
+- The bonus is added as a **free, secured claim waiting to be ordered**, so it shows in **To order**, flows through ordering and packing like anything else, and appears in the person's own orders at £0.
+- **Pressing Add twice** (or from two screens) can never add it twice — what's owed is rechecked every time. If the bonus item has a **purchase limit** and it's full, or a handle is **blocked**, that person is skipped with the reason and everyone else is still added.
+- **If someone's spend later drops** (a claim is cancelled) **nothing is taken away automatically.** They're flagged **"N too many"** (and the summary says so) so you can decide in **Claims**; cancel an extra bonus claim there and they're square again.
+- **Edit** an offer any time (it recalculates; what was already added stays). You can only **delete** an offer while nothing has been added from it. **Show everyone with spend** lists people who haven't qualified yet, with how much they have to go.
+- Not built: joiners can't see their progress toward the next amount on their own page.

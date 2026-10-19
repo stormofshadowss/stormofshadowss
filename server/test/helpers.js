@@ -26,6 +26,7 @@ import { launchRoutes } from '../src/routes/launch.js';
 import { incomingRoutes } from '../src/routes/incoming.js';
 import { claimFixRoutes } from '../src/routes/claim-fix.js';
 import { peopleDueRoutes } from '../src/routes/people-due.js';
+import { benefitRoutes } from '../src/routes/benefits.js';
 import { createAdmin } from '../src/lib/admins.js';
 
 export const ADMIN = { username: 'boss', email: 'boss@example.com', password: 'correct horse battery staple' };
@@ -48,7 +49,7 @@ export async function startApp(overrides = {}) {
   await migrate(cfg, () => {});
   const pool = createPool(cfg);
   const mailer = createMailer(cfg);
-  const app = createApp({ cfg, pool, mailer, extraRoutes: [catalogRoutes, claimRoutes, meRoutes, adminRoutes, setRoutes, fixedRoutes, boxRoutes, proxyRoutes, shopRoutes, imageRoutes, importRoutes, inviteRoutes, cancelRequestRoutes, settingsRoutes, launchRoutes, incomingRoutes, claimFixRoutes, peopleDueRoutes] });
+  const app = createApp({ cfg, pool, mailer, extraRoutes: [catalogRoutes, claimRoutes, meRoutes, adminRoutes, setRoutes, fixedRoutes, boxRoutes, proxyRoutes, shopRoutes, imageRoutes, importRoutes, inviteRoutes, cancelRequestRoutes, settingsRoutes, launchRoutes, incomingRoutes, claimFixRoutes, peopleDueRoutes, benefitRoutes] });
   const server = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   const base = `http://127.0.0.1:${server.address().port}`;
   const cookies = {};
