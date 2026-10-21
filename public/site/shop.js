@@ -7,6 +7,19 @@
   let basket = store.sget('sos_basket', []);   // [{ key, itemId, orderTitle, title, label, price, qty, member, variant }]
   let together = store.sget('sos_together', {});  // { itemId: true } — "keep these together in the same set"
   let done = null;                              // result of the last submit, shown as the confirmation page
+  let sending = false;                          // a claim is on its way: the button is locked and a second press does nothing
+  let typedHandle = '';                         // the handle they typed, kept if the claim didn't go through
+  let dup = null;                               // { have, handle } — "You already have … — claim another?" shown on the basket page, waiting for their answer
+  // The confirmation is KEPT for half an hour (this tab): Back, Refresh or wandering off never makes people wonder whether their claim went through — and it is what stops them claiming it again.
+  const RECENT_MS = 30 * 60 * 1000;
+  const recentClaim = () => { const r = store.sget('sos_done', null); return r && r.done && !r.dismissed && Date.now() - r.at < RECENT_MS ? r : null; };
+  const recentBanner = () => {
+    const r = recentClaim(); if (!r) return ''; const n = r.done.lines.reduce((x, l) => x + l.qty, 0), at = new Date(r.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    return `<div class="card" data-recent-claim style="border:2px solid var(--ok-line); background:var(--ok-bg); color:var(--ok-ink)"><div class="row"><div><strong>✓ Your claim went through</strong> — ${n} item${n === 1 ? '' : 's'} for @${esc(r.done.handle.name)}, at ${esc(at)}. <a href="#/done">See what you claimed</a></div><button type="button" class="sm secondary" data-act="dismiss-recent" aria-label="Dismiss this message">✕</button></div></div>`;
+  };
+  // They asked to claim something their handle already has: the question, and what each answer does
+  const dupCard = () => `<div class="card" data-dup style="border:2px solid var(--warn-line); background:var(--warn-bg); color:var(--warn-ink)"><p style="margin:0 0 6px"><strong>You already have ${esc(dup.have.map((h) => `${h.count} × ${h.label}`).join(', '))} — claim another?</strong></p>
+    <p style="margin:0 0 10px">If you were just making sure your claim went through — it did. Only claim another if you really want a second one.</p><div class="btn-row"><button type="button" data-act="dup-yes">Yes, claim another</button><button type="button" class="secondary" data-act="dup-no">No, take ${dup.have.length === 1 ? 'it' : 'them'} out of my basket</button></div></div>`;
   const view = $('#view');
 
   const saveBasket = () => { store.sset('sos_basket', basket); store.sset('sos_together', together); drawHeader(); };
@@ -245,7 +258,7 @@
   }
 
   function basketPage(message) {
-    const handle = store.get('sos_handle', '');
+    const handle = typedHandle || store.get('sos_handle', '');
     view.innerHTML = `<div class="crumb"><a href="#/">← Keep browsing</a></div>${basket.length ? stepsHtml(2) : ''}<h1 style="margin:4px 0 10px">Your selections</h1>
       ${basket.length ? `<div class="card">${basket.map((l) => `<div class="itemrow"><div class="grow">${esc(l.label)}<div class="sub">${esc(l.orderTitle)} · ${eachText(l.price)}</div></div>
         <span class="stepper">${l.shopId ? `<button class="secondary" data-act="shopdec" data-shop="${l.shopId}" aria-label="One fewer">−</button><span>${l.qty}</span><button data-act="shopinc" data-shop="${l.shopId}" ${l.qty >= (shopItems.find((x) => x.id === l.shopId)?.left ?? 0) ? 'disabled' : ''} aria-label="One more">+</button>` : `<button class="secondary" data-act="dec" data-item="${l.itemId}" ${l.member ? `data-member="${esc(l.member)}"` : ''} ${l.variant ? `data-variant="${esc(l.variant)}"` : ''} aria-label="One fewer">−</button><span>${l.qty}</span><button data-act="inc" data-item="${l.itemId}" ${l.member ? `data-member="${esc(l.member)}"` : ''} ${l.variant ? `data-variant="${esc(l.variant)}"` : ''} ${l.qty >= MAX_QTY ? 'disabled' : ''} aria-label="One more">+</button>`}</span>
@@ -253,7 +266,7 @@
         <div class="itemrow" style="font-weight:700"><div class="grow">Total</div><div>${totalText()}</div></div>
         ${tbcN(basket) ? `<p class="sub" style="margin:6px 0 0"><strong>Price TBC:</strong> the price of ${tbcN(basket) === 1 ? 'one item is' : `${tbcN(basket)} items are`} still to be confirmed. You won't owe anything for ${tbcN(basket) === 1 ? 'it' : 'them'} until the price is set and the GOM confirms your claim.</p>` : ''}
         ${[...new Set(basket.filter((l) => l.isSet).map((l) => l.itemId))].map((id) => { const f = findItem(id); return f ? `<div class="sub" style="margin-top:6px"><strong>${esc(f.item.title)} — where they'll go:</strong> ${placementText(f.item)}${together[id] ? ' <em>(kept together)</em>' : ''}</div>` : ''; }).join('')}</div>
-        <form class="card" data-form="claim"><h2 class="stephead"><span class="stepno">3</span> Who's claiming?</h2><label for="ig">Your Instagram ID</label><input id="ig" name="handle" value="${esc(handle)}" placeholder="@yourhandle" autocomplete="off" autocapitalize="none" spellcheck="false">
+        ${dup ? dupCard() : ''}<form class="card" data-form="claim"><h2 class="stephead"><span class="stepno">3</span> Who's claiming?</h2><label for="ig">Your Instagram ID</label><input id="ig" name="handle" value="${esc(handle)}" placeholder="@yourhandle" autocomplete="off" autocapitalize="none" spellcheck="false">
         <p class="sub">No password needed. ${basket.some((l) => l.shopId) ? `Shop items are held for you straight away and you'll owe for them right away (you have ${Math.min(...basket.filter((l) => l.shopId).map((l) => l.payDays))} day${Math.min(...basket.filter((l) => l.shopId).map((l) => l.payDays)) === 1 ? '' : 's'} to pay).${basket.some((l) => !l.shopId) ? ' Group-order items are requests: nothing is owed for those until the GOM confirms them, and their price is final once they do.' : ''}` : 'These are requests: nothing is owed until the GOM confirms them, and the price is final once they do.'}</p>
         <p class="msg" data-msg ${message ? '' : 'hidden'}>${esc(message || '')}</p>
         <button type="submit">Submit claims</button></form>` : `${message ? `<div class="msg">${esc(message)}</div>` : ''}<div class="card"><p class="muted">Nothing selected yet — pick items from a group order.</p><a href="#/">Browse group orders</a></div>`}`;
@@ -279,13 +292,19 @@
       <div id="follow">${follow}</div><p><a href="#/">← Back to group orders</a></p>`;
   }
 
-  function route() {
+  async function route() {
+    await routePage();                                                                                           // the home page draws asynchronously — wait for it, or it would wipe the reminder
+    const h = location.hash || '#/';
+    if (loaded && h !== '#/done') { const banner = recentBanner(); if (banner) view.insertAdjacentHTML('afterbegin', banner); }       // "your claim went through" stays in view while they might still wonder
+  }
+  function routePage() {
     if (!loaded) { view.innerHTML = '<p class="muted">Loading…</p>'; return; }
     const h = location.hash || '#/';
     drawHeader();
     if (h.startsWith('#/order/')) return orderPage(Number(h.slice(8)));
     if (h === '#/shop') return shopPage();
     if (h === '#/basket') return basketPage();
+    if (h === '#/done' && !done) { const r = store.sget('sos_done', null); if (r && r.done && Date.now() - r.at < RECENT_MS) done = r.done; }          // after a refresh
     if (h === '#/done' && done) return donePage();
     if (SITE.groupPages) return SITE.groupPages.show({ view, orders, shopItems }, h);       // the home page and the group pages (site/shop-groups.js)
     home();
@@ -306,12 +325,43 @@
       f.item.members.forEach((m) => bump(f.item.id, m.name, null, 1));
       together[f.item.id] = true; saveBasket(); return route();
     }
+    if (b.dataset.act === 'dup-yes') return submitClaims(dup.handle, true);
+    if (b.dataset.act === 'dup-no') {                                                                             // take just the repeats out of the basket
+      const same = (l, h) => (h.leftoverId ? l.shopId === h.leftoverId : l.itemId === h.itemId && (!h.option || l.member === h.option || l.variant === h.option));
+      basket = basket.filter((l) => !dup.have.some((h) => same(l, h))); together = {}; dup = null; saveBasket(); return basketPage();
+    }
+    if (b.dataset.act === 'dismiss-recent') { const r = store.sget('sos_done', null); if (r) store.sset('sos_done', { ...r, dismissed: true }); return route(); }
     if (b.dataset.act === 'skip-email') { $('#follow').innerHTML = '<div class="card"><p>No problem. Whenever you want to see your orders, use <a href="/my.html">My orders</a>.</p></div>'; }
   });
 
   view.addEventListener('change', (e) => {
     if (e.target.dataset.act === 'together') { together[Number(e.target.dataset.item)] = e.target.checked; saveBasket(); route(); }
   });
+
+  // Send the claims. Pressing again while it is sending does nothing (the button says "Sending…"); if their handle already has any of it, the site asks first instead of quietly adding a second.
+  async function submitClaims(handle, allowDuplicates = false) {
+    if (sending) return; sending = true; dup = null; typedHandle = handle;
+    const btn = $('form[data-form="claim"] button[type="submit"]', view); if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+    try {
+      const lines = basket.filter((l) => !l.isSet && !l.shopId).map((l) => ({ itemId: l.itemId, qty: l.qty, ...(l.member ? { member: l.member } : {}), ...(l.variant ? { variant: l.variant } : {}) }));
+      for (const l of basket.filter((x) => x.shopId)) lines.push({ leftoverId: l.shopId, qty: l.qty });
+      for (const id of [...new Set(basket.filter((l) => l.isSet).map((l) => l.itemId))]) {
+        lines.push({ itemId: id, parts: basket.filter((l) => l.itemId === id).map((l) => ({ member: l.member, qty: l.qty })), together: !!together[id] });
+      }
+      const r = await api('POST', '/api/claims', { handle, lines, ...(allowDuplicates ? { allowDuplicates: true } : {}) });
+      if (!r.ok) {
+        if (r.json?.code === 'already_claimed') { dup = { have: r.json.have || [], handle }; return basketPage(); }
+        if (r.status === 404 || ['order_closed', 'item_closed', 'sold_out', 'limit_reached'].includes(r.json?.code)) await load();
+        return basketPage(errText(r));
+      }
+      store.set('sos_handle', handle); typedHandle = '';
+      done = { handle: r.json.handle, lines: basket.slice(), total: total(), placements: r.json.placements || [] };
+      store.sset('sos_done', { at: Date.now(), done });
+      basket = []; together = {}; saveBasket();
+      location.hash = '#/done';
+      route();
+    } finally { sending = false; }
+  }
 
   view.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -321,18 +371,7 @@
       const handle = normalizeHandle(form.elements.handle.value);
       if (!handle) return say('Enter your Instagram ID first.');
       say('');
-      const lines = basket.filter((l) => !l.isSet && !l.shopId).map((l) => ({ itemId: l.itemId, qty: l.qty, ...(l.member ? { member: l.member } : {}), ...(l.variant ? { variant: l.variant } : {}) }));
-      for (const l of basket.filter((x) => x.shopId)) lines.push({ leftoverId: l.shopId, qty: l.qty });
-      for (const id of [...new Set(basket.filter((l) => l.isSet).map((l) => l.itemId))]) {
-        lines.push({ itemId: id, parts: basket.filter((l) => l.itemId === id).map((l) => ({ member: l.member, qty: l.qty })), together: !!together[id] });
-      }
-      const r = await api('POST', '/api/claims', { handle, lines });
-      if (!r.ok) { if (r.status === 404 || ['order_closed', 'item_closed', 'sold_out', 'limit_reached'].includes(r.json?.code)) await load(); return basketPage(errText(r)); }
-      store.set('sos_handle', handle);
-      done = { handle: r.json.handle, lines: basket.slice(), total: total(), placements: r.json.placements || [] };
-      basket = []; together = {}; saveBasket();
-      location.hash = '#/done';
-      route();
+      return submitClaims(handle);
     } else if (form.dataset.form === 'email') {
       const r = await api('POST', '/api/auth/request-link', { email: form.elements.email.value, handle: done.handle.name });
       if (!r.ok) return say(errText(r));

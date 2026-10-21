@@ -22,7 +22,7 @@ const status = async (id) => (await app.q('SELECT pipeline FROM claims WHERE id 
 test('IDENTICAL CONFIRMED CLAIMS ARE ONE ROW ("×5"): one stage change moves them all; "Show the 5" opens the individual claims; a claim that differs stays separate', async () => {
   const go = await order('Merge GO'); const a = await item(go, 'Merge photocard'), b = await item(go, 'Merge poster');
   const h = u('mg'); const five = []; for (let i = 0; i < 5; i++) five.push(await claim(h, a, READY)); const other = await claim(h, b, READY);
-  await app.api('POST', '/api/claims', { handle: h, lines: [{ itemId: a }] });                       // a request: never merged
+  await app.api('POST', '/api/claims', { handle: h, allowDuplicates: true, lines: [{ itemId: a }] });                       // a request: never merged
   const p = await claims(); await p.click(p.q('[data-act="toggle"]', buyer(p, h)));
   const rows = p.qa('tbody tr', buyer(p, h));
   assert.equal(rows.length, 3, 'merged ×5, the poster, and the request');

@@ -472,3 +472,11 @@ How it counts (so the numbers are never a surprise):
 - **If someone's spend later drops** (a claim is cancelled) **nothing is taken away automatically.** They're flagged **"N too many"** (and the summary says so) so you can decide in **Claims**; cancel an extra bonus claim there and they're square again.
 - **Edit** an offer any time (it recalculates; what was already added stays). You can only **delete** an offer while nothing has been added from it. **Show everyone with spend** lists people who haven't qualified yet, with how much they have to go.
 - Not built: joiners can't see their progress toward the next amount on their own page.
+
+### Duplicate claims ("did my claim go through?")
+People who weren't sure their first claim went through used to submit it again. Now:
+- **The Claim button locks** while it's sending ("Sending…"), so a second press (or pressing Enter again) does nothing.
+- **If their handle already has what they're claiming, the page asks first:** *"You already have 1 × OT8 photocards — claim another?"* with **Yes, claim another** or **No, take it out of my basket** (which removes only the repeats and leaves the rest to claim). "If you were just making sure your claim went through — it did." It checks the same **item** — and for members, sizes and set parts, the same **member / size / part** (a different member is not a repeat) — on live (not cancelled) claims, and for on-hand Shop items too. Nothing is added until they answer. Someone who genuinely wants a second copy just says yes (and will be asked again each time).
+- **The confirmation is kept for 30 minutes** (in that browser tab): Back or Refresh no longer loses it. A green **"✓ Your claim went through"** reminder (with a link back to what they claimed, and a ✕ to dismiss it) shows on the other pages — including the empty basket they land on after pressing Back. Their typed Instagram ID is also kept if a claim doesn't go through, so nobody retypes it.
+- **Your own tools are unaffected:** *Add a claim*, fixing claims and the Sets tab's *Add someone* never ask. Two identical presses at the same moment (two tabs) make exactly **one** claim.
+- A person can see that their handle already has an item by trying to claim it. Anyone can type any handle, so this tells whoever is typing that *that handle* has that item (only the item being claimed, only live claims).

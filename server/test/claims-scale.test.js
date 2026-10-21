@@ -14,7 +14,7 @@ test('MORE THAN 1,000 CLAIMS ALL COME BACK (it used to cut off at 1,000), includ
   const it = (await api('POST', `/api/admin/orders/${go}/items`, { type: 'normal', title: 'Big item', price: 1 })).json.id;
   const handles = ['aaa_first', 'mmm_middle', 'zzz_last'];
   for (const h of handles) for (let i = 0; i < 20; i++) {                                    // 20 lines × 20 = 400 claims each → 1,200
-    const r = await app.api('POST', '/api/claims', { handle: h, lines: Array.from({ length: 1 }, () => ({ itemId: it, qty: 20 })) }); assert.ok([200, 201].includes(r.status), `${h} ${r.status} ${r.text}`);
+    const r = await app.api('POST', '/api/claims', { handle: h, allowDuplicates: true, lines: Array.from({ length: 1 }, () => ({ itemId: it, qty: 20 })) }); assert.ok([200, 201].includes(r.status), `${h} ${r.status} ${r.text}`);
   }
   const t0 = Date.now(); const r = await api('GET', '/api/admin/claims'); const ms = Date.now() - t0;
   assert.equal(r.status, 200);

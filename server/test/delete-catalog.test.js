@@ -19,7 +19,7 @@ const item = async (go, body = {}) => (await api('POST', `/api/admin/orders/${go
 const exists = async (table, id) => (await app.q(`SELECT COUNT(*) AS n FROM ${table} WHERE id = ?`, [id]))[0].n === 1;
 const check = (what, id) => api('GET', `/api/admin/${what}/${id}/delete-check`);
 const del = (what, id, c = admin) => api('DELETE', `/api/admin/${what}/${id}`, undefined, c);
-const claimOf = async (h, itemId) => { await app.api('POST', '/api/claims', { handle: h, lines: [{ itemId }] }); return (await api('GET', `/api/admin/claims?handle=${h}`)).json.claims.at(-1); };
+const claimOf = async (h, itemId) => { await app.api('POST', '/api/claims', { handle: h, allowDuplicates: true, lines: [{ itemId }] }); return (await api('GET', `/api/admin/claims?handle=${h}`)).json.claims.at(-1); };
 
 test('deleting an item with nothing on it: it goes, with its members, sizes and picture; the order stays', async () => {
   const go = await order();

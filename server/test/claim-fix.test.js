@@ -29,7 +29,7 @@ test('DELETE: a claim with nothing paid is removed completely — its costs go w
   assert.deepEqual((await claimsOf(h)).map((c) => c.id), [keep]); assert.equal((await app.q('SELECT COUNT(*) AS n FROM claim_costs WHERE claim_id = ?', [dup]))[0].n, 0, 'its cost lines are gone too');
   assert.equal((await app.q('SELECT COUNT(*) AS n FROM claims WHERE id = ?', [dup]))[0].n, 0); assert.equal(await credit(h), before, 'no money moved');
   const mine = (await api('GET', '/api/my/summary', undefined, sess[h])).json.orders.flatMap((o) => o.claims); assert.equal(mine.length, 1, 'and it is gone from their My orders');
-  const rq = await app.api('POST', '/api/claims', { handle: h, lines: [{ itemId: it }] }); void rq;
+  const rq = await app.api('POST', '/api/claims', { handle: h, allowDuplicates: true, lines: [{ itemId: it }] }); void rq;
   const req = (await claimsOf(h)).find((c) => c.status === 'requested'); assert.equal((await del([req.id])).json.deleted, 1, 'a request deletes the same way');
 });
 

@@ -114,7 +114,7 @@ export async function seed(app, adminCookie) {
 
 // Claim as a handle (no sign-in) and have the GOM secure it.
 export async function claimAndSecure(app, adminCookie, handle, itemId, extra = {}) {
-  const r = await app.api('POST', '/api/claims', { handle, lines: [{ itemId, ...extra }] });
+  const r = await app.api('POST', '/api/claims', { handle, allowDuplicates: true, lines: [{ itemId, ...extra }] });                // a fixture: the person knowingly claims another (the public form asks first — see claim-duplicates.test.js)
   if (r.status !== 201) throw new Error(`claim failed: ${r.status} ${r.text}`);
   await app.api('POST', '/api/admin/claims/secure', { claimIds: r.json.claimIds }, adminCookie);
   return r.json.claimIds;

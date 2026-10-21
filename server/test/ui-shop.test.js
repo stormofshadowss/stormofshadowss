@@ -164,6 +164,7 @@ test('"Not now" is respected, and a second claim by someone who already has an a
 
   const q = await shop();
   await go(q, `#/order/${w.order}`); await plus(q, w.keyring); await go(q, '#/basket'); await submit(q, 'email_fan');   // linked in the previous test
+  await q.click(q.q('[data-act="dup-yes"]'));        // …and it's the same item again, so the page asks first: yes, another
   assert.match(q.text(q.q('#follow')), /Welcome back.*@email_fan already has an account.*Sign in to see your orders/);
   assert.equal(q.q('form[data-form="email"]'), null, 'no email prompt for a handle that already has one');
   p.close(); q.close();
@@ -175,6 +176,7 @@ test('a different browser claiming an existing handle gets no email shortcut —
   assert.ok(a.q('form[data-form="email"]'), 'the first browser is offered the shortcut');
   const b = await shop();                                                           // a separate browser with its own cookies
   await go(b, `#/order/${w.order}`); await plus(b, w.keyring); await go(b, '#/basket'); await submit(b, 'contested_fan');
+  await b.click(b.q('[data-act="dup-yes"]'));        // the same handle already has this item, so the page asks first: yes, another
   assert.match(b.text(b.q('#follow')), /See your orders.*sign in with your email/);
   assert.equal(b.q('form[data-form="email"]'), null);
   assert.equal((await claimsOf('contested_fan')).length, 2, 'both claims were still accepted');

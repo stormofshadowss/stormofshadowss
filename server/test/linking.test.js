@@ -10,7 +10,7 @@ after(async () => { await app.stop(); });
 // A "browser": remembers its device cookie between claims, like a real one.
 const browser = () => ({ cookie: null });
 async function claim(b, handle, itemId = w.keyring, extra = {}) {
-  const r = await app.api('POST', '/api/claims', { handle, lines: [{ itemId, ...extra }] }, b.cookie);
+  const r = await app.api('POST', '/api/claims', { handle, allowDuplicates: true, lines: [{ itemId, ...extra }] }, b.cookie);
   const set = r.headers.get('set-cookie');
   if (set && /sos_device=/.test(set)) b.cookie = set.split(';')[0];
   return r;

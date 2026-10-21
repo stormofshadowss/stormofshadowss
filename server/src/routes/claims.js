@@ -9,7 +9,7 @@ import { addClaimCosts, lockJoiner, setCost, sweepCredit } from '../lib/ledger.j
 import { cancelClaim } from '../lib/cancel.js';
 import { ensureDevice, deviceHasProof, grantProof } from '../lib/device.js';
 import { placeSetParts } from '../lib/sets.js';
-import { placeItemLine, lockLineItems } from '../lib/claim-create.js';
+import { placeItemLine, lockLineItems, alreadyHas } from '../lib/claim-create.js';
 import { moveClaims } from '../lib/move-claims.js';
 import { HttpError } from '../errors.js';
 import { CATS, round2 } from '../lib/money.js';
@@ -69,6 +69,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
         // member sets: which parts, and how many of each. "together" keeps one of each part in the same set.
         parts: z.array(z.object({ member: z.string().max(80), qty: z.number().int().min(1).max(20) })).max(40).optional(), together: z.boolean().optional(),
       }).refine((l) => !!l.itemId !== !!l.leftoverId, { message: 'Each line needs an item, or a shop item' })).min(1).max(30),
+      allowDuplicates: z.boolean().optional(),                 // the person saw "you already have this — claim another?" and said yes
     }).parse(req.body);
     const handle = normalizeHandle(b.handle);
     if (!isValidHandle(handle)) throw bad('Instagram handles use letters, numbers, full stops and underscores (up to 30 characters).');
@@ -93,6 +94,11 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
       // Shop (on hand) stock: lock each shop item (lowest id first) so the last unit can't be sold to two people at once.
       const shopLocks = [...new Set(b.lines.filter((l) => l.leftoverId).map((l) => l.leftoverId))].sort((x, y) => x - y);
       if (shopLocks.length) await conn.query('SELECT id FROM leftover_items WHERE id IN (?) ORDER BY id FOR UPDATE', [shopLocks]);
+      // A repeat of something this handle already has (usually someone unsure the first claim went through): ask first. (Items are locked by now, so a second press waits for the first and then sees it.)
+      if (!isNew && !b.allowDuplicates) {
+        const have = await alreadyHas(conn, joinerId, b.lines);
+        if (have.length) throw conflict(`You already have ${have.map((h) => `${h.count} × ${h.label}`).join(', ')} — claim another?`, 'already_claimed', { have });
+      }
       for (const line of b.lines) {
         if (line.leftoverId) {
           const qty = line.qty || 1;

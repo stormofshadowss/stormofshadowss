@@ -118,7 +118,8 @@ test('STRESS: 8 people each claiming the whole set at once: 8 whole sets, every 
 test('two requests from the SAME person at once do not trip over each other', async () => {
   const h = fresh('same');
   const set = (await api('POST', `/api/admin/orders/${w.order}/items`, { type: 'set', title: 'Same-person set', price: 2, members: ['M', 'N'] })).json.id;
-  const rs = await Promise.all([claimSet(h, set, [['M']]), claimSet(h, set, [['M']]), claimSet(h, set, [['N']])]);
+  const again = (parts) => app.api('POST', '/api/claims', { handle: h, allowDuplicates: true, lines: [{ itemId: set, parts: parts.map(([member, qty = 1]) => ({ member, qty })), together: false }] });             // M twice is deliberate here: two requests from one person must not trip over each other
+  const rs = await Promise.all([again([['M']]), again([['M']]), again([['N']])]);
   assert.ok(rs.every((r) => r.status === 201));
   assert.equal((await claimsOf(h)).length, 3);
   assert.deepEqual((await sets(set)).map((s) => s.filled).sort(), [1, 2], 'M twice needs two sets; N fits in one of them');

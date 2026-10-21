@@ -18,6 +18,28 @@ export async function lockLineItems(conn, lines) {
 // A TOTAL purchase limit (a store limit, a bulky item): at most N claims across everyone, first come first served — requests count the moment they're made, cancelled claims free their place. It counts
 // the whole item together, or each version / member / size on its own (limit_scope). The item row is already locked, so two people grabbing the last copy at once queue up and one is told it's gone.
 // The GOM adding or fixing a claim may go past it, but only knowingly (overrideLimit) — a plain attempt is refused with code 'limit_reached' so the screen can ask.
+// "You already have 1 × OT8 photocards — claim another?": what the person's handle ALREADY has (not cancelled) of what they are about to claim — the same item, and for members / sizes / set parts the same member or size
+// (a different member of the same item is not a repeat). A repeat is usually someone unsure the first claim went through, so the public claim form asks first instead of silently adding a second.
+// Run inside the claim's transaction AFTER the items are locked, so two near-simultaneous presses line up one after the other: the second sees the first.
+export async function alreadyHas(conn, joinerId, lines) {
+  const out = [], seen = new Map();
+  const add = (label, n, ref) => { if (n > 0) { const e = seen.get(label) || { label, count: 0, ...ref }; e.count += n; seen.set(label, e); } };      // ref says which item (and member/size) it is, so a screen can match its basket lines
+  for (const line of lines) {
+    if (line.leftoverId) {
+      const [[it]] = await conn.query('SELECT title FROM leftover_items WHERE id = ?', [line.leftoverId]); if (!it) continue;
+      const [[{ n }]] = await conn.query("SELECT COUNT(*) AS n FROM claims WHERE joiner_id = ? AND leftover_item_id = ? AND status <> 'cancelled'", [joinerId, line.leftoverId]); add(it.title, Number(n), { leftoverId: line.leftoverId }); continue;
+    }
+    const [[it]] = await conn.query('SELECT title FROM items WHERE id = ?', [line.itemId]); if (!it) continue;                 // an unknown item is reported by placeItemLine
+    const options = line.parts?.length ? line.parts.map((p) => p.member) : [line.member || line.variant || null];
+    for (const opt of options) {
+      const [[{ n }]] = await conn.query(`SELECT COUNT(*) AS n FROM claims WHERE joiner_id = ? AND item_id = ? AND status <> 'cancelled' ${opt ? 'AND COALESCE(member_name, variant_label) = ?' : ''}`, opt ? [joinerId, line.itemId, opt] : [joinerId, line.itemId]);
+      add(opt ? `${it.title} — ${opt}` : it.title, Number(n), { itemId: line.itemId, ...(opt ? { option: opt } : {}) });
+    }
+  }
+  for (const e of seen.values()) out.push(e);
+  return out;
+}
+
 export const hasOptions = (type) => ['set', 'independent', 'size'].includes(type);                    // item types where a person picks a member / size — the only ones a limit can count "each option" of
 export async function checkPurchaseLimit(conn, item, wanted, { asAdmin = false, overrideLimit = false, excludeClaimId = null } = {}) {
   if (!item.purchase_limit || (asAdmin && overrideLimit)) return;
