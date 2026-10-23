@@ -67,7 +67,7 @@ export async function incomingSnapshot(conn) {
        FROM items i JOIN group_orders go ON go.id = i.order_id
        LEFT JOIN (SELECT c.item_id, COUNT(*) AS waiting FROM claims c JOIN group_orders g ON g.id = c.order_id
                    WHERE c.status = 'confirmed' AND c.pipeline = 'awaiting fulfillment' AND g.is_test = 0 GROUP BY c.item_id) w ON w.item_id = i.id
-      WHERE i.cancelled_at IS NULL AND go.cancelled_at IS NULL ORDER BY go.id DESC, i.sort_order, i.id LIMIT 3000`);
+      WHERE i.cancelled_at IS NULL AND go.cancelled_at IS NULL AND go.archived_at IS NULL ORDER BY go.id DESC, i.sort_order, i.id LIMIT 3000`);
   const options = optionRows.map((o) => ({ ...o, waiting: Number(o.waiting) }));
   const [[addr]] = await conn.query("SELECT v FROM gom_settings WHERE k = 'warehouse_address'").then((r) => (r[0].length ? r : [[{ v: '' }]]));
   const chase = out.filter((o) => o.state === 'waiting' || o.state === 'part').sort((a, b) => String(a.orderedOn).localeCompare(String(b.orderedOn)));

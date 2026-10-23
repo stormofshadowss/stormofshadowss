@@ -486,3 +486,12 @@ Every **member set** on the order page now carries a short note under the existi
 - **Not shown** on ordinary, member, size or random items, or on the Shop page.
 - **Not shown on items marked "all parts required"** — those can't go ahead until every part is claimed, so the note would be untrue; their card already says *"every part must be claimed for it to go ahead"*.
 - It's plain text in `public/site/shop.js` (search `data-set-short-note`). If you ever want different wording, say so — or I can make it editable by you.
+
+### Archiving finished group orders
+To keep the **Closed** list short: **Group Orders → a closed order → Archive**. Archived orders move to a **folded "Archived (N)" list** underneath (the search box covers it, and a match unfolds it); each has **Items** and **Unarchive**, so nothing is lost and you can put one back at any time.
+- **A closed order shows a green "✓ all completed" marker when every claim in it is completed** — that's your cue it's ready. (Cancelled claims are ignored.)
+- **Archive is refused until it is true**, with a plain message saying what's left, e.g. *"Can't archive 'Odd & Fresh Pop-up' yet — 3 claims aren't completed: Hoodie — 2 × ready to pack / on hand; Photocards — 1 × awaiting fulfillment."* An **unsecured request** counts as not completed too. An **open** order can't be archived ("close it first"); closed by hand, **past its closing date**, or **cancelled** all count as closed.
+- **Cancelled orders can always be archived** (nothing is outstanding).
+- **Archived orders disappear from the day-to-day pickers** — the Claims tab's order filter and *Add a claim*, the Sets tab's order filter, and the store-order item picker — and come back when you unarchive. Their claims are untouched (still searchable by person; still in *My orders* for joiners — **joiners see no change at all**).
+- **Reopening an archived order, or changing its closing date, brings it back to the normal lists** (it doesn't stay archived underneath). Editing anything else leaves it archived.
+- Archiving and unarchiving are recorded in your activity log. It's by hand, one order at a time.

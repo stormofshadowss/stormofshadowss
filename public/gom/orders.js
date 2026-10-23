@@ -1,7 +1,7 @@
 // Group Orders tab: create and edit group orders, add and edit their items.
 (function () {
   const { esc, money, fmtDate, api, errText, $, $$ } = GOM;
-  let orders = [], groups = [], root = null, cancelFlow = null, orderQ = '', closedOpen = false;     // orderQ: the search box; closedOpen: whether the Closed section is unfolded
+  let orders = [], groups = [], root = null, cancelFlow = null, orderQ = '', closedOpen = false, archivedOpen = false;     // orderQ: the search box; closedOpen: whether the Closed section is unfolded
   document.addEventListener('gom:picture', (e) => {            // a picture changed: keep what this tab remembers in step, so the next redraw is right
     const { kind, id, image } = e.detail;
     if (kind === 'item') orders.forEach((x) => x.items.forEach((i) => { if (i.id === id) i.image = image; }));
@@ -209,23 +209,26 @@
   }
   // a group order is CLOSED when it was closed by hand, its closing date has passed, or it was cancelled
   const isClosedOrder = (o) => o.cancelled || o.status !== 'open' || o.closedByDate;
+  const isArchived = (o) => !!o.archivedAt && isClosedOrder(o);                                  // tucked away by hand (only ever a closed or cancelled order)
   const orderRow = (o) => `<tr data-order="${o.id}"><td>${o.cover ? `<img class="thumb sm" src="${esc(o.cover.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}<strong>${esc(o.title)}</strong></td><td>${esc(o.group)}</td>
-        <td>${o.cancelled ? '<span class="pill warn" data-cancelled>Cancelled</span>' : o.closedByDate ? '<span class="pill warn" data-closed-by-date title="Its closing date has passed, so it no longer takes claims">Closed (date passed)</span>' : `<span class="pill ${o.status === 'open' ? 'ok' : 'dim'}">${o.status === 'open' ? 'Open' : 'Closed'}</span>`}</td>
+        <td>${o.cancelled ? '<span class="pill warn" data-cancelled>Cancelled</span>' : o.closedByDate ? '<span class="pill warn" data-closed-by-date title="Its closing date has passed, so it no longer takes claims">Closed (date passed)</span>' : `<span class="pill ${o.status === 'open' ? 'ok' : 'dim'}">${o.status === 'open' ? 'Open' : 'Closed'}</span>`}${isClosedOrder(o) && !o.cancelled && !isArchived(o) && o.outstanding === 0 ? ' <span class="pill ok" data-ready-archive title="Every claim in this order is completed — it is ready to archive">✓ all completed</span>' : ''}</td>
         <td>${o.isPrivate ? '<span class="pill warn">Private</span>' : 'Public'}${o.isTest ? ' <span class="pill" data-test>Test</span>' : ''}</td><td>${fmtDate(o.closeDate)}</td><td>${fmtDate(o.paymentDeadline)}</td><td>${esc(o.proxy || '—')}</td>
-        <td class="nowrap"><button class="sm secondary" data-act="edit-order" data-id="${o.id}">Edit</button> <button class="sm" data-act="open-items" data-id="${o.id}">Items (${o.items.length})</button> <button class="sm secondary danger" data-act="delete-order" data-id="${o.id}">Delete</button>${o.cancelled ? '' : ` <button class="sm secondary danger" data-act="cancel-order" data-id="${o.id}">Cancel…</button>`}</td></tr>
+        <td class="nowrap">${isArchived(o) ? `<button class="sm" data-act="open-items" data-id="${o.id}">Items (${o.items.length})</button> <button class="sm secondary" data-act="unarchive-order" data-id="${o.id}">Unarchive</button>` : `<button class="sm secondary" data-act="edit-order" data-id="${o.id}">Edit</button> <button class="sm" data-act="open-items" data-id="${o.id}">Items (${o.items.length})</button> <button class="sm secondary danger" data-act="delete-order" data-id="${o.id}">Delete</button>${o.cancelled ? '' : ` <button class="sm secondary danger" data-act="cancel-order" data-id="${o.id}">Cancel…</button>`}${isClosedOrder(o) ? ` <button class="sm secondary" data-act="archive-order" data-id="${o.id}" title="Tuck this finished order away (every claim in it must be completed)">Archive</button>` : ''}`}</td></tr>
         ${editingId === o.id ? `<tr><td colspan="8">${orderForm(o)}</td></tr>` : ''}`;
   const orderTable = (list) => `<div class="scroll"><table class="grid"><thead><tr><th>Title</th><th>Group</th><th>Status</th><th>Listing</th><th>Closes</th><th>Payment due</th><th>Proxy</th><th></th></tr></thead><tbody>${list.map(orderRow).join('')}</tbody></table></div>`;
   // the list: open orders in a table, everything closed folded away underneath; the search box filters both
   function listHtml() {
     const q = orderQ.trim().toLowerCase(), hit = (o) => !q || [o.title, o.group, o.proxy].some((v) => (v || '').toLowerCase().includes(q));
-    const open = orders.filter((o) => !isClosedOrder(o) && hit(o)), closed = orders.filter((o) => isClosedOrder(o) && hit(o)), closedAll = orders.filter(isClosedOrder).length;
+    const open = orders.filter((o) => !isClosedOrder(o) && hit(o)), closed = orders.filter((o) => isClosedOrder(o) && !isArchived(o) && hit(o)), closedAll = orders.filter((o) => isClosedOrder(o) && !isArchived(o)).length;
+    const archived = orders.filter((o) => isArchived(o) && hit(o)), archivedAll = orders.filter(isArchived).length, unfoldArchived = archivedOpen || (q && archived.length > 0);
     const unfold = closedOpen || (q && closed.length > 0) || closed.some((o) => o.id === editingId);                // searching, or editing one of them, opens it
     return `<div class="card" id="openOrders">${open.length ? orderTable(open) : `<p class="muted" style="margin:0">${orders.length ? (q ? `No open group orders match “${esc(orderQ.trim())}”.` : 'No open group orders right now.') : 'No group orders yet. Create your first one above.'}</p>`}</div>
-      ${closedAll ? `<details class="card" id="closedOrders" ${unfold ? 'open' : ''}><summary><strong>Closed</strong> (${closedAll}${q ? `, ${closed.length} match` : ''}) <span class="sub">— closed, past their closing date, or cancelled</span></summary>${closed.length ? orderTable(closed) : `<p class="muted">No closed group orders match “${esc(orderQ.trim())}”.</p>`}</details>` : ''}`;
+      ${closedAll ? `<details class="card" id="closedOrders" ${unfold ? 'open' : ''}><summary><strong>Closed</strong> (${closedAll}${q ? `, ${closed.length} match` : ''}) <span class="sub">— closed, past their closing date, or cancelled</span></summary>${closed.length ? orderTable(closed) : `<p class="muted">No closed group orders match “${esc(orderQ.trim())}”.</p>`}</details>` : ''}
+      ${archivedAll ? `<details class="card" id="archivedOrders" ${unfoldArchived ? 'open' : ''}><summary><strong>Archived</strong> (${archivedAll}${q ? `, ${archived.length} match` : ''}) <span class="sub">— finished and tucked away</span></summary>${archived.length ? orderTable(archived) : `<p class="muted">No archived group orders match “${esc(orderQ.trim())}”.</p>`}</details>` : ''}`;
   }
 
   function draw() {
-    { const d = $('#closedOrders', root); if (d) closedOpen = d.open; }                  // remember whether the Closed section was unfolded across redraws
+    { const d = $('#closedOrders', root); if (d) closedOpen = d.open; const a = $('#archivedOrders', root); if (a) archivedOpen = a.open; }                  // remember whether the Closed section was unfolded across redraws
     const proxies = [...new Set(orders.flatMap((o) => [o.proxy, ...o.items.map((i) => i.proxy)]).filter(Boolean))];
     root.innerHTML = `
       <div class="row" style="margin:18px 0 10px"><h1 style="margin:0">Group orders</h1>
@@ -398,6 +401,15 @@
         const r = await api('DELETE', `/api/admin/benefits/${id}`); if (!r.ok) { GOM.toast(errText(r), true); break; }
         if (benefitOpen === id) { benefitOpen = null; benefitData = null; } await loadBenefits(); draw(); GOM.toast('Offer deleted.'); break;
       }
+      case 'archive-order': {
+        const o = orders.find((x) => x.id === id); const r = await api('POST', `/api/admin/orders/${id}/archive`, {});
+        if (!r.ok) { await GOM.alert(r.json?.error || errText(r)); break; }                                        // not completed yet / still open: said plainly, with what's left
+        await render(root); GOM.toast(`Archived “${o?.title}”.`); break;
+      }
+      case 'unarchive-order': {
+        const o = orders.find((x) => x.id === id); const r = await api('POST', `/api/admin/orders/${id}/unarchive`, {}); if (!r.ok) { GOM.toast(errText(r), true); break; }
+        await render(root); GOM.toast(`“${o?.title}” is back in Closed.`); break;
+      }
       case 'open-items': benefitsFor = null; benefitEdit = null; itemsFor = id; editingItem = null; draw(); $('#itemsPanel', root)?.scrollIntoView?.(); break;
       case 'close-items': itemsFor = null; editingItem = null; fixedFor = null; benefitsFor = null; benefitEdit = null; draw(); break;
       case 'fixed': fixedFor = id; await loadFixed(); draw(); break;
@@ -488,7 +500,7 @@
     async render(el) { await render(el); el.onclick = onClick; el.onsubmit = onSubmit; el.onchange = onChange; el.oninput = (e) => {
       if (e.target.matches?.('form[data-form="add-fixed"] input[name="handle"]')) { fixedHint(e.target.form); fixedLookupLater(e.target.form); return; }
       if (e.target.id === 'orderSearch') {                                                   // only the LIST is redrawn, so the cursor stays in the box
-        { const d = $('#closedOrders', root); if (d) closedOpen = d.open; }
+        { const d = $('#closedOrders', root); if (d) closedOpen = d.open; const a = $('#archivedOrders', root); if (a) archivedOpen = a.open; }
         orderQ = e.target.value; $('#orderList', root).innerHTML = listHtml(); return;
       }
       if (e.target.id === 'cancelTyped' && cancelFlow) $('[data-act="cancel-go"]', root).disabled = norm(e.target.value) !== norm(cancelFlow.plan.title); }; },

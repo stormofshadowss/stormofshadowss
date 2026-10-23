@@ -28,7 +28,7 @@ function checkItemCloseDate(itemDate, orderDate) {
 async function loadOrders(pool, whereSql, params, { admin }) {
   const today = todayUK();
   const [orders] = await pool.query(
-    `SELECT go.id, go.title, go.status, go.is_private, go.is_test, go.cancelled_at, go.created_at, go.close_date, go.payment_deadline, go.expected_ship_date,
+    `SELECT go.id, go.title, go.status, go.is_private, go.is_test, go.cancelled_at, go.archived_at, go.created_at, go.close_date, go.payment_deadline, go.expected_ship_date,
             go.group_id, ag.name AS group_name, p.name AS proxy_name, oi.filename AS cover_file, oi.width AS cover_w, oi.height AS cover_h, gi.filename AS gcover_file, gi.width AS gcover_w, gi.height AS gcover_h
        FROM group_orders go JOIN artist_groups ag ON ag.id = go.group_id LEFT JOIN proxies p ON p.id = go.proxy_id
        LEFT JOIN images oi ON oi.id = go.cover_image_id LEFT JOIN images gi ON gi.id = ag.cover_image_id
@@ -56,8 +56,11 @@ async function loadOrders(pool, whereSql, params, { admin }) {
   const [partCounts] = setItemIds.length ? await pool.query("SELECT item_id, member_name, COUNT(*) AS n FROM claims WHERE item_id IN (?) AND set_id IS NOT NULL AND status <> 'cancelled' GROUP BY item_id, member_name", [setItemIds]) : [[]];
   const [setRows] = setItemIds.length ? await pool.query('SELECT id, item_id, set_number, admin_decision FROM item_sets WHERE item_id IN (?) ORDER BY set_number', [setItemIds]) : [[]];
   const [takenRows] = setRows.length ? await pool.query('SELECT set_id, member_name FROM set_slots WHERE set_id IN (?)', [setRows.map((s) => s.id)]) : [[]];
+  // the GOM's archive button: how many claims in each order are NOT yet completed (cancelled ones are ignored)
+  const [outRows] = admin ? await pool.query("SELECT order_id, COUNT(*) AS n FROM claims WHERE order_id IN (?) AND status <> 'cancelled' AND NOT (status = 'confirmed' AND pipeline = 'completed') GROUP BY order_id", [orders.map((o) => o.id)]) : [[]];
+  const outstandingOf = Object.fromEntries(outRows.map((r) => [r.order_id, Number(r.n)]));
   return orders.map((o) => ({
-    id: o.id, title: o.title, groupId: o.group_id, group: o.group_name, cover: imageOut(o.cover_file, o.cover_w, o.cover_h), groupCover: imageOut(o.gcover_file, o.gcover_w, o.gcover_h), status: !admin && o.status === 'open' && datePassed(o.close_date, today) ? 'closed' : o.status, closedByDate: o.status === 'open' && datePassed(o.close_date, today), isPrivate: !!o.is_private, cancelled: !!o.cancelled_at, createdAt: o.created_at ? new Date(o.created_at).toISOString() : null,
+    id: o.id, title: o.title, groupId: o.group_id, group: o.group_name, cover: imageOut(o.cover_file, o.cover_w, o.cover_h), groupCover: imageOut(o.gcover_file, o.gcover_w, o.gcover_h), status: !admin && o.status === 'open' && datePassed(o.close_date, today) ? 'closed' : o.status, closedByDate: o.status === 'open' && datePassed(o.close_date, today), isPrivate: !!o.is_private, cancelled: !!o.cancelled_at, ...(admin ? { archivedAt: o.archived_at ? new Date(o.archived_at).toISOString() : null, outstanding: outstandingOf[o.id] || 0 } : {}), createdAt: o.created_at ? new Date(o.created_at).toISOString() : null,
     closeDate: o.close_date, paymentDeadline: o.payment_deadline, expectedShipDate: o.expected_ship_date,
     ...(admin ? { proxy: o.proxy_name, isTest: !!o.is_test } : {}),
     items: items.filter((i) => i.order_id === o.id).map((i) => {
@@ -226,6 +229,7 @@ export function catalogRoutes(app, { pool, cfg }) {
       if (b.isTest !== undefined) { if (b.isTest) await requireNotLive(conn); add('is_test', b.isTest ? 1 : 0); }      // a test tick can't be added once the site is live
       if (b.status !== undefined) add('status', b.status);
       if (b.closeDate !== undefined) add('close_date', b.closeDate);
+      if (b.status !== undefined || b.closeDate !== undefined) add('archived_at', null);                // reopening it, or moving its closing date, brings an archived order back to the normal lists
       if (b.paymentDeadline !== undefined) add('payment_deadline', b.paymentDeadline);
       if (b.expectedShipDate !== undefined) add('expected_ship_date', b.expectedShipDate);
       if (b.proxy !== undefined) add('proxy_id', await proxyIdFor(conn, b.proxy));

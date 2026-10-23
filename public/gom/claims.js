@@ -58,7 +58,7 @@
     if (fixS.mode === 'change') {
       if (!p.change.ok) body = blocked(p.change.reasons);
       else {
-        const live = orders.filter((o) => !o.cancelled), items = (orders.find((o) => String(o.id) === String(fixS.orderId))?.items || []).filter((i) => !i.cancelled && i.type !== 'set'), it = items.find((i) => String(i.id) === String(fixS.itemId));
+        const live = orders.filter((o) => !o.cancelled && !o.archivedAt), items = (orders.find((o) => String(o.id) === String(fixS.orderId))?.items || []).filter((i) => !i.cancelled && i.type !== 'set'), it = items.find((i) => String(i.id) === String(fixS.itemId));
         const changedItem = it && String(it.id) !== String(p.itemId), askPrice = changedItem && (it.priceTbc || Number(it.price) !== Number(p.cost));
         body = `<div class="formgrid"><div><label>Group order</label><select name="orderId">${live.map((o) => `<option value="${o.id}" ${String(o.id) === String(fixS.orderId) ? 'selected' : ''}>${esc(o.title)}${o.isPrivate ? ' (private)' : ''}${o.status && o.status !== 'open' ? ` (${esc(o.status)})` : ''}</option>`).join('')}</select></div>
           <div><label>Item</label><select name="itemId"><option value="">Choose…</option>${items.map((i) => `<option value="${i.id}" ${String(i.id) === String(fixS.itemId) ? 'selected' : ''}>${esc(i.title)}${i.priceTbc ? ' (price TBC)' : i.price != null ? ` — ${money(i.price)}` : ''}</option>`).join('')}</select></div>
@@ -290,7 +290,7 @@
   }
   function addCard() {
     if (!addOpen) return '';
-    const live = orders.filter((o) => !o.cancelled), it = addItem();
+    const live = orders.filter((o) => !o.cancelled && !o.archivedAt), it = addItem();
     return `<form class="card" id="addClaim" data-form="add-claim"><div class="row"><h2 style="margin:0">Add a claim for someone</h2><button type="button" class="sm secondary" data-act="add-close">Close</button></div>
       <p class="sub" style="margin:4px 0 10px">For a gap in an import, or an order that came by message. It follows the same rules as when a joiner claims — but you can add to private and closed group orders. They'll see it in My orders; no email is sent.</p>
       ${addMsg ? `<div class="msg ${addMsg.ok ? '' : 'err'}" data-add-msg style="${addMsg.ok ? 'background:var(--ok-bg); color:var(--ok-ink); border-color:var(--ok-line)' : ''}">${esc(addMsg.text)}${addMsg.ok && addMsg.handle ? ` <button type="button" class="sm secondary" data-act="add-show" data-handle="${esc(addMsg.handle)}">Show @${esc(addMsg.handle)}'s claims</button>` : ''}</div>` : ''}
@@ -384,7 +384,7 @@
       ${cancelCard()}
       ${addCard()}
       <div class="card"><div class="formgrid">
-        <div><label>Group order</label><select data-filter="order"><option value="">All</option>${orders.map((o) => `<option value="${o.id}" ${String(o.id) === String(filter.order) ? 'selected' : ''}>${esc(o.title)}</option>`).join('')}</select></div>
+        <div><label>Group order</label><select data-filter="order"><option value="">All</option>${orders.filter((o) => !o.archivedAt || String(o.id) === String(filter.order)).map((o) => `<option value="${o.id}" ${String(o.id) === String(filter.order) ? 'selected' : ''}>${esc(o.title)}</option>`).join('')}</select></div>
         <div><label>Show</label><select data-filter="status">${[['active', 'Active (requested + confirmed)'], ['requested', 'Requested only'], ['confirmed', 'Confirmed only'], ['cancelled', 'Cancelled'], ['all', 'Everything']].map(([v, l]) => `<option value="${v}" ${filter.status === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
         <div><label>Search a handle or item</label><input data-filter="q" value="${esc(filter.q)}" placeholder="@handle or item"></div>
         <div><label>Stage</label><select data-filter="stage"><option value="">All stages</option>${PIPELINE.map((p) => `<option ${p === filter.stage ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select></div>
