@@ -61,10 +61,10 @@ export async function checkPurchaseLimit(conn, item, wanted, { asAdmin = false, 
 export async function placeItemLine(conn, { joinerId, line, asAdmin = false, overrideLimit = false }) {
   const ids = [], placements = [];
   const [[item]] = await conn.query(
-    `SELECT i.id, i.order_id, i.item_type, i.title, i.price, i.price_tbc, i.size_bucket, i.purchase_limit, i.limit_scope, i.cancelled_at, i.close_date AS item_close_date, i.closed_by_hand, go.status, go.close_date AS go_close_date, go.is_private
+    `SELECT i.id, i.order_id, i.item_type, i.title, i.price, i.price_tbc, i.size_bucket, i.purchase_limit, i.limit_scope, i.cancelled_at, i.hidden_from_public, i.close_date AS item_close_date, i.closed_by_hand, go.status, go.close_date AS go_close_date, go.is_private
        FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id = ?`, [line.itemId]);
   // Private orders look exactly like orders that don't exist.
-  if (!item || (item.is_private && !asAdmin)) throw notFound('That item isn\'t available');
+  if (!item || ((item.is_private || item.hidden_from_public) && !asAdmin)) throw notFound('That item isn\'t available');                  // a hidden item looks like it doesn't exist to a joiner
   if (!asAdmin) {                                                                                  // closed by hand or by date — the order, or just this item
     const why = closedReason({ orderStatus: item.status, orderCloseDate: item.go_close_date, itemCloseDate: item.item_close_date, itemClosedByHand: item.closed_by_hand });
     if (why?.startsWith('order')) throw bad('That order has closed', 'order_closed');

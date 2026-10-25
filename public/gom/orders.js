@@ -85,6 +85,7 @@
         <div class="full">${GOM.pictureControl('item', it.id, it.image, 'Item picture')}</div>
         ${dateInput('paymentDeadline', it.ownPaymentDeadline, "Pay by (blank = the GO's date)")}
         <div>${dateInput('closeDate', it.closeDate, "Closes (blank = when the group order closes)")}<div class="sub">Claims on this item stop after this day (UK time).${currentOrder().closeDate ? ` It can't be later than the group order's ${fmtDate(currentOrder().closeDate)}.` : ''}</div></div>
+        <div class="full"><label class="chk" style="margin:4px 0"><input type="checkbox" name="hidden" ${it.hidden ? 'checked' : ''}> Hide from joiners</label><div class="sub">They can't see it or claim it — only you can add it for people (for example a free bonus photocard).</div></div>
         <div><label>Purchase limit (blank = none)</label><input name="purchaseLimit" type="number" min="1" max="9999" inputmode="numeric" placeholder="e.g. 5" value="${it.limit ? it.limit.n : ''}"><div class="sub">At most this many across everyone, first come first served. Lowering it never cancels claims people already have — it only stops new ones.</div></div>
         ${['set', 'independent', 'size'].includes(it.type) ? `<div><label>The limit counts</label><select name="limitScope"><option value="item" ${it.limit?.scope === 'option' ? '' : 'selected'}>The whole item together</option><option value="option" ${it.limit?.scope === 'option' ? 'selected' : ''}>Each member / size separately</option></select></div>` : ''}
         <div><label>Proxy (blank = the GO's)</label><input name="proxy" list="proxyList" value="${esc(it.proxy && it.proxy !== currentOrder().proxy ? it.proxy : '')}"></div>
@@ -93,7 +94,7 @@
       <p class="msg" data-msg hidden></p>
       <div class="btn-row"><button type="submit" class="sm">Save</button><button type="button" class="sm secondary" data-act="cancel-item-edit">Cancel</button></div></form></td></tr>`;
     }
-    return `<tr><td>${it.image ? `<img class="thumb sm" src="${esc(it.image.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}${esc(it.title)}${it.description ? `<div class="sub" style="white-space:pre-line">${esc(it.description.length > 140 ? it.description.slice(0, 140) + '…' : it.description)}</div>` : ''}</td><td>${esc(typeName[it.type])}</td><td class="nowrap">${it.priceTbc ? '<span class="pill warn">TBC</span>' : money(it.price)}</td>
+    return `<tr><td>${it.image ? `<img class="thumb sm" src="${esc(it.image.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}${esc(it.title)}${it.hidden ? ' <span class="pill warn" data-hidden-item title="Joiners can\'t see or claim this — only you can add it for people">Hidden from joiners</span>' : ''}${it.description ? `<div class="sub" style="white-space:pre-line">${esc(it.description.length > 140 ? it.description.slice(0, 140) + '…' : it.description)}</div>` : ''}</td><td>${esc(typeName[it.type])}</td><td class="nowrap">${it.priceTbc ? '<span class="pill warn">TBC</span>' : money(it.price)}</td>
       <td class="nowrap">${fmtDate(it.payBy)}${it.ownPaymentDeadline ? ' <span class="sub">(own)</span>' : ''}</td>
       <td class="nowrap" data-closes>${closesCell(it)}</td><td>${esc(it.proxy || '—')}</td>
       <td>${itemSummary(it)}</td><td>${it.claimed}${limitCell(it)}</td><td><button class="sm secondary" data-act="edit-item" data-id="${it.id}">Edit</button> <button class="sm secondary danger" data-act="delete-item" data-id="${it.id}">Delete</button>${it.cancelled ? ' <span class="pill warn" data-cancelled>Cancelled</span>' : ` <button class="sm secondary danger" data-act="cancel-item" data-id="${it.id}">Cancel…</button>`}${it.type === 'set' ? ` <button class="sm secondary" data-act="fixed" data-id="${it.id}">Fixed claimers</button>` : ''}</td></tr>`;
@@ -121,6 +122,7 @@
         <div data-only="size,normal,random,independent,set"><label>Size (for postage)</label><select name="sizeBucket"><option>XS</option><option>S</option><option selected>M</option><option>L</option><option>XL</option></select></div>
         ${dateInput('paymentDeadline', '', "Pay by (blank = the GO's date)")}
         <div>${dateInput('closeDate', '', "Closes (blank = when the group order closes)")}<div class="sub">Claims on this item stop after this day (UK time) — use it when an item closes before the rest of the order.</div></div>
+        <div class="full"><label class="chk" style="margin:4px 0"><input type="checkbox" name="hidden" > Hide from joiners</label><div class="sub">They can't see it or claim it — only you can add it for people (for example a free bonus photocard).</div></div>
         <div><label>Purchase limit (blank = none)</label><input name="purchaseLimit" type="number" min="1" max="9999" inputmode="numeric" placeholder="e.g. 5"><div class="sub">At most this many across everyone, first come first served — for a store limit or a bulky item.</div></div>
         <div data-limit-scope hidden><label>The limit counts</label><select name="limitScope"><option value="item">The whole item together</option><option value="option">Each member / size separately</option></select></div>
         <div><label>Proxy (blank = the GO's)</label><input name="proxy" list="proxyList" maxlength="80"></div>
@@ -162,19 +164,20 @@
     return `<div class="card" style="margin:10px 0" data-benefit="${b.id}"><div class="row"><div><strong>${esc(b.title)}</strong>
       <div class="sub">Spend <strong>${money(b.threshold)}</strong> on ${b.items.map((i) => esc(i.title)).join(', ')} → get <strong>${b.quantity} × ${esc(b.bonusTitle)}</strong>, again for every ${money(b.threshold)} spent.</div></div>
       <div class="btn-row" style="margin:0"><button class="sm" data-act="benefit-who" data-id="${b.id}">${benefitOpen === b.id ? 'Hide' : 'Who qualifies'}${b.qualifying ? ` (${b.qualifying})` : ''}</button><button class="sm secondary" data-act="benefit-edit" data-id="${b.id}">Edit</button><button class="sm secondary danger" data-act="benefit-delete" data-id="${b.id}">Delete</button></div></div>
+      ${b.bonusHidden ? '' : `<div class="sub" data-bonus-public style="margin-top:6px">⚠ The bonus item “${esc(b.bonusTitle)}” is <strong>visible to joiners</strong> — they could claim it themselves. <button class="sm secondary" data-act="benefit-hide-bonus" data-id="${b.id}" data-item="${b.bonusItemId}">Hide it from joiners</button></div>`}
       <div class="sub" data-benefit-summary>${b.qualifying ? `<strong>${b.qualifying} ${b.qualifying === 1 ? 'person qualifies' : 'people qualify'}</strong> — ${b.toAdd} to add` : 'Nobody has anything to add right now.'}${b.over ? ` · ${b.over} ${b.over === 1 ? 'person has' : 'people have'} more than they now qualify for (see Claims)` : ''}</div>
       ${benefitOpen === b.id ? whoTable(b) : ''}</div>`;
   }
   function benefitForm() {
     const o = currentOrder(), cur = benefitEdit === 'new' ? null : benefitOffers.find((x) => x.id === benefitEdit);
     const live = o.items.filter((i) => !i.cancelled), free = live.filter((i) => ['normal', 'random'].includes(i.type) && i.price === 0), counts = live.filter((i) => i.price !== 0);
-    if (!free.length) return `<div class="card" style="margin:10px 0"><p style="margin:0 0 8px"><strong>First add a free item.</strong> The benefit is a claim on a <strong>free (£0) plain item</strong> in this group order — that's what people receive (e.g. “Store photocard”). Add it in the items list above, then come back here.</p><div class="btn-row"><button type="button" class="sm secondary" data-act="benefit-cancel">Close</button></div></div>`;
     const ticked = new Set(cur ? cur.items.map((i) => i.id) : []);
     return `<form data-form="benefit" data-id="${cur ? cur.id : ''}" class="card" style="margin:10px 0"><strong>${cur ? 'Edit the offer' : 'New offer'}</strong><div class="formgrid" style="margin-top:8px">
       <div class="span2"><label>Name</label><input name="title" maxlength="120" required value="${esc(cur?.title || '')}" placeholder="e.g. Spend £30, get a photocard"></div>
       <div><label>Spend (£)</label><input name="threshold" type="number" step="0.01" min="0.01" required inputmode="decimal" value="${cur ? cur.threshold : ''}"></div>
       <div><label>Get (quantity)</label><input name="quantity" type="number" min="1" max="99" required inputmode="numeric" value="${cur ? cur.quantity : 1}"></div>
-      <div class="span2"><label>The bonus item people receive (a free item in this order)</label><select name="bonusItemId">${free.map((i) => `<option value="${i.id}" ${cur?.bonusItemId === i.id ? 'selected' : ''}>${esc(i.title)}</option>`).join('')}</select></div></div>
+      <div class="span2"><label>The bonus item people receive</label><select name="bonusItemId">${cur ? '' : '<option value="new" selected>＋ Create a new bonus item (hidden from joiners)</option>'}${free.map((i) => `<option value="${i.id}" ${cur?.bonusItemId === i.id ? 'selected' : ''}>${esc(i.title)}${i.hidden ? '' : ' — visible to joiners'}</option>`).join('')}</select><div class="sub">A free item that only you can add for people. “Create a new bonus item” makes one for you and hides it from joiners.</div></div>
+      <div class="span2" data-new-bonus ${cur ? 'hidden' : ''}><label>Name of the new bonus item</label><input name="newBonusTitle" maxlength="160" value="Store benefit photocard"></div></div>
       <div class="row" style="margin:10px 0 4px"><span class="sub">What counts toward the spend — tick the items that are part of the offer:</span><button type="button" class="sm secondary" data-act="benefit-tick-all">Tick all</button></div>
       <div data-benefit-items>${counts.length ? counts.map((i) => `<label class="chk" style="display:flex; margin:2px 0"><input type="checkbox" name="items" value="${i.id}" ${ticked.has(i.id) ? 'checked' : ''}> ${esc(i.title)} <span class="sub">&nbsp;${money(i.price)}</span></label>`).join('') : '<p class="sub">This order has no priced items yet.</p>'}</div>
       <p class="msg err" data-msg hidden></p><div class="btn-row"><button type="submit">Save offer</button><button type="button" class="secondary" data-act="benefit-cancel">Cancel</button></div></form>`;
@@ -332,9 +335,10 @@
       editingId = null; await reload(true); GOM.toast('Saved.');
     } else if (kind === 'benefit') {
       const itemIds = $$('input[name="items"]:checked', form).map((c) => Number(c.value)); if (!itemIds.length) return showMsg(form, 'Tick at least one item that counts toward the spend.');
-      const data = { title: val(form, 'title'), threshold: Number(val(form, 'threshold')), quantity: Number(val(form, 'quantity')), bonusItemId: Number(val(form, 'bonusItemId')), itemIds };
+      const bonusVal = val(form, 'bonusItemId'), data = { title: val(form, 'title'), threshold: Number(val(form, 'threshold')), quantity: Number(val(form, 'quantity')), itemIds, ...(bonusVal === 'new' ? { newBonusTitle: val(form, 'newBonusTitle') } : { bonusItemId: Number(bonusVal) }) };
       const r = form.dataset.id ? await api('PATCH', `/api/admin/benefits/${form.dataset.id}`, data) : await api('POST', `/api/admin/orders/${benefitsFor}/benefits`, data);
       if (!r.ok) return showMsg(form, errText(r));
+      if (data.newBonusTitle) await render(root);                                                              // the offer just created a bonus item: show it in your items list
       benefitEdit = null; await loadBenefits(); if (benefitOpen) await loadWho(); draw(); GOM.toast('Offer saved.');
     } else if (kind === 'new-item') {
       if (!form.elements.priceTbc.checked && val(form, 'price') === '') return showMsg(form, 'Enter a price, or tick "price to be confirmed".');   // an empty box must never become £0.00
@@ -344,7 +348,7 @@
       const body = {
         type, title: val(form, 'title'), description: val(form, 'description'), ...priceBody(form), sizeBucket: val(form, 'sizeBucket'),
         paymentDeadline: val(form, 'paymentDeadline') || null, closeDate: val(form, 'closeDate') || null, proxy: val(form, 'proxy') || null, ...extra,
-        purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), limitScope: ['set', 'independent', 'size'].includes(type) ? val(form, 'limitScope') : 'item',
+        hidden: form.elements.hidden.checked, purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), limitScope: ['set', 'independent', 'size'].includes(type) ? val(form, 'limitScope') : 'item',
       };
       if (type === 'set') body.requiresFullSet = form.elements.requiresFullSet.checked;
       const r = await api('POST', `/api/admin/orders/${form.dataset.id}/items`, body);
@@ -365,7 +369,7 @@
       const r = await api('PATCH', `/api/admin/items/${form.dataset.id}`, {
         title: val(form, 'title'), ...priceBody(form), description: val(form, 'description'),
         paymentDeadline: val(form, 'paymentDeadline') || null, closeDate: val(form, 'closeDate') || null, proxy: val(form, 'proxy') || null,
-        purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), ...(form.elements.limitScope ? { limitScope: val(form, 'limitScope') } : {}),
+        hidden: form.elements.hidden.checked, purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), ...(form.elements.limitScope ? { limitScope: val(form, 'limitScope') } : {}),
       });
       if (!r.ok) return showMsg(form, errText(r));
       editingItem = null; await reload(true);
@@ -395,6 +399,10 @@
         const t = benefitData?.totals, offer = benefitOffers.find((x) => x.id === id); if (!t?.toAdd) break;
         if (await GOM.confirm(`Add ${t.toAdd} × “${offer?.bonusTitle}” to ${t.qualifying} ${t.qualifying === 1 ? 'person' : 'people'}?\n\nEach person gets what their spend has earned, as a free claim waiting to be ordered.`, { ok: 'Add them all', cancel: 'Not yet' })) await grantBenefit(id, 'all');
         break;
+      }
+      case 'benefit-hide-bonus': {
+        const offer = benefitOffers.find((x) => x.id === id); const r = await api('PATCH', `/api/admin/items/${b.dataset.item}`, { hidden: true }); if (!r.ok) { GOM.toast(errText(r), true); break; }
+        await render(root); await loadBenefits(); if (benefitOpen) await loadWho(); draw(); GOM.toast(`“${offer?.bonusTitle}” is now hidden from joiners.`); break;
       }
       case 'benefit-delete': {
         const offer = benefitOffers.find((x) => x.id === id); if (!(await GOM.confirm(`Delete the offer “${offer?.title}”?`, { ok: 'Delete it', cancel: 'Keep it' }))) break;
@@ -472,6 +480,7 @@
       return GOM.toast('Saved.');
     }
     if (e.target.name === 'type' && e.target.form) syncTypeFields(e.target.form);
+    if (e.target.matches?.('form[data-form="benefit"] select[name="bonusItemId"]')) $('[data-new-bonus]', e.target.form).hidden = e.target.value !== 'new';          // naming the new bonus item
   }
 
   // Fixed claimers: as you type a handle, people already signed up to the site are suggested. Anyone else is fine too — they're added as a new person. Updated IN PLACE, so the cursor never moves.

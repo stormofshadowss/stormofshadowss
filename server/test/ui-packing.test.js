@@ -1,7 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, seed, joinerSession, claimAndSecure, tickParcel } from './helpers.js';
-import { gomPage, modal, press, toast } from './ui.helpers.js';
+import { gomPage, modal, press, toast, openPage } from './ui.helpers.js';
 
 const READY = 'ready to pack / on hand';
 let app, admin, w, cookies = {}, parcel = {};
@@ -361,4 +361,36 @@ test('WITH NO EMAIL ON FILE there is no Email line and no Copy email button; an 
   await app.q("UPDATE addresses SET email = '' WHERE joiner_id = ?", [j4]); await app.q("UPDATE addresses SET email = '<img src=x onerror=\"window.pwned=1\">@x.com' WHERE joiner_id = ?", [j5]);
   const p = await open(); await new Promise((r) => setTimeout(r, 150)); await p.settle(); assert.doesNotMatch(p.text(p.q('pre', card(p, parcel.em4))), /Email:/); assert.equal(p.q('[data-act="copy-email"]', card(p, parcel.em4)), null);
   assert.equal(p.q('img[src="x"]'), null); assert.equal(p.window.pwned, undefined); assert.match(p.text(p.q('pre', card(p, parcel.em5))), /Email: <img src=x onerror="window\.pwned=1">@x\.com/); p.close();
+});
+
+// ───────────── group order names on the packing list (a toggle: hidden by default, remembered) ─────────────
+let TW = 0;
+const twinItems = async (a = `Twin GO A ${++TW}`, b = `Twin GO B ${TW}`) => { const mk = async (title) => { const go = (await api('POST', '/api/admin/orders', { groupId: w.group, title, proxy: 'Sam' })).json.id; return (await api('POST', `/api/admin/orders/${go}/items`, { type: 'normal', price: 5, title: 'OT8 photocards' })).json.id; }; return [await mk(a), await mk(b)]; };
+const names = (p, id) => p.qa('[data-order-name]', card(p, id)).map((e) => p.text(e));
+const orderToggle = (p) => p.q('input[data-act="toggle-orders"]');
+
+test('GROUP ORDER NAMES ARE HIDDEN UNTIL YOU ASK: the toggle is at the top of Packing, unticked, and no item shows an order name', async () => {
+  const [a, b] = await twinItems(); const h = `pk_names${++TW}`; await makeParcel(h, 'Names One', {}, [a, b]); const p = await open(); await new Promise((r) => setTimeout(r, 200)); await p.settle();
+  assert.ok(orderToggle(p)); assert.equal(orderToggle(p).checked, false); assert.match(p.text(orderToggle(p).closest('label')), /^Show group order names$/); assert.deepEqual(names(p, parcel[h]), [], 'nothing shown by default'); assert.deepEqual([p.errors, p.native], [[], 0]); p.close();
+});
+
+test('TICKING IT SHOWS WHICH GROUP ORDER EACH ITEM COMES FROM — two same-named items from different group orders are told apart; unticking hides them again', async () => {
+  const [a, b] = await twinItems(`Odd & Fresh Pop-up ${++TW}`, `Skzoo Pop-up ${TW}`); const h = `pk_names${++TW}`; await makeParcel(h, 'Names Two', {}, [a, b]); const p = await open(); await new Promise((r) => setTimeout(r, 200)); await p.settle();
+  const labels = p.qa('[data-item-row]', card(p, parcel[h])).map((r) => p.text(r)); assert.equal(labels.filter((l) => l.startsWith('OT8 photocards')).length, 2, 'two items with the very same name');
+  await p.click(orderToggle(p)); assert.deepEqual(names(p, parcel[h]), [`from Odd & Fresh Pop-up ${TW - 1}`, `from Skzoo Pop-up ${TW - 1}`], 'now you can tell which is which'); assert.equal(orderToggle(p).checked, true);
+  const rows = p.qa('[data-item-row]', card(p, parcel[h])); assert.match(p.text(rows[0]), /OT8 photocards\s*from Odd & Fresh Pop-up/); assert.equal(p.q('input[data-tick="item"]', rows[0]) !== null, true, 'the checklist still works'); await p.click(orderToggle(p)); assert.deepEqual(names(p, parcel[h]), [], 'hidden again'); p.close();
+});
+
+test('THE CHOICE IS REMEMBERED on this device: once ticked, the next visit starts with the names showing (and unticking is remembered too)', async () => {
+  const [a, b] = await twinItems(); const h = `pk_names${++TW}`; await makeParcel(h, 'Names Three', {}, [a, b]);
+  const visit = async (stored) => { const p = await openPage(app, '/admin.html', { cookies: [admin], init: (win) => { if (stored !== null) win.localStorage.setItem('sos_pack_order_names', stored); } }); await new Promise((r) => setTimeout(r, 250)); await p.settle(); await p.click(p.byText('#tabs button', 'Packing')); await new Promise((r) => setTimeout(r, 200)); await p.settle(); return p; };
+  const on = await visit('1'); assert.equal(orderToggle(on).checked, true); assert.equal(names(on, parcel[h]).length, 2); await on.click(orderToggle(on)); assert.equal(on.window.localStorage.getItem('sos_pack_order_names'), '0', 'unticking is remembered'); on.close();
+  const off = await visit('0'); assert.equal(orderToggle(off).checked, false); assert.deepEqual(names(off, parcel[h]), []); await off.click(orderToggle(off)); assert.equal(off.window.localStorage.getItem('sos_pack_order_names'), '1', 'and so is ticking'); off.close();
+  const fresh = await visit(null); assert.equal(orderToggle(fresh).checked, false, 'a device that has never chosen starts hidden'); fresh.close();
+});
+
+test('THE ORDER NAME ALSO SHOWS ON PARCELS ALREADY PACKED; names with HTML are shown as text', async () => {
+  const [a, b] = await twinItems('<b>Bold</b> <img src=x onerror="window.pwned=1"> GO', `Plain GO ${++TW}`); const h = `pk_names${++TW}`; await makeParcel(h, 'Names Four', {}, [a, b]); const p = await open(); await new Promise((r) => setTimeout(r, 200)); await p.settle();
+  await p.click(orderToggle(p)); assert.equal(p.q('img[src="x"]'), null); assert.equal(p.q('b', card(p, parcel[h])), null); assert.equal(p.window.pwned, undefined); assert.ok(names(p, parcel[h]).some((n) => n === 'from <b>Bold</b> <img src=x onerror="window.pwned=1"> GO'), 'shown exactly as typed');
+  await pack(p, parcel[h]); await press(p, 'Mark packed'); await new Promise((r) => setTimeout(r, 300)); await p.settle(); await p.click(p.q('[data-act="status"][data-status="packed"]')); await new Promise((r) => setTimeout(r, 250)); await p.settle(); const li = p.qa('li', card(p, parcel[h])).map((e) => p.text(e)); assert.ok(li.some((t) => /OT8 photocards.*— from Plain GO/.test(t)), 'in the Packed list too'); p.close();
 });

@@ -13,7 +13,7 @@ export function benefitRoutes(app, { pool }) {
   const admin = requireAdmin;
   const body = z.object({
     title: z.string().trim().min(1).max(120), threshold: z.number().min(0.01).max(100000).refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, 'At most 2 decimal places'),
-    quantity: z.number().int().min(1).max(99), bonusItemId: z.number().int().positive(), itemIds: z.array(z.number().int().positive()).min(1).max(200),
+    quantity: z.number().int().min(1).max(99), bonusItemId: z.number().int().positive().optional(), newBonusTitle: z.string().trim().min(1).max(160).optional(), itemIds: z.array(z.number().int().positive()).min(1).max(200),
   });
 
   // The bonus is a plain, FREE item in the same group order; the items that count toward the spend are other items of that order.
@@ -44,8 +44,15 @@ export function benefitRoutes(app, { pool }) {
     const b = body.parse(req.body); const orderId = Number(req.params.id);
     const id = await withTx(pool, async (conn) => {
       const [[go]] = await conn.query('SELECT id FROM group_orders WHERE id = ?', [orderId]); if (!go) throw notFound('No such group order');
-      const ids = await check(conn, orderId, b);
-      const [r] = await conn.query('INSERT INTO benefit_offers (order_id, title, spend_threshold, quantity, bonus_item_id) VALUES (?,?,?,?,?)', [orderId, b.title, b.threshold, b.quantity, b.bonusItemId]);
+      // The bonus is either an existing free item, or one the offer creates right now — a free plain item that is HIDDEN FROM JOINERS (they can't see it or claim it; only you add it, for people who qualify).
+      let bonusItemId = b.bonusItemId;
+      if (b.newBonusTitle !== undefined) {
+        if (bonusItemId) throw bad('Choose an existing bonus item or create a new one — not both.', 'bad_bonus');
+        const [made] = await conn.query('INSERT INTO items (order_id, item_type, title, price, price_tbc, size_bucket, hidden_from_public) VALUES (?, ?, ?, 0, 0, ?, 1)', [orderId, 'normal', b.newBonusTitle, 'M']);
+        bonusItemId = made.insertId; await audit(conn, req.account.id, 'item.create', 'item', bonusItemId, { bonusFor: 'purchase benefit', hidden: true });
+      } else if (!bonusItemId) throw bad('Choose the bonus item (or create a new one).', 'bad_bonus');
+      const ids = await check(conn, orderId, { ...b, bonusItemId });
+      const [r] = await conn.query('INSERT INTO benefit_offers (order_id, title, spend_threshold, quantity, bonus_item_id) VALUES (?,?,?,?,?)', [orderId, b.title, b.threshold, b.quantity, bonusItemId]);
       await conn.query('INSERT INTO benefit_offer_items (offer_id, item_id) VALUES ?', [ids.map((i) => [r.insertId, i])]);
       await audit(conn, req.account.id, 'benefit.create', 'benefit_offer', r.insertId, { orderId, threshold: b.threshold, quantity: b.quantity });
       return r.insertId;
@@ -55,6 +62,7 @@ export function benefitRoutes(app, { pool }) {
 
   app.patch('/api/admin/benefits/:id', admin, wrap(async (req, res) => {
     const id = Number(req.params.id); const patch = body.partial().parse(req.body);
+    if (patch.newBonusTitle !== undefined) throw bad('To use a new bonus item, create a new offer.', 'bad_bonus');
     await withTx(pool, async (conn) => {
       const [[o]] = await conn.query('SELECT id, order_id, bonus_item_id FROM benefit_offers WHERE id = ? FOR UPDATE', [id]); if (!o) throw notFound('No such offer');
       const [cur] = await conn.query('SELECT item_id FROM benefit_offer_items WHERE offer_id = ?', [id]);

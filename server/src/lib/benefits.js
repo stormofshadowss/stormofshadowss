@@ -6,7 +6,7 @@ import { round2 } from './money.js';
 const cents = (n) => Math.round(Number(n) * 100);
 
 export async function benefitStatus(conn, offerId) {
-  const [[o]] = await conn.query('SELECT o.id, o.order_id AS orderId, o.title, o.spend_threshold AS threshold, o.quantity, o.bonus_item_id AS bonusItemId, bi.title AS bonusTitle FROM benefit_offers o JOIN items bi ON bi.id = o.bonus_item_id WHERE o.id = ?', [offerId]);
+  const [[o]] = await conn.query('SELECT o.id, o.order_id AS orderId, o.title, o.spend_threshold AS threshold, o.quantity, o.bonus_item_id AS bonusItemId, bi.title AS bonusTitle, bi.hidden_from_public AS bonusHidden FROM benefit_offers o JOIN items bi ON bi.id = o.bonus_item_id WHERE o.id = ?', [offerId]);
   if (!o) return null;
   const thresholdC = cents(o.threshold);
   const [spend] = await conn.query(
@@ -31,6 +31,6 @@ export async function benefitStatus(conn, offerId) {
     }
   }
   people.sort((a, b) => b.toAdd - a.toAdd || b.over - a.over || b.spend - a.spend || a.intoHandle.localeCompare(b.intoHandle));
-  return { offer: { id: o.id, orderId: o.orderId, title: o.title, threshold: Number(o.threshold), quantity: o.quantity, bonusItemId: o.bonusItemId, bonusTitle: o.bonusTitle }, people,
+  return { offer: { id: o.id, orderId: o.orderId, title: o.title, threshold: Number(o.threshold), quantity: o.quantity, bonusItemId: o.bonusItemId, bonusTitle: o.bonusTitle, bonusHidden: !!o.bonusHidden }, people,
     totals: { qualifying: people.filter((p) => p.toAdd > 0).length, toAdd: people.reduce((n, p) => n + p.toAdd, 0), over: people.filter((p) => p.over > 0).length } };
 }

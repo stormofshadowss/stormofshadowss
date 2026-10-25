@@ -184,7 +184,7 @@ export function adminRoutes(app, { pool, notifier }) {
         WHERE p.status = ? ORDER BY p.requested_at, p.id`, [status]);
     const ids = parcels.map((p) => p.id);
     const items = ids.length ? (await pool.query(
-      'SELECT pi.parcel_id, c.id AS claimId, c.joiner_id AS ownerId, c.label, pi.packed_at AS packedAt, jc.instagram_handle AS owner, pi.doms_share AS doms, pi.packaging_share AS packaging, im.filename AS imgFile, im.width AS imgW, im.height AS imgH FROM parcel_items pi JOIN claims c ON c.id = pi.claim_id JOIN joiners jc ON jc.id = c.joiner_id LEFT JOIN items it ON it.id = c.item_id LEFT JOIN leftover_items lo ON lo.id = c.leftover_item_id LEFT JOIN images im ON im.id = COALESCE(it.image_id, lo.image_id) WHERE pi.parcel_id IN (?) ORDER BY c.id', [ids]))[0] : [];
+      'SELECT pi.parcel_id, c.id AS claimId, c.joiner_id AS ownerId, c.label, pi.packed_at AS packedAt, jc.instagram_handle AS owner, pi.doms_share AS doms, pi.packaging_share AS packaging, COALESCE(go.title, \'Shop (on hand)\') AS orderTitle, im.filename AS imgFile, im.width AS imgW, im.height AS imgH FROM parcel_items pi JOIN claims c ON c.id = pi.claim_id JOIN joiners jc ON jc.id = c.joiner_id LEFT JOIN items it ON it.id = c.item_id LEFT JOIN group_orders go ON go.id = c.order_id LEFT JOIN leftover_items lo ON lo.id = c.leftover_item_id LEFT JOIN images im ON im.id = COALESCE(it.image_id, lo.image_id) WHERE pi.parcel_id IN (?) ORDER BY c.id', [ids]))[0] : [];
     for (const i of items) { i.image = imageOut(i.imgFile, i.imgW, i.imgH); delete i.imgFile; delete i.imgW; delete i.imgH; }
     // Money still owing on the claims in each parcel — a HEADS-UP for the GOM, never a block: people often pay the last balance together with the postage.
     // Per person (a shared parcel can hold a friend's items), by cost category, plus any payment of theirs that is waiting for the GOM to verify.
@@ -211,7 +211,7 @@ export function adminRoutes(app, { pool, notifier }) {
       p.handleVerified = !!p.handleVerified;
       p.queuePosition = await queuePosition(pool, p);
       const mine = items.filter((i) => i.parcel_id === p.id);
-      p.items = mine.map((i) => ({ claimId: i.claimId, label: i.label, packed: !!i.packedAt, owner: i.owner, image: i.image }));
+      p.items = mine.map((i) => ({ claimId: i.claimId, label: i.label, orderTitle: i.orderTitle, packed: !!i.packedAt, owner: i.owner, image: i.image }));
       p.owing = owingOf(p.id);
       p.addressChecked = !!p.addressCheckedAt; p.lomoChecked = !!p.lomoCheckedAt; p.biasChecked = !!p.biasCheckedAt;
       p.feesSet = feesSet({ doms_total: p.domsTotal, packaging_total: p.packagingTotal });

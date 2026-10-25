@@ -3,6 +3,9 @@
   const { esc, money, fmtDate, api, errText, $, $$ } = GOM;
   const STATES = [['requested', 'Queue'], ['packed', 'Packed'], ['shipped', 'Shipped'], ['received', 'Received']];
   let root = null, parcels = [], counts = {}, status = 'requested';
+  // "Show group order names": two group orders can have an item with the same name, and the group order says which stock to pick from. Hidden unless you tick it; remembered on this device.
+  const KEY = 'sos_pack_order_names';
+  let showOrders = (() => { try { return localStorage.getItem(KEY) === '1'; } catch { return false; } })();
   let combine = null;       // the "combine with another parcel" panel that is open: { id, candidates, pick, ok }
 
   async function render(el) {
@@ -24,12 +27,13 @@
     + friends(p).reduce((n, f) => n + (f.lomoName && f.lomoChecked ? 1 : 0) + (f.bias && f.biasChecked ? 1 : 0), 0);
   const allTicked = (p) => checkDone(p) === checkTotal(p) && !waiting(p).length;
   const tag = (p, i) => (friends(p).length ? ` <span class="sub">@${esc(i.owner)}</span>` : '');
+  const fromOrder = (i) => (showOrders ? `<div class="sub" data-order-name style="margin:0 0 2px 26px">from ${esc(i.orderTitle || 'Shop (on hand)')}</div>` : '');
   const splitWords = (p) => (p.feeSplit?.mode === 'weight' ? "by the weight of each person's items" : 'equally per person');
 
   function checklist(p) {
     const box = (kind, checked, label, claim, friendHandle) => `<label class="chk" style="margin:4px 0"><input type="checkbox" data-tick="${kind}" ${claim ? `data-claim="${claim}"` : ''} ${friendHandle ? `data-friend="${esc(friendHandle)}"` : ''} ${checked ? 'checked' : ''}> ${label}</label>`;
     return `<div data-checklist><div class="row" style="margin-bottom:4px"><label style="margin:0">Packing checklist <span class="pill" data-count>${checkDone(p)} of ${checkTotal(p)} ticked</span></label><button class="sm secondary" data-act="tick-all" data-id="${p.id}">Tick all</button></div>
-      ${p.items.map((i) => `<div data-item-row="${i.claimId}" style="display:flex; align-items:center; gap:8px">${i.image ? `<button type="button" class="ghost sm" data-act="pic" data-url="${esc(i.image.url)}" title="Show the picture" aria-label="Show a picture of ${esc(i.label)}" style="padding:0; border:0; background:none"><img src="${esc(i.image.thumb)}" alt="" width="36" height="36" style="border-radius:6px; object-fit:cover; display:block"></button>` : ''}<div style="flex:1">${box('item', i.packed, `${esc(i.label)}${tag(p, i)}`, i.claimId)}</div></div>`).join('')}
+      ${p.items.map((i) => `<div data-item-row="${i.claimId}" style="display:flex; align-items:center; gap:8px">${i.image ? `<button type="button" class="ghost sm" data-act="pic" data-url="${esc(i.image.url)}" title="Show the picture" aria-label="Show a picture of ${esc(i.label)}" style="padding:0; border:0; background:none"><img src="${esc(i.image.thumb)}" alt="" width="36" height="36" style="border-radius:6px; object-fit:cover; display:block"></button>` : ''}<div style="flex:1">${box('item', i.packed, `${esc(i.label)}${tag(p, i)}`, i.claimId)}${fromOrder(i)}</div></div>`).join('')}
       ${p.lomoName ? box('lomo', p.lomoChecked, `Lomo name checked — <strong>${esc(p.lomoName)}</strong> <span class="sub">(${p.lomoSource === 'custom' ? 'a name they chose' : 'their delivery name'})</span>`) : ''}
       ${p.bias ? box('bias', p.biasChecked, `Bias name checked — <strong>${esc(p.bias)}</strong> <span class="sub">(for the thank-you card)</span>`) : ''}
       ${friends(p).map((f) => `${f.lomoName ? box('lomo', f.lomoChecked, `Lomo name for @${esc(f.handle)} checked — <strong>${esc(f.lomoName)}</strong> <span class="sub">(${f.lomoSource === 'custom' ? 'a name they chose' : 'their delivery name'})</span>`, null, f.handle) : ''}
@@ -66,7 +70,7 @@
       ${p.handleVerified ? '' : '<p class="sub">You haven\'t checked this person yet. Worth a quick Instagram DM to confirm the address before their first parcel goes out.</p>'}
       <div class="formgrid" style="margin-top:8px"><div class="span2"><label>Send to</label><pre style="margin:0; white-space:pre-wrap; font:inherit">${addr ? esc(addr) : 'No address on file'}</pre>
         ${addr ? `<button class="sm secondary" data-act="copy" data-id="${p.id}" style="margin-top:6px">Copy address</button>` : ''}${p.deliveryEmail ? ` <button class="sm secondary" data-act="copy-email" data-id="${p.id}" style="margin-top:6px" title="For a courier's tracking form">Copy email</button>` : ''}</div>
-        <div class="span2">${p.status === 'requested' ? checklist(p) : `<label>Items</label><ul style="margin:0; padding-left:18px; list-style:none">${p.items.map((i) => `<li>${i.packed ? '✓ ' : ''}${esc(i.label)}${tag(p, i)}</li>`).join('')}</ul>`}</div></div>
+        <div class="span2">${p.status === 'requested' ? checklist(p) : `<label>Items</label><ul style="margin:0; padding-left:18px; list-style:none">${p.items.map((i) => `<li>${i.packed ? '✓ ' : ''}${esc(i.label)}${tag(p, i)}${showOrders ? ` <span class="sub" data-order-name>— from ${esc(i.orderTitle || 'Shop (on hand)')}</span>` : ''}</li>`).join('')}</ul>`}</div></div>
       <div class="sub" style="margin-top:8px">${p.notes ? `<div><strong>Packing notes:</strong> ${esc(p.notes)}</div>` : ''}${p.bias ? `<div><strong>Bias (thank-you card):</strong> ${esc(p.bias)}</div>` : ''}
         <div><strong>Personalised Lomo:</strong> ${p.lomoName ? `${esc(p.lomoName)} <span class="pill ${p.lomoSource === 'custom' ? 'warn' : ''}">${p.lomoSource === 'custom' ? 'a name they chose' : 'their delivery name'}</span>` : 'no name given'}</div>${friendBits}</div>
       <div data-combine-slot></div>
@@ -122,7 +126,7 @@
 
   function draw() {
     root.innerHTML = `<h1 style="margin:18px 0 10px">Packing</h1>
-      <div class="btn-row" style="margin:0 0 12px">${STATES.map(([s, l]) => `<button class="sm ${status === s ? '' : 'secondary'}" data-act="status" data-status="${s}">${l} (${counts[s] ?? 0})</button>`).join('')}</div>
+      <div class="btn-row" style="margin:0 0 12px; align-items:center">${STATES.map(([s, l]) => `<button class="sm ${status === s ? '' : 'secondary'}" data-act="status" data-status="${s}">${l} (${counts[s] ?? 0})</button>`).join('')}<label class="chk" style="margin:0 0 0 auto" title="Shows which group order each item comes from — handy when two group orders have an item with the same name"><input type="checkbox" data-act="toggle-orders" ${showOrders ? 'checked' : ''}> Show group order names</label></div>
       ${parcels.length ? parcels.map(card).join('') : `<div class="card"><p class="muted">${status === 'requested' ? 'The queue is empty.' : 'Nothing here.'}</p></div>`}`;
   }
 
@@ -146,6 +150,7 @@
     const act = b.dataset.act, id = Number(b.dataset.id);
     const p = parcels.find((x) => x.id === id);
     if (act === 'status') { status = b.dataset.status; return render(root); }
+    if (act === 'toggle-orders') { showOrders = b.checked; try { localStorage.setItem(KEY, showOrders ? '1' : '0'); } catch { /* ignore */ } return draw(); }
     if (act === 'pic') {                                                                // tap a thumbnail: the full picture opens under that item (tap again to close)
       const row = b.closest('[data-item-row]'), open = row.nextElementSibling;
       if (open && open.matches('[data-pic-open]')) { open.remove(); return; }

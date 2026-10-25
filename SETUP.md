@@ -459,8 +459,8 @@ In the **Fixed claimers** panel (Group Orders → an item → *Fixed claimers*),
 
 ### Purchase benefits ("spend £X, get N photocards")
 For store promotions like *spend ₩… and get a photocard*: **Group Orders → an order's items → Purchase benefits → + New offer.**
-1. **First add a free item** to the group order — a plain item priced **£0** (e.g. *Store benefit photocard*). That's what people receive. (Sizes, members and sets can't be the bonus.)
-2. **Make the offer:** a name, **Spend £**, **Get (quantity)**, the **bonus item**, and **tick the items that count toward the spend** (*Tick all* is there for convenience).
+1. **Choose the bonus item.** By default the panel **creates one for you** (*＋ Create a new bonus item*, named *Store benefit photocard* unless you change it): a **free item that is hidden from joiners**, so they can't see it or claim it — only you add it, for people who qualify. You can instead pick an existing free plain item; if it's still visible to joiners the offer says so, with a one-press **Hide it from joiners**.
+2. **Make the offer:** a name, **Spend £**, **Get (quantity)**, and **tick the items that count toward the spend** (*Tick all* is there for convenience).
 3. **Who qualifies** shows each person's **Spent / Earned / Added / To add**. Press **Add N** next to a person, or **Add everyone** (it asks first). It is **never automatic**.
 
 How it counts (so the numbers are never a surprise):
@@ -495,3 +495,12 @@ To keep the **Closed** list short: **Group Orders → a closed order → Archive
 - **Archived orders disappear from the day-to-day pickers** — the Claims tab's order filter and *Add a claim*, the Sets tab's order filter, and the store-order item picker — and come back when you unarchive. Their claims are untouched (still searchable by person; still in *My orders* for joiners — **joiners see no change at all**).
 - **Reopening an archived order, or changing its closing date, brings it back to the normal lists** (it doesn't stay archived underneath). Editing anything else leaves it archived.
 - Archiving and unarchiving are recorded in your activity log. It's by hand, one order at a time.
+
+### Hiding an item from joiners
+Any item has a **"Hide from joiners"** tick (in the Add item and Edit item forms). A hidden item is **not shown on the public order page** and **nobody but you can claim it** — a joiner who somehow tries is told it isn't available. You see it as normal, marked **"Hidden from joiners"** in the items list, and it still appears wherever you work (To order, packing, the store-order item picker).
+- **You add it for people** with *Add a claim* (or a purchase benefit's **Add**); the person then sees that claim in **their own orders** as normal.
+- **Claims already on an item stay exactly as they are** when you hide it, and untick it any time to make it public again.
+- It's what the **Purchase benefits** panel uses for its bonus photocards (it can create the hidden item for you).
+
+### Group order names on the packing list
+On **Packing**, a **"Show group order names"** tick at the top shows **which group order each item comes from** ("from Odd & Fresh Pop-up", or "Shop (on hand)") under every item on the checklist — and next to the items on packed parcels. It's **off by default** and **remembered on that device** — use it when two group orders have an item with the same name and you need to pick the right stock.
