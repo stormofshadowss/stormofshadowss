@@ -1,3 +1,4 @@
+import { storageDeadlineOf, storageStatusOf } from '../lib/storage.js';
 import { NOTIFY_EVENTS, EVENT_KEYS, offSet, offString } from '../lib/notify-events.js';
 import { z } from 'zod';
 import { randomBytes } from 'node:crypto';
@@ -34,7 +35,7 @@ export function meRoutes(app, { pool }) {
 
   async function summaryOf(joiner, today) {
     const [claims] = await pool.query(
-      `SELECT c.id, c.label, c.status, c.pipeline, c.order_id, c.is_fixed, c.received_date, c.split_share, c.price_tbc,
+      `SELECT c.id, c.label, c.status, c.pipeline, c.order_id, c.is_fixed, c.received_date, c.split_share, c.price_tbc, c.size_bucket, c.ready_to_pack_date, c.storage_deadline_override,
               go.title AS order_title, COALESCE(c.pay_by, i.payment_deadline, go.payment_deadline) AS pay_by
          FROM claims c LEFT JOIN group_orders go ON go.id = c.order_id LEFT JOIN items i ON i.id = c.item_id
         WHERE c.joiner_id = ? AND c.status <> 'cancelled' ORDER BY c.id`, [joiner.id]);
@@ -52,13 +53,15 @@ export function meRoutes(app, { pool }) {
       for (const cat of CATS) if (lines[cat]) lines[cat].overdue = lateOf(cat);
       const overdueOwed = round2(CATS.reduce((s, cat) => s + (lateOf(cat) ? owingOf(cat) : 0), 0));
       const dues = CATS.filter((cat) => c.status === 'confirmed' && owingOf(cat) > 0.004 && lines[cat]?.due).map((cat) => lines[cat].due).sort(), lateDues = CATS.filter(lateOf).map((cat) => lines[cat].due).sort();
+      // the STORAGE DEADLINE: only for an item that is ready to pack (the client hides it once the item is in a parcel)
+      const storageDeadline = c.status === 'confirmed' && c.pipeline === 'ready to pack / on hand' ? storageDeadlineOf({ size: c.size_bucket, readyDate: c.ready_to_pack_date, override: c.storage_deadline_override }) : null;
       const key = c.order_id || 0;
       if (!orders.has(key)) orders.set(key, { id: c.order_id, title: c.order_title || 'Shop (on hand)', owed: 0, claims: [] });
       const o = orders.get(key);
       o.owed = round2(o.owed + claimOwed);
       o.claims.push({
         id: c.id, handle: joiner.handle, label: c.label, status: c.status, pipeline: c.pipeline, isFixed: !!c.is_fixed, receivedDate: c.received_date, splitShare: c.split_share, priceTbc: !!c.price_tbc,
-        payBy: claimOwed > 0 ? (lateDues[0] || dues[0] || null) : null, overdue: overdueOwed > 0, overdueOwed, owed: claimOwed, costs: lines,
+        payBy: claimOwed > 0 ? (lateDues[0] || dues[0] || null) : null, storageDeadline, storageStatus: storageStatusOf(storageDeadline, today), overdue: overdueOwed > 0, overdueOwed, owed: claimOwed, costs: lines,
         cancelRequest: (() => { const last = asks.filter((a) => a.claim_id === c.id).at(-1); return last && ['pending', 'declined'].includes(last.status) ? { id: last.id, status: last.status, reason: last.reason, note: last.decision_note, requestedAt: last.requested_at, decidedAt: last.decided_at } : null; })(),
       });
     }

@@ -513,3 +513,13 @@ A fee used to inherit the item's *original* pay-by date, so a fee added weeks la
 - **A fee with no date is never overdue.** To remove a fee's date, clear it in Edit costs. (Fees brought in by the Notion import have none.)
 - **Fees you'd already added** were given a fresh due date **14 days after the day this went live**, so nobody was suddenly told they were overdue because of one — change any of them in Edit costs.
 - Raising a fee **without** a date (for example by an older tool) keeps the date it already has, or gets **14 days** from that day.
+
+### Storage deadlines (what joiners see)
+Your storage rule (an item ready to pack is kept for **60 days if it's XS/S, 30 days if it's M/L/XL** from the day it became ready — or a deadline you set by hand on the claim) used to be visible only to you, in the **Overdue** tab. Joiners now see it too: each item that is **ready to pack** shows **"storage deadline 12/12/2026"** — on **My orders → Ongoing orders** and next to each item on the **Request shipping** page.
+- It's **plain** when there's time, **amber** within **7 days** (including the day itself), and **red — "storage deadline passed 12/12/2026"** once the date has gone (a date lives all day, so it only turns red the day after).
+- Hovering it explains: *"The GOM keeps items on hand until this date — please request shipping before then."*
+- It's **not shown** for items that aren't ready to pack yet, or once an item is **in a parcel** (requested, packed or on its way — the deadline no longer matters), or on completed orders. It always matches what your Overdue tab says for the same item.
+- To change a deadline for one item, set its storage deadline on the claim as before (the joiner sees your date).
+
+### Folding the Warehouse item list
+On **Warehouse → Boxes**, the long list of items waiting to be boxed now **folds away**: a one-line summary — **"▸ 123 items waiting to be boxed · 3 ticked"** — opens and closes it. It **starts folded** and **remembers how you left it on that device**. The **select-all buttons** (including "Select all in <group order>"), the **EMS / customs form** and the **boxes underneath** stay visible, and **what you've ticked survives folding** — so you can pick a group order with its button, enter the EMS and create the box without ever opening the list.

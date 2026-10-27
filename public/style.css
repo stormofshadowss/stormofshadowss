@@ -196,6 +196,7 @@ body.admin .chips { flex-wrap:wrap; overflow:visible; }
 .pill.err { background:var(--err-bg); color:var(--err-ink); border:1px solid var(--err-line); font-weight:700; }
 .itemrow.overdue { border-left:4px solid var(--err-ink); padding-left:12px; }
 .late-text { color:var(--err-ink); font-weight:700; }
+.soon-text { color:var(--warn-ink); font-weight:700; }
 .card.overdue-notice { background:var(--err-bg); color:var(--err-ink); border:2px solid var(--err-ink); }
 .card.has-overdue { border-left:4px solid var(--err-ink); }
 /* a group order you can fold away (joiner lists and the admin Claims screen) */

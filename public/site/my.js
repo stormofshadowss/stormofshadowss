@@ -22,6 +22,8 @@
   S.crumb = '<div class="crumb"><a href="#/">← My orders</a></div>';
   S.activeParcelClaimIds = () => new Set(S.parcels.filter((p) => ['requested', 'packed', 'shipped'].includes(p.status)).flatMap((p) => p.items.map((i) => i.claimId)));
   S.allClaims = () => (S.summary ? S.summary.orders.flatMap((o) => o.claims.map((c) => ({ ...c, orderTitle: o.title }))) : []);
+  // the STORAGE DEADLINE of an item that is ready to pack: the GOM keeps it on hand until then. Amber when it is within a week, red once it has passed.
+  S.storageHtml = (c) => (c.storageDeadline ? `<span data-storage="${esc(c.storageStatus)}" class="${c.storageStatus === 'late' ? 'late-text' : c.storageStatus === 'soon' ? 'soon-text' : ''}" title="The GOM keeps items on hand until this date — please request shipping before then.">${c.storageStatus === 'late' ? 'storage deadline passed' : 'storage deadline'} ${fmtDate(c.storageDeadline)}</span>` : '');
   S.readyItems = () => { const busy = S.activeParcelClaimIds(); return S.allClaims().filter((c) => c.status === 'confirmed' && c.pipeline === READY && !busy.has(c.id)); };
   S.owedFor = (orderId) => (orderId ? (S.summary.orders.find((o) => o.id === orderId)?.owed || 0) : S.summary.owed.total);
 
@@ -114,6 +116,7 @@
       if (p) return p.status === 'shipped' ? `On its way (parcel #${p.id})` : p.status === 'packed' ? `Packed (parcel #${p.id})` : `Shipping requested (parcel #${p.id})`;
       return c.pipeline;
     };
+    const storageNote = (c) => (!done && c.status === 'confirmed' && c.pipeline === READY && c.storageDeadline && !inParcel.has(c.id) ? ` · ${S.storageHtml(c)}` : '');          // not once the item is in a parcel: the deadline no longer matters
     // "Ask to cancel": the GOM has to approve it. The state of a request is shown under the item; the form opens in place.
     const paidOn = (c) => CATS.reduce((s, [k]) => s + (c.costs[k]?.paid || 0), 0);
     const cancelUi = (c) => {
@@ -135,7 +138,7 @@
       return `<div class="card gosec ${late.length ? 'has-overdue' : ''}" data-go="${esc(title)}"><div class="row"><h2 style="margin:0"><button class="ghost gohead" data-act="toggle-go" data-go="${esc(title)}" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} the items in ${esc(title)}"><span aria-hidden="true">${open ? '▾' : '▸'}</span> ${esc(title)}</button></h2>
         <div class="gobadges">${late.length ? `<span class="pill err" data-go-overdue>${late.length} overdue · ${money(lateTotal)}</span>` : toPay > 0 && !done ? `<span class="pill warn">${money(toPay)} to pay</span>` : ''}<span class="sub">${cs.length} item${cs.length === 1 ? '' : 's'}</span></div></div>
         ${open ? cs.map((c) => `<div class="itemrow ${c.overdue && c.owed > 0 ? 'overdue' : ''}"><div class="grow">${esc(c.label)}${S.tag(c.handle)} ${c.isFixed ? '<span class="pill">fixed</span>' : ''}
-        <div class="sub">${esc(stage(c))}${c.payBy && c.owed > 0 ? ` · <span class="${c.overdue ? 'late-text' : ''}">${c.overdue ? 'was due' : 'pay by'} ${fmtDate(c.payBy)}</span>` : ''}</div><div style="margin-top:4px">${costChips(c)}</div>${cancelUi(c)}</div>
+        <div class="sub">${esc(stage(c))}${storageNote(c)}${c.payBy && c.owed > 0 ? ` · <span class="${c.overdue ? 'late-text' : ''}">${c.overdue ? 'was due' : 'pay by'} ${fmtDate(c.payBy)}</span>` : ''}</div><div style="margin-top:4px">${costChips(c)}</div>${cancelUi(c)}</div>
         <div>${c.overdue ? '<span class="pill err">overdue</span>' : ''}</div></div>`).join('') : ''}</div>`;
     };
     view.innerHTML = `${S.crumb}<h1 style="margin:4px 0 10px">${done ? 'Completed orders' : 'Ongoing orders'}</h1>

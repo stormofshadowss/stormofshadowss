@@ -17,13 +17,19 @@
   const STATUS = { shipping_requested: ['warn', 'Shipping requested'], enroute: ['info', 'En route to GOM'], arrived: ['ok', 'Arrived at GOM'] };
   const ITEM = { ready: ['ok', 'Ready to pack'], checking: ['warn', 'Checking parcel'] };
 
+  // The long list of items waiting to be boxed can be FOLDED (it starts folded; the choice is remembered on this device) so the boxes underneath aren't pushed to the bottom. Ticks survive folding.
+  const OPEN_KEY = 'sos_wh_items_open';
+  let candOpen = (() => { try { return localStorage.getItem(OPEN_KEY) === '1'; } catch { return false; } })();
+  const candSummary = () => `${candOpen ? '▾' : '▸'} ${candidates.length} item${candidates.length === 1 ? '' : 's'} waiting to be boxed${selected.size ? ` · ${selected.size} ticked` : ''}`;
+  const syncCandSummary = () => { const b = $('#candToggle', root); if (b) { b.textContent = candSummary(); b.setAttribute('aria-expanded', String(candOpen)); } };
   function candidatesCard() {
     return `<div class="card"><h2>New box</h2>
       <p class="sub">Tick the items going in this box (only items that have arrived at your proxy appear). Enter an exact weight where you have one — items without one share the box's real weight by size.</p>
       ${candidates.length ? `<div class="btn-row" id="candPicks" style="margin:0 0 8px; flex-wrap:wrap; gap:6px"><button class="sm secondary" data-act="cand-all">Select all ${candidates.length}</button>
         ${[...new Set(candidates.map((c) => c.orderTitle))].map((t) => `<button class="sm secondary" data-act="cand-order" data-order="${esc(t)}">Select all in “${esc(t)}” (${candidates.filter((c) => c.orderTitle === t).length})</button>`).join('')}
         <button class="sm secondary" data-act="cand-none">Clear</button></div>` : ''}
-      <div class="scroll"><table class="grid"><thead><tr><th></th><th>Person</th><th>Item</th><th>Size</th><th>Weight (g)</th><th>Price</th></tr></thead><tbody>
+      ${candidates.length ? `<div style="margin:0 0 8px"><button type="button" class="ghost" id="candToggle" data-act="toggle-cands" aria-expanded="${candOpen}" aria-controls="candBody" style="font-weight:700">${esc(candSummary())}</button></div>` : ''}
+      <div class="scroll" id="candBody" data-cands-body ${candOpen || !candidates.length ? '' : 'hidden'}><table class="grid"><thead><tr><th></th><th>Person</th><th>Item</th><th>Size</th><th>Weight (g)</th><th>Price</th></tr></thead><tbody>
       ${candidates.length ? candidates.map((c) => `<tr data-cand="${c.claimId}"><td><input type="checkbox" data-act="pick" data-id="${c.claimId}" ${selected.has(c.claimId) ? 'checked' : ''}></td>
         <td>@${esc(c.handle)}</td><td>${esc(c.label)} <span class="sub">${esc(c.orderTitle)}</span></td>
         <td><select data-act="size" data-id="${c.claimId}" style="width:auto">${['XS', 'S', 'M', 'L', 'XL'].map((s) => `<option ${s === c.size ? 'selected' : ''}>${s}</option>`).join('')}</select></td>
@@ -81,6 +87,7 @@
   }
 
   async function refreshPreview() {
+    syncCandSummary();
     if (!selected.size) { preview = null; const el = $('#boxPreview', root); if (el) el.innerHTML = previewHtml(); return; }
     const r = await api('POST', '/api/admin/boxes/preview', { claimIds: [...selected], emsTotal: num('boxEms'), customsTotal: num('boxCustoms'), totalWeightG: Math.round(num('boxWeight')) });
     preview = r.ok ? r.json : { error: errText(r) };
@@ -92,6 +99,7 @@
     const b = e.target.closest('[data-act]'); if (!b) return;
     const act = b.dataset.act, id = Number(b.dataset.id);
     if (act === 'wh-view') { GOM.whView = b.dataset.view; return GOM.showTab('warehouse'); }
+    if (act === 'toggle-cands') { candOpen = !candOpen; try { localStorage.setItem(OPEN_KEY, candOpen ? '1' : '0'); } catch { /* ignore */ } const body = $('#candBody', root); if (body) body.hidden = !candOpen; return syncCandSummary(); }
     if (act === 'cand-all' || act === 'cand-order' || act === 'cand-none') {       // tick every item, every item in one group order, or none
       for (const c of candidates) {
         if (act === 'cand-none') selected.delete(c.claimId);
