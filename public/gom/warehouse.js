@@ -31,6 +31,7 @@
         : '<tr><td colspan="6" class="muted">Nothing is waiting to be boxed. Items appear here once their pipeline stage is "arrived at proxy / warehouse".</td></tr>'}</tbody></table></div>
       <div class="formgrid" style="margin-top:12px">
         <div><label for="boxEms">EMS total (£) — what you were charged</label><input id="boxEms" type="number" step="0.01" min="0"></div>
+        <div><label for="boxDue">EMS &amp; customs due by</label><input id="boxDue" type="date" value="${GOM.inDays(14)}"></div>
         <div><label for="boxCustoms">Customs total (£), if you already know it</label><input id="boxCustoms" type="number" step="0.01" min="0"></div>
         <div><label for="boxWeight">Total box weight (g), optional</label><input id="boxWeight" type="number" min="0" step="1"></div>
         <div><label for="boxTracking">Tracking ID (internal only)</label><input id="boxTracking" maxlength="80"></div></div>
@@ -60,6 +61,7 @@
       <div class="formgrid" style="margin-top:12px; align-items:end"><div><label>Tracking ID (internal only)</label><input data-track="${b.id}" value="${esc(b.trackingId || '')}" placeholder="not yet known" maxlength="80"></div>
         <div><button class="sm secondary" data-act="track" data-id="${b.id}">Save</button></div>
         <div><label>${b.customsTotal > 0 ? 'Update customs total (£)' : 'Add customs total (£)'}</label><input type="number" step="0.01" min="0" data-customs="${b.id}" value="${b.customsTotal > 0 ? b.customsTotal : ''}" placeholder="e.g. 14.50"></div>
+        <div><label>Customs due by</label><input type="date" data-customs-due="${b.id}" value="${GOM.inDays(14)}"></div>
         <div><button class="sm secondary" data-act="customs" data-id="${b.id}">${b.customsTotal > 0 ? 'Update' : 'Apply'} customs split</button></div></div></div>`;
   }
 
@@ -72,9 +74,9 @@
   }
 
   function draw() {
-    const keep = { ems: val('boxEms'), customs: val('boxCustoms'), weight: val('boxWeight'), track: val('boxTracking'), q: search };
+    const keep = { ems: val('boxEms'), due: val('boxDue'), customs: val('boxCustoms'), weight: val('boxWeight'), track: val('boxTracking'), q: search };
     root.innerHTML = `<h1 style="margin:18px 0 10px">Warehouse</h1>${GOM.whSwitch ? GOM.whSwitch('boxes') : ''}${candidatesCard()}${boxesCard()}`;
-    $('#boxEms', root).value = keep.ems; $('#boxCustoms', root).value = keep.customs; $('#boxWeight', root).value = keep.weight; $('#boxTracking', root).value = keep.track;
+    $('#boxEms', root).value = keep.ems; $('#boxDue', root).value = keep.due || GOM.inDays(14); $('#boxCustoms', root).value = keep.customs; $('#boxWeight', root).value = keep.weight; $('#boxTracking', root).value = keep.track;
     $('#boxPreview', root).innerHTML = previewHtml();
   }
 
@@ -102,7 +104,7 @@
       if (!selected.size) return msg('Select at least one item first.');
       if (!(num('boxEms') > 0)) return msg("Enter an EMS total — that's what creates the box.");
       const hadCustoms = num('boxCustoms') > 0;                          // read before the form is cleared
-      const r = await api('POST', '/api/admin/boxes', { claimIds: [...selected], emsTotal: num('boxEms'), customsTotal: num('boxCustoms'), totalWeightG: Math.round(num('boxWeight')), trackingId: val('boxTracking') });
+      const r = await api('POST', '/api/admin/boxes', { claimIds: [...selected], dueDate: val('boxDue') || GOM.inDays(14), emsTotal: num('boxEms'), customsTotal: num('boxCustoms'), totalWeightG: Math.round(num('boxWeight')), trackingId: val('boxTracking') });
       if (!r.ok) return msg(errText(r));
       selected.clear(); preview = null;
       ['boxEms', 'boxCustoms', 'boxWeight', 'boxTracking'].forEach((i) => { $(`#${i}`, root).value = ''; });
@@ -127,7 +129,7 @@
       if (!(total > 0)) return GOM.alert('Enter a customs total first.');
       const ok = await GOM.confirm(`Set the customs total for box #${id} to ${money(total)}?\n\nIt's shared across the items by their value. Each person's customs charge is recalculated; anyone who has already paid more than their new share gets the difference back as credit.`, { ok: 'Apply customs' });
       if (!ok) return;
-      const r = await api('POST', `/api/admin/boxes/${id}/customs`, { customsTotal: total }); await render(root);
+      const r = await api('POST', `/api/admin/boxes/${id}/customs`, { customsTotal: total, dueDate: $(`[data-customs-due="${id}"]`, root)?.value || GOM.inDays(14) }); await render(root);
       return GOM.toast(r.ok ? 'Customs applied.' : errText(r), !r.ok);
     }
   }

@@ -175,7 +175,7 @@ test("a payment for one GO only touches that GO; 'all outstanding' spreads acros
 test('money goes to Initials first, then EMS, Customs, Doms — and the allocations show it', async () => {
   const c = await joinerSession(app, 'alloc1@x.com', 'alloc1');
   const [claimId] = await claimAndSecure(app, admin, 'alloc1', w.album);
-  await app.api('PATCH', `/api/admin/claims/${claimId}`, { costs: { ems: { cost: 4 }, customs: { cost: 3 }, doms: { cost: 2 } } }, admin);
+  await app.api('PATCH', `/api/admin/claims/${claimId}`, { costs: { ems: { cost: 4, dueDate: '2099-12-31' }, customs: { cost: 3, dueDate: '2099-12-31' }, doms: { cost: 2, dueDate: '2099-12-31' } } }, admin);          // the fees are due after the item cost (each LINE is paid by its own date)
   let s = await summary(c);
   assert.deepEqual([s.owed.initials, s.owed.ems, s.owed.customs, s.owed.doms, s.owed.total], [26, 4, 3, 2, 35]);
 

@@ -1,3 +1,4 @@
+import { daysBetweenYMD } from './due.js';
 import { CATS, round2 } from './money.js';
 import { creditBalance } from './ledger.js';
 import { ukDate } from './closing.js';
@@ -23,12 +24,12 @@ export async function explainDue(pool, handle) {
     `SELECT c.id, c.joiner_id AS joinerId, c.label, c.status, c.order_id AS orderId, go.title AS orderTitle, COALESCE(c.pay_by, i.payment_deadline, go.payment_deadline) AS payBy,
             DATEDIFF(CURDATE(), COALESCE(c.pay_by, i.payment_deadline, go.payment_deadline)) AS daysLate
        FROM claims c LEFT JOIN group_orders go ON go.id = c.order_id LEFT JOIN items i ON i.id = c.item_id WHERE c.joiner_id IN (?) AND c.status <> 'cancelled' ORDER BY c.id`, [ids]);
-  const costs = claims.length ? (await pool.query('SELECT claim_id AS claimId, category, cost, paid FROM claim_costs WHERE claim_id IN (?)', [claims.map((c) => c.id)]))[0] : [];
+  const costs = claims.length ? (await pool.query('SELECT claim_id AS claimId, category, cost, paid, due_date AS dueDate FROM claim_costs WHERE claim_id IN (?)', [claims.map((c) => c.id)]))[0] : [];
   const byCat = Object.fromEntries(CATS.map((c) => [c, 0]));
   const items = [], handleTotals = new Map(people.map((p) => [p.id, { handle: p.handle, owed: 0, paid: 0 }]));
   let requested = { count: 0, total: 0 };
   for (const c of claims) {
-    const lines = Object.fromEntries(costs.filter((x) => x.claimId === c.id).map((x) => [x.category, { cost: Number(x.cost), paid: Number(x.paid) }]));
+    const lines = Object.fromEntries(costs.filter((x) => x.claimId === c.id).map((x) => [x.category, { cost: Number(x.cost), paid: Number(x.paid), due: x.category === 'initials' ? (c.payBy ? String(c.payBy).slice(0, 10) : null) : (x.dueDate ? String(x.dueDate).slice(0, 10) : null) }]));          // each line's own due date
     if (c.status !== 'confirmed') { requested.count += 1; requested.total = round2(requested.total + (lines.initials?.cost || 0)); continue; }
     const owedBy = Object.fromEntries(CATS.map((k) => [k, round2(Math.max(0, (lines[k]?.cost || 0) - (lines[k]?.paid || 0)))]));
     const owed = round2(CATS.reduce((n, k) => n + owedBy[k], 0)), paid = round2(CATS.reduce((n, k) => n + (lines[k]?.paid || 0), 0));
@@ -36,10 +37,13 @@ export async function explainDue(pool, handle) {
     if (owed <= 0.004) continue;
     for (const k of CATS) byCat[k] = round2(byCat[k] + owedBy[k]);
     handleTotals.get(c.joinerId).owed = round2(handleTotals.get(c.joinerId).owed + owed);
-    const overdue = !!(c.payBy && String(c.payBy).slice(0, 10) < String(today).slice(0, 10));
-    items.push({ claimId: c.id, handle: nameOf.get(c.joinerId), label: c.label, order: c.orderTitle || 'Shop (on hand)', owedBy, owed, paid, payBy: c.payBy ? String(c.payBy).slice(0, 10) : null, overdue, daysLate: overdue ? Number(c.daysLate) : 0 });
+    // overdue LINE by LINE: a fee has its own due date, so one added today is not overdue because of an old item date
+    const todayStr = String(today).slice(0, 10), lateCats = CATS.filter((k) => owedBy[k] > 0.004 && lines[k]?.due && lines[k].due < todayStr);
+    const overdueOwed = round2(lateCats.reduce((n, k) => n + owedBy[k], 0)), overdue = overdueOwed > 0;
+    const dues = CATS.filter((k) => owedBy[k] > 0.004 && lines[k]?.due).map((k) => lines[k].due).sort(), lateDues = lateCats.map((k) => lines[k].due).sort();
+    items.push({ claimId: c.id, handle: nameOf.get(c.joinerId), label: c.label, order: c.orderTitle || 'Shop (on hand)', owedBy, owed, paid, payBy: lateDues[0] || dues[0] || null, overdue, overdueOwed, daysLate: overdue ? daysBetweenYMD(lateDues[0], todayStr) : 0 });
   }
-  const owedTotal = round2(items.reduce((n, i) => n + i.owed, 0)), overdueItems = items.filter((i) => i.overdue), overdueTotal = round2(overdueItems.reduce((n, i) => n + i.owed, 0));
+  const owedTotal = round2(items.reduce((n, i) => n + i.owed, 0)), overdueItems = items.filter((i) => i.overdue), overdueTotal = round2(overdueItems.reduce((n, i) => n + i.overdueOwed, 0));
 
   const [pays] = await pool.query('SELECT id, joiner_id AS joinerId, amount, method, reference, status, created_at AS createdAt, reversed_at AS reversedAt, reverse_reason AS reason, batch_key AS batchKey FROM payments WHERE joiner_id IN (?) ORDER BY id DESC LIMIT 60', [ids]);
   const day = (v) => String(v).slice(0, 10), pay = (p) => ({ id: p.id, handle: nameOf.get(p.joinerId), amount: Number(p.amount), method: p.method, reference: p.reference || null, status: p.status, date: day(p.createdAt), reversedDate: p.reversedAt ? day(p.reversedAt) : null, reason: p.reason || null });
@@ -59,7 +63,7 @@ export async function explainDue(pool, handle) {
     if (overdueItems.length) {
       for (const o of [...new Set(overdueItems.map((i) => i.order))]) {
         const mine = overdueItems.filter((i) => i.order === o), late = Math.max(...mine.map((i) => i.daysLate));
-        lines.push(`${money(round2(mine.reduce((n, i) => n + i.owed, 0)))} is overdue on “${o}”: it was due ${ukDate(mine[0].payBy)} (${dayWord(late)}).`);
+        lines.push(`${money(round2(mine.reduce((n, i) => n + i.overdueOwed, 0)))} is overdue on “${o}”: it was due ${ukDate(mine[0].payBy)} (${dayWord(late)}).`);
       }
     } else {
       const next = items.filter((i) => i.payBy).map((i) => i.payBy).sort()[0];

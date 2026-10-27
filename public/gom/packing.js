@@ -112,6 +112,7 @@
       return `<form data-form="fees" data-id="${p.id}" style="margin-top:10px"><div class="formgrid" style="max-width:520px">
           <div><label>Postage — Doms (£)</label><input name="doms" type="number" step="0.01" min="0" value="${p.domsTotal ?? ''}" placeholder="e.g. 4.50"></div>
           <div><label>Packaging fee (£)</label><input name="packaging" type="number" step="0.01" min="0" value="${p.packagingTotal ?? ''}" placeholder="e.g. 1.00"></div>
+          <div><label>Fees due by</label><input name="dueDate" type="date" value="${GOM.inDays(14)}" required></div>
           <div><button type="submit" class="sm">Save fees</button></div></div>
         <div class="sub" style="margin-top:4px">${unset.length ? `Not set yet: ${unset.join(' and ')}. Each is for the whole parcel, ${fr.length ? `split ${splitWords(p)}, then shared across each person's own items` : 'shared across its items'}.` : `Saved: postage ${money(p.domsTotal)} · packaging ${money(p.packagingTotal)}`}${p.feesSet && !(p.companions || []).length ? ' (fees are set, so this parcel can no longer be combined)' : ''}</div>
         <p class="msg" data-msg hidden></p></form>
@@ -140,6 +141,7 @@
       if (Number.isNaN(n) || n < 0) return { error: `The ${key === 'doms' ? 'postage' : 'packaging fee'} must be an amount of £0 or more.` };
       values[key] = n;
     }
+    if (Object.keys(values).length) { const due = form.elements.dueDate?.value; if (!due) return { error: 'Pick the date these fees are due.' }; values.dueDate = due; }          // the fees' own due date
     return { values };
   }
   const feeMsg = (form, text) => { const m = $('[data-msg]', form); m.textContent = text; m.className = 'msg'; m.hidden = !text; };

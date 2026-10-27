@@ -308,9 +308,9 @@ test('payments settle in order: item cost, EMS, customs, postage, THEN packaging
   const c = await joinerSession(app, 'pf5@x.com', 'pf5');
   await addr(c);
   const [id] = await readyItems('pf5', w.keyring);                      // £6, unpaid
-  await app.api('PATCH', `/api/admin/claims/${id}`, { costs: { ems: { cost: 2 } } }, admin);
+  await app.api('PATCH', `/api/admin/claims/${id}`, { costs: { ems: { cost: 2, dueDate: '2099-12-31' } } }, admin);          // fees due after the item cost: each LINE is paid by its own date
   const p = (await request(c, { claimIds: [id] })).json;
-  await fees(p.id, { doms: 3, packaging: 1 });
+  await fees(p.id, { doms: 3, packaging: 1, dueDate: '2099-12-31' });
   const pay = await app.api('POST', '/api/my/payments', { method: 'PayPal', amount: 9, reference: 'ORDER' }, c);     // owes 6 + 2 + 3 + 1 = 12
   await app.api('POST', `/api/admin/payments/${pay.json.id}/verify`, {}, admin);
   const alloc = await app.q('SELECT category, amount FROM payment_allocations WHERE payment_id = ? ORDER BY id', [pay.json.id]);

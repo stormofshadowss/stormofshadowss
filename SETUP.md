@@ -504,3 +504,12 @@ Any item has a **"Hide from joiners"** tick (in the Add item and Edit item forms
 
 ### Group order names on the packing list
 On **Packing**, a **"Show group order names"** tick at the top shows **which group order each item comes from** ("from Odd & Fresh Pop-up", or "Shop (on hand)") under every item on the checklist — and next to the items on packed parcels. It's **off by default** and **remembered on that device** — use it when two group orders have an item with the same name and you need to pick the right stock.
+
+### Due dates for EMS, customs, postage and packaging
+A fee used to inherit the item's *original* pay-by date, so a fee added weeks later showed as **overdue the moment it appeared**. Now **each fee has its own due date, picked by you when you add it**, and the item cost keeps the claim's pay-by date exactly as before.
+- **Where you pick it** (a date box, suggested **14 days ahead**): **Claims → Edit costs** (a *Due by* column — you're asked if you raise a fee without one), **Packing → Save fees** (*Fees due by*), and **Warehouse** (*EMS & customs due by* when creating a box, and *Customs due by* when adding customs later).
+- **"Overdue" is now worked out line by line** — so a fee added today is never overdue because of an old item date; it's overdue only once *its own* date passes. This applies everywhere: the joiner's dashboard (each fee shows *"£4.00 to pay by 10/11/2026"* — amber until it's overdue, then red; the red notice counts only what is really overdue), your **Overdue** tab (it says e.g. *"Owed £14.00 (£4.00 of it postage / fees)"*), the **People → Look up** explanation, the overdue **reminder emails**, and **which debt a payment clears first** (an overdue item cost, then whatever is due soonest — each line by its own date).
+- **Reminder emails:** an overdue item cost and an overdue fee are reminded about **separately** — one email line each, once per claim, never repeated (fee lines read *"£4.00 in postage / fees still to pay (was due …)"*). A fee that isn't due yet is never mentioned.
+- **A fee with no date is never overdue.** To remove a fee's date, clear it in Edit costs. (Fees brought in by the Notion import have none.)
+- **Fees you'd already added** were given a fresh due date **14 days after the day this went live**, so nobody was suddenly told they were overdue because of one — change any of them in Edit costs.
+- Raising a fee **without** a date (for example by an older tool) keeps the date it already has, or gets **14 days** from that day.

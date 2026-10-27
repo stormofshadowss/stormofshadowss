@@ -139,7 +139,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
       `SELECT c.id, c.joiner_id AS joinerId, c.price_tbc AS priceTbc, c.label, c.status, c.pipeline, c.order_id, go.title AS orderTitle, c.set_id AS setId, (SELECT admin_decision FROM item_sets WHERE id = c.set_id) AS setDecision, c.is_direct, c.is_fixed, c.ready_to_pack_date, c.received_date, j.instagram_handle AS handle
          FROM claims c JOIN joiners j ON j.id = c.joiner_id LEFT JOIN group_orders go ON go.id = c.order_id WHERE ${where.join(' AND ')} ORDER BY j.instagram_handle, c.id LIMIT ${maxList() + 1}`, params);
     const truncated = rows.length > maxList(); if (truncated) rows.length = maxList();          // the screen says so, so nothing is ever cut off silently
-    const costs = rows.length ? (await pool.query('SELECT claim_id, category, cost, paid, paid_date FROM claim_costs WHERE claim_id IN (?)', [rows.map((r) => r.id)]))[0] : [];
+    const costs = rows.length ? (await pool.query('SELECT claim_id, category, cost, paid, paid_date, due_date FROM claim_costs WHERE claim_id IN (?)', [rows.map((r) => r.id)]))[0] : [];
     // What each person owes, has paid, and holds as credit — across ALL their claims, not just the ones this list is showing.
     const who = [...new Set(rows.map((r) => r.joinerId))];
     const [tot] = who.length ? await pool.query(
@@ -151,7 +151,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
     for (const t of tot) { const h = handleOf.get(t.joinerId); if (h) { people[h].owed = round2(t.owed); people[h].paid = round2(t.paid); } }
     for (const k of cred) { const h = handleOf.get(k.joinerId); if (h) people[h].credit = round2(k.credit); }
     const costsOf = new Map();
-    for (const c of costs) { if (!costsOf.has(c.claim_id)) costsOf.set(c.claim_id, {}); costsOf.get(c.claim_id)[c.category] = { cost: c.cost, paid: c.paid, paidDate: c.paid_date }; }
+    for (const c of costs) { if (!costsOf.has(c.claim_id)) costsOf.set(c.claim_id, {}); costsOf.get(c.claim_id)[c.category] = { cost: c.cost, paid: c.paid, paidDate: c.paid_date, due: c.due_date || null }; }
     res.json({
       people, truncated,
       claims: rows.map((r) => ({ ...r, priceTbc: !!r.priceTbc, is_direct: !!r.is_direct, is_fixed: !!r.is_fixed, costs: costsOf.get(r.id) || {} })),
@@ -224,7 +224,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
   // Edit one claim: cost lines, pipeline stage, size, or cancel it.
   app.patch('/api/admin/claims/:id', requireAdmin, wrap(async (req, res) => {
     const id = Number(req.params.id);
-    const line = z.object({ cost: z.number().min(0).max(100000).optional(), paid: z.number().min(0).max(100000).optional() });
+    const line = z.object({ cost: z.number().min(0).max(100000).optional(), paid: z.number().min(0).max(100000).optional(), dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional() });          // dueDate: a FEE's own due date (null = none)
     const b = z.object({
       costs: z.object(Object.fromEntries(CATS.map((c) => [c, line.optional()]))).partial().optional(),
       pipeline: z.enum(PIPELINE).optional(), status: z.enum(['confirmed', 'cancelled']).optional(),

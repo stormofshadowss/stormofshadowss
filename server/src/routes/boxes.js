@@ -1,3 +1,4 @@
+import { stampFeeDue } from '../lib/due.js';
 import { z } from 'zod';
 import { wrap } from '../lib/http.js';
 import { requireAdmin, audit } from '../auth.js';
@@ -40,7 +41,8 @@ export function boxRoutes(app, { pool }) {
     if (notOk.length) throw conflict(`Not ready to box (it must have arrived at the proxy and not be in a box already): ${notOk.map((r) => r.label).join(', ')}`, 'not_boxable');
     return rows;
   }
-  const splitBody = z.object({ claimIds: ids, emsTotal: money, customsTotal: money.optional(), totalWeightG: z.number().int().min(0).max(1_000_000).optional() });
+  const dueDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional();                           // when the EMS / customs fees are due (the GOM picks it)
+  const splitBody = z.object({ claimIds: ids, emsTotal: money, customsTotal: money.optional(), totalWeightG: z.number().int().min(0).max(1_000_000).optional(), dueDate });
   const splitFor = (items, b) => boxSplit(items, { emsTotal: b.emsTotal, customsTotal: b.customsTotal || 0, boxTotal: b.totalWeightG || 0 });
 
   // What the split WOULD be, before anything is saved.
@@ -64,6 +66,8 @@ export function boxRoutes(app, { pool }) {
         await conn.query('INSERT INTO box_items (box_id, claim_id, weight_used_g, ems_share, customs_share) VALUES (?,?,?,?,?)', [box.insertId, it.id, Math.round(s.weights[it.id]), s.emsShares[i], s.customsShares[i]]);
         await conn.query("UPDATE claim_costs SET cost = ROUND(cost + ?, 2) WHERE claim_id = ? AND category = 'ems'", [s.emsShares[i], it.id]);
         if (s.customsShares[i] > 0) await conn.query("UPDATE claim_costs SET cost = ROUND(cost + ?, 2) WHERE claim_id = ? AND category = 'customs'", [s.customsShares[i], it.id]);
+        if (s.emsShares[i] > 0) await stampFeeDue(conn, it.id, 'ems', b.dueDate);
+        if (s.customsShares[i] > 0) await stampFeeDue(conn, it.id, 'customs', b.dueDate);
         await conn.query("UPDATE claims SET pipeline = 'shipping requested', box_id = ? WHERE id = ?", [box.insertId, it.id]);
       }
       for (const jid of [...new Set(items.map((i) => i.joinerId))].sort((x, y) => x - y)) await sweepCredit(conn, jid);   // credit meets the new costs
@@ -147,7 +151,7 @@ export function boxRoutes(app, { pool }) {
   // Customs often arrives long after the box. Same value-based split as at creation, applied as a CHANGE from whatever was added
   // before — so it works the same five minutes or five months later, and correcting it later is safe.
   app.post('/api/admin/boxes/:id/customs', admin, wrap(async (req, res) => {
-    const { customsTotal } = z.object({ customsTotal: money }).parse(req.body);
+    const { customsTotal, dueDate: customsDue } = z.object({ customsTotal: money, dueDate }).parse(req.body);
     if (!(customsTotal > 0)) throw bad('Enter a customs total first.', 'customs_required');
     const id = Number(req.params.id);
     await withTx(pool, async (conn) => {
@@ -162,7 +166,8 @@ export function boxRoutes(app, { pool }) {
       for (const [i, it] of items.entries()) {
         const delta = round2(shares[i] - it.old);
         if (delta > 0) await conn.query("UPDATE claim_costs SET cost = ROUND(cost + ?, 2) WHERE claim_id = ? AND category = 'customs'", [delta, it.id]);
-        else if (delta < 0) await reduceCost(conn, it.joinerId, it.id, 'customs', -delta, 'Customs reduced', 'Customs correction');   // paid beyond the new figure becomes credit
+        if (shares[i] > 0 && (delta > 0 || customsDue)) await stampFeeDue(conn, it.id, 'customs', customsDue);
+        if (delta < 0) await reduceCost(conn, it.joinerId, it.id, 'customs', -delta, 'Customs reduced', 'Customs correction');   // paid beyond the new figure becomes credit
         await conn.query('UPDATE box_items SET customs_share = ? WHERE box_id = ? AND claim_id = ?', [shares[i], id, it.id]);
       }
       await conn.query('UPDATE boxes SET customs_total = ? WHERE id = ?', [customsTotal, id]);

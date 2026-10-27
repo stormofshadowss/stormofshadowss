@@ -1,3 +1,4 @@
+import { stampFeeDue } from './due.js';
 import { round2, splitAmount } from './money.js';
 import { lockJoiner, sweepCredit, reduceCost } from './ledger.js';
 import { SIZE_WEIGHTS } from './box.js';
@@ -46,7 +47,7 @@ export async function personWeights(conn, parcelId) {
   return out;
 }
 
-export async function applyFee(conn, parcelId, fee, total) {
+export async function applyFee(conn, parcelId, fee, total, dueDate = null) {            // dueDate: the date the GOM picked for this fee (else a fee keeps the date it has, or gets a default)
   const f = FEES[fee];
   const [[parcel]] = await conn.query('SELECT id, method, fee_split FROM parcels WHERE id = ? FOR UPDATE', [parcelId]);
   const { people, ownerOf } = await parcelPeople(conn, parcelId);
@@ -68,12 +69,13 @@ export async function applyFee(conn, parcelId, fee, total) {
       // the figure came down: anything already paid beyond the new amount goes to credit
       await reduceCost(conn, owner, it.claim_id, fee, -delta, `${f.reason} reduced`, `${f.reason} correction`);
     }
+    if (share > 0 && (delta > 0 || dueDate)) await stampFeeDue(conn, it.claim_id, fee, dueDate);                    // the fee's OWN due date
     await conn.query(`UPDATE parcel_items SET ${f.share} = ? WHERE parcel_id = ? AND claim_id = ?`, [share, parcelId, it.claim_id]);
   }
   await conn.query(`UPDATE parcels SET ${f.total} = ? WHERE id = ?`, [round2(total), parcelId]);
   for (const id of people) await sweepCredit(conn, id);
 }
-export const applyDoms = (conn, parcelId, total) => applyFee(conn, parcelId, 'doms', total);
+export const applyDoms = (conn, parcelId, total, dueDate = null) => applyFee(conn, parcelId, 'doms', total, dueDate);
 
 // After the split rule or someone's weight changes: share the fees already on the parcel out again (only the differences move; refunds go to credit).
 export async function resplitFees(conn, parcelId) {

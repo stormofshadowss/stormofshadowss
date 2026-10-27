@@ -38,21 +38,27 @@ export function meRoutes(app, { pool }) {
               go.title AS order_title, COALESCE(c.pay_by, i.payment_deadline, go.payment_deadline) AS pay_by
          FROM claims c LEFT JOIN group_orders go ON go.id = c.order_id LEFT JOIN items i ON i.id = c.item_id
         WHERE c.joiner_id = ? AND c.status <> 'cancelled' ORDER BY c.id`, [joiner.id]);
-    const costs = claims.length ? (await pool.query('SELECT claim_id, category, cost, paid, paid_date FROM claim_costs WHERE claim_id IN (?)', [claims.map((c) => c.id)]))[0] : [];
+    const costs = claims.length ? (await pool.query('SELECT claim_id, category, cost, paid, paid_date, due_date FROM claim_costs WHERE claim_id IN (?)', [claims.map((c) => c.id)]))[0] : [];
     const asks = claims.length ? (await pool.query('SELECT id, claim_id, status, reason, decision_note, requested_at, decided_at FROM cancel_requests WHERE claim_id IN (?) ORDER BY id', [claims.map((c) => c.id)]))[0] : [];
     const owed = Object.fromEntries(CATS.map((c) => [c, 0]));
     const orders = new Map();
     for (const c of claims) {
-      const lines = Object.fromEntries(costs.filter((x) => x.claim_id === c.id).map((x) => [x.category, { cost: x.cost, paid: x.paid, paidDate: x.paid_date }]));
+      const lines = Object.fromEntries(costs.filter((x) => x.claim_id === c.id).map((x) => [x.category, { cost: x.cost, paid: x.paid, paidDate: x.paid_date, due: (x.category === 'initials' ? c.pay_by : x.due_date) || null }]));        // each line's own due date: the item cost follows the claim's pay-by, a FEE has its own
       const claimOwed = c.status === 'confirmed' ? round2(CATS.reduce((s, cat) => s + Math.max(0, (lines[cat]?.cost || 0) - (lines[cat]?.paid || 0)), 0)) : 0;
       if (c.status === 'confirmed') for (const cat of CATS) owed[cat] = round2(owed[cat] + Math.max(0, (lines[cat]?.cost || 0) - (lines[cat]?.paid || 0)));
+      // "overdue" is worked out LINE by LINE: a fee added today is never overdue because of an old item date
+      const owingOf = (cat) => Math.max(0, (lines[cat]?.cost || 0) - (lines[cat]?.paid || 0));
+      const lateOf = (cat) => c.status === 'confirmed' && owingOf(cat) > 0.004 && !!lines[cat]?.due && lines[cat].due < today;
+      for (const cat of CATS) if (lines[cat]) lines[cat].overdue = lateOf(cat);
+      const overdueOwed = round2(CATS.reduce((s, cat) => s + (lateOf(cat) ? owingOf(cat) : 0), 0));
+      const dues = CATS.filter((cat) => c.status === 'confirmed' && owingOf(cat) > 0.004 && lines[cat]?.due).map((cat) => lines[cat].due).sort(), lateDues = CATS.filter(lateOf).map((cat) => lines[cat].due).sort();
       const key = c.order_id || 0;
       if (!orders.has(key)) orders.set(key, { id: c.order_id, title: c.order_title || 'Shop (on hand)', owed: 0, claims: [] });
       const o = orders.get(key);
       o.owed = round2(o.owed + claimOwed);
       o.claims.push({
         id: c.id, handle: joiner.handle, label: c.label, status: c.status, pipeline: c.pipeline, isFixed: !!c.is_fixed, receivedDate: c.received_date, splitShare: c.split_share, priceTbc: !!c.price_tbc,
-        payBy: claimOwed > 0 ? c.pay_by : null, overdue: !!(claimOwed > 0 && c.pay_by && c.pay_by < today), owed: claimOwed, costs: lines,
+        payBy: claimOwed > 0 ? (lateDues[0] || dues[0] || null) : null, overdue: overdueOwed > 0, overdueOwed, owed: claimOwed, costs: lines,
         cancelRequest: (() => { const last = asks.filter((a) => a.claim_id === c.id).at(-1); return last && ['pending', 'declined'].includes(last.status) ? { id: last.id, status: last.status, reason: last.reason, note: last.decision_note, requestedAt: last.requested_at, decidedAt: last.decided_at } : null; })(),
       });
     }

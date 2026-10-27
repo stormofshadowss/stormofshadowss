@@ -61,11 +61,11 @@ test('payments: only what is STILL owed counts — paid-up, part-paid, unconfirm
   assert.equal(mineOf(r, part)[0].owed, 8, 'only the unpaid £8, not the whole £20');
 });
 
-test('payments: every cost line counts (postage and packaging too) and the list is worst-first with totals', async () => {
+test('payments: every OVERDUE cost line counts (a fee once its own due date has passed) and the list is worst-first with totals', async () => {
   const old = await orderWith(30), recent = await orderWith(2);
   const [a, b] = [fresh('wa'), fresh('wb')];
   const [ca] = await claimAndSecure(app, admin, a, old.item); await claimAndSecure(app, admin, b, recent.item);
-  await api('PATCH', `/api/admin/claims/${ca}`, { costs: { ems: { cost: 3 }, doms: { cost: 4 }, packaging: { cost: 1 } } });
+  await api('PATCH', `/api/admin/claims/${ca}`, { costs: { ems: { cost: 3, dueDate: '2000-01-01' }, doms: { cost: 4, dueDate: '2000-01-01' }, packaging: { cost: 1, dueDate: '2000-01-01' } } });        // fees whose OWN due date has passed (a fee added today is not overdue — see fee-due-dates.test.js)
   const o = await overdue();
   assert.equal(mineOf(o.payments, a)[0].owed, 18, '10 + 3 + 4 + 1');
   const order = o.payments.map((r) => r.handle);

@@ -1,3 +1,4 @@
+import { LINE_DUE } from '../lib/due.js';
 import { imageOut } from '../lib/images.js';
 import { z } from 'zod';
 import { wrap } from '../lib/http.js';
@@ -336,14 +337,14 @@ export function adminRoutes(app, { pool, notifier }) {
   // One request saves both, so a parcel never ends up with half its fees.
   app.post('/api/admin/parcels/:id/fees', admin, wrap(async (req, res) => {
     const fee = z.number().min(0).max(10000).refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, 'At most 2 decimal places');
-    const b = z.object({ doms: fee.optional(), packaging: fee.optional() }).refine((v) => v.doms !== undefined || v.packaging !== undefined, 'Give a postage and/or packaging amount').parse(req.body);
+    const b = z.object({ doms: fee.optional(), packaging: fee.optional(), dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }).refine((v) => v.doms !== undefined || v.packaging !== undefined, 'Give a postage and/or packaging amount').parse(req.body);          // dueDate: when these fees are due
     const id = Number(req.params.id);
     await withTx(pool, async (conn) => {
       const [[p]] = await conn.query('SELECT status FROM parcels WHERE id = ?', [id]);
       if (!p) throw notFound('No such parcel');
       if (p.status !== 'requested') throw conflict('Fees can only be set while the parcel is still in the queue, before it is marked packed', 'bad_state');
-      if (b.doms !== undefined) await applyFee(conn, id, 'doms', round2(b.doms));
-      if (b.packaging !== undefined) await applyFee(conn, id, 'packaging', round2(b.packaging));
+      if (b.doms !== undefined) await applyFee(conn, id, 'doms', round2(b.doms), b.dueDate);
+      if (b.packaging !== undefined) await applyFee(conn, id, 'packaging', round2(b.packaging), b.dueDate);
       await audit(conn, req.account.id, 'parcel.fees', 'parcel', id, b);
     });
     res.json({ ok: true });
@@ -460,13 +461,15 @@ export function adminRoutes(app, { pool, notifier }) {
   app.get('/api/admin/overdue', admin, wrap(async (req, res) => {
     const [pay] = await pool.query(
       `SELECT c.id AS claimId, j.instagram_handle AS handle, c.label, COALESCE(go.title, 'Shop (on hand)') AS orderTitle,
-              COALESCE(c.pay_by, i.payment_deadline, go.payment_deadline) AS due, (c.pay_by IS NOT NULL OR i.payment_deadline IS NOT NULL) AS ownDate,
-              (SELECT COALESCE(SUM(cc.cost - cc.paid), 0) FROM claim_costs cc WHERE cc.claim_id = c.id AND cc.cost > cc.paid) AS owed,
-              DATEDIFF(CURDATE(), COALESCE(c.pay_by, i.payment_deadline, go.payment_deadline)) AS daysOverdue,
+              MIN(${LINE_DUE}) AS due, (c.pay_by IS NOT NULL OR i.payment_deadline IS NOT NULL) AS ownDate,
+              SUM(cc.cost - cc.paid) AS owed, SUM(CASE WHEN cc.category <> 'initials' THEN cc.cost - cc.paid ELSE 0 END) AS feesOwed,
+              DATEDIFF(CURDATE(), MIN(${LINE_DUE})) AS daysOverdue,
               (SELECT n.sent_at FROM notification_log n WHERE n.kind = 'overdue_reminder' AND n.ref_id = c.id) AS remindedAt
-         FROM claims c JOIN joiners j ON j.id = c.joiner_id LEFT JOIN items i ON i.id = c.item_id LEFT JOIN group_orders go ON go.id = c.order_id
-        WHERE c.status = 'confirmed' AND COALESCE(c.pay_by, i.payment_deadline, go.payment_deadline) < CURDATE()
-       HAVING owed > 0 ORDER BY daysOverdue DESC, handle, c.id LIMIT 1000`);
+         FROM claims c JOIN joiners j ON j.id = c.joiner_id JOIN claim_costs cc ON cc.claim_id = c.id AND cc.cost > cc.paid
+         LEFT JOIN items i ON i.id = c.item_id LEFT JOIN group_orders go ON go.id = c.order_id
+        WHERE c.status = 'confirmed' AND (${LINE_DUE}) < CURDATE()
+        GROUP BY c.id, j.instagram_handle, c.label, go.title, c.pay_by, i.payment_deadline
+       ORDER BY daysOverdue DESC, handle, c.id LIMIT 1000`);                // only the lines that are themselves overdue: a fee has its own due date
     const [sto] = await pool.query(
       `SELECT c.id AS claimId, j.instagram_handle AS handle, c.label, COALESCE(go.title, 'Shop (on hand)') AS orderTitle, c.size_bucket AS size,
               c.ready_to_pack_date AS readyDate, (c.storage_deadline_override IS NOT NULL) AS overridden,
@@ -479,7 +482,7 @@ export function adminRoutes(app, { pool, notifier }) {
     const [prox] = await pool.query(
       `SELECT pp.id, p.name AS proxy, pp.summary, pp.deadline, DATEDIFF(CURDATE(), pp.deadline) AS daysOverdue
          FROM proxy_payments pp JOIN proxies p ON p.id = pp.proxy_id WHERE pp.is_paid = 0 AND pp.deadline < CURDATE() ORDER BY daysOverdue DESC, pp.id`);
-    const payments = pay.map((r) => ({ ...r, owed: round2(r.owed), ownDate: !!r.ownDate }));
+    const payments = pay.map((r) => ({ ...r, owed: round2(r.owed), feesOwed: round2(r.feesOwed), ownDate: !!r.ownDate }));
     res.json({
       payments, storage: sto.map((r) => ({ ...r, overridden: !!r.overridden })), proxy: prox,
       totals: { paymentsOwed: round2(payments.reduce((t, r) => t + r.owed, 0)), people: new Set(payments.map((r) => r.handle)).size, storageItems: sto.length, proxyPayments: prox.length },

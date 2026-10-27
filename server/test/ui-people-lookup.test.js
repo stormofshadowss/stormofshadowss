@@ -26,7 +26,7 @@ test('THE CARD IS AT THE TOP OF PEOPLE; typing suggests handles (including peopl
 
 test('LOOKING SOMEONE UP SHOWS WHAT THEY OWE AND WHY: the plain-words explanation, then each item with its group order, owed, paid and due date (overdue flagged) and a breakdown only when it is more than one thing', async () => {
   const p0 = await person(u('who')); const h = p0.handles[0]; const late = await goOrder('Old Fansign', '2000-01-01'), fine = await goOrder('New Pop-up', '2099-03-04');
-  const [c1] = await claimAndSecure(app, admin, h, await item(late, 10, 'Late album')); await claimAndSecure(app, admin, h, await item(fine, 5, 'Fresh keyring')); await api('PATCH', `/api/admin/claims/${c1}`, { costs: { ems: { cost: 4 } } });
+  const [c1] = await claimAndSecure(app, admin, h, await item(late, 10, 'Late album')); await claimAndSecure(app, admin, h, await item(fine, 5, 'Fresh keyring')); await api('PATCH', `/api/admin/claims/${c1}`, { costs: { ems: { cost: 4, dueDate: '2000-01-01' } } });          // an EMS fee whose OWN date has passed too (a fee added today is not overdue — see fee-due-dates.test.js)
   const p = await open(); await lookup(p, `@${h.toUpperCase()}`); const card = result(p);
   assert.equal(p.text(p.q('[data-due-handle]', card)), `@${h}`); assert.match(p.text(card), new RegExp(p0.email.replace('.', '\\.')));
   const lines = p.qa('[data-due-explanation] li', card).map((l) => p.text(l)); assert.equal(lines[0], `@${h} owes £19.00 now, across 2 items on 2 group orders.`); assert.ok(lines.some((l) => /^£14\.00 is overdue on “Old Fansign”: it was due 01\/01\/2000 \(\d+ days ago\)\.$/.test(l)));

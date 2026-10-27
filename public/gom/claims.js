@@ -92,9 +92,9 @@
     if (fixing === c.id) return fixPanel(c);
     if (editing === c.id) {
       return `<tr><td colspan="7"><form data-form="edit-costs" data-id="${c.id}"><strong>${esc(c.label)}</strong>
-        <div class="cost-edit" style="margin:10px 0"><span></span><span class="sub">Cost (£)</span><span class="sub">Paid (£)</span>
-        ${CATS.map(([k, name]) => `<span>${name}</span><input type="number" step="0.01" min="0" name="${k}_cost" value="${c.costs[k]?.cost ?? 0}"><input type="number" step="0.01" min="0" name="${k}_paid" value="${c.costs[k]?.paid ?? 0}">`).join('')}</div>
-        <p class="sub">Raising a cost never changes what's already been paid. A paid amount above the cost becomes credit.</p>
+        <div class="cost-edit" style="margin:10px 0"><span></span><span class="sub">Cost (£)</span><span class="sub">Paid (£)</span><span class="sub">Due by</span>
+        ${CATS.map(([k, name]) => `<span>${name}</span><input type="number" step="0.01" min="0" name="${k}_cost" value="${c.costs[k]?.cost ?? 0}"><input type="number" step="0.01" min="0" name="${k}_paid" value="${c.costs[k]?.paid ?? 0}">${k === 'initials' ? '<span class="sub" title="The item cost is due on the claim\'s pay-by date">pay-by date</span>' : `<input type="date" name="${k}_due" value="${c.costs[k]?.due || (c.costs[k]?.cost > 0 ? '' : GOM.inDays(14))}" aria-label="${name} due by">`}`).join('')}</div>
+        <p class="sub">Raising a cost never changes what's already been paid. A paid amount above the cost becomes credit. <strong>Each fee has its own due date</strong> — it is only called overdue once that date has passed (the item cost keeps the claim's pay-by date).</p>
         <p class="msg" data-msg hidden></p>
         <div class="btn-row"><button type="submit" class="sm">Save</button><button type="button" class="sm secondary" data-act="cancel-edit">Cancel</button></div></form></td></tr>`;
     }
@@ -544,6 +544,11 @@
       const patch = {};
       if (cost !== (claim.costs[k]?.cost || 0)) patch.cost = cost;
       if (paid !== (claim.costs[k]?.paid || 0)) patch.paid = paid;
+      if (k !== 'initials') {                                                                                    // a fee has its own due date: you pick it each time you add or raise one
+        const due = form.elements[`${k}_due`].value || null, was = claim.costs[k]?.due || null;
+        if (cost > (claim.costs[k]?.cost || 0) && !due) { const m = $('[data-msg]', form); m.textContent = `Pick a due date for the ${CATS.find(([x]) => x === k)[1]} fee.`; m.className = 'msg'; m.hidden = false; return; }
+        if (cost > 0 && (patch.cost !== undefined || due !== was)) patch.dueDate = due;
+      }
       if (Object.keys(patch).length) costs[k] = patch;
     }
     if (!Object.keys(costs).length) { editing = null; return draw(); }

@@ -267,7 +267,7 @@ test('following a parcel: queue → fees → packed → on its way → "it\'s ar
 test('ongoing orders: grouped by order, each item shows its stage, cost lines with paid dates, and an overdue flag', async () => {
   await joiner('ong_h');
   const [paid] = await claimAndSecure(app, admin, 'ong_h', w.keyring);
-  await api('PATCH', `/api/admin/claims/${paid}`, { costs: { initials: { paid: 6 }, ems: { cost: 2 } } });
+  await api('PATCH', `/api/admin/claims/${paid}`, { costs: { initials: { paid: 6 }, ems: { cost: 2, dueDate: '2000-01-01' } } });          // an EMS fee whose OWN due date has passed (a fee added today is not overdue — see ui-fee-due-dates.test.js)
   await claimAndSecure(app, admin, 'ong_h', w.album);
   await api('PATCH', `/api/admin/orders/${w.order}`, { paymentDeadline: '2000-01-01' });
   const p = await mine('ong_h'); await go(p, '#/ongoing');

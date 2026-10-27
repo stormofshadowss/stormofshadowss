@@ -1,3 +1,4 @@
+import { LINE_DUE } from './due.js';
 import { offSet } from './notify-events.js';
 import { round2 } from './money.js';
 
@@ -133,26 +134,34 @@ export function createNotifier({ pool, mailer, cfg }) {
   // 4. ONE reminder per overdue claim, after its pay-by date. A claim already reminded is never reminded again. The log row is claimed BEFORE sending
   // (so two runs at once can't both email) and released if sending fails (so the next run tries again).
   async function sendOverdueReminders() {
+    // Per claim, only the LINES that are themselves overdue count: the item cost (its pay-by date) and any FEE — EMS, customs, postage, packaging — (its own due date, picked by the GOM). A fee is
+    // never "overdue" because of an old item date. The two are reminded about separately: one reminder each, per claim.
     const [rows] = await pool.query(
-      `SELECT c.id AS claimId, c.joiner_id AS joinerId, c.label, COALESCE(c.pay_by, i.payment_deadline, go.payment_deadline) AS due,
-              (SELECT COALESCE(SUM(cc.cost - cc.paid), 0) FROM claim_costs cc WHERE cc.claim_id = c.id AND cc.cost > cc.paid) AS owed
-         FROM claims c JOIN joiners j ON j.id = c.joiner_id JOIN accounts a ON a.id = j.account_id AND a.notify_email = 1
+      `SELECT c.id AS claimId, c.joiner_id AS joinerId, c.label,
+              MIN(CASE WHEN cc.category = 'initials' THEN ${LINE_DUE} END) AS dueItem, SUM(CASE WHEN cc.category = 'initials' THEN cc.cost - cc.paid ELSE 0 END) AS owedItem,
+              MIN(CASE WHEN cc.category <> 'initials' THEN cc.due_date END) AS dueFee, SUM(CASE WHEN cc.category <> 'initials' THEN cc.cost - cc.paid ELSE 0 END) AS owedFee
+         FROM claims c JOIN joiners j ON j.id = c.joiner_id JOIN accounts a ON a.id = j.account_id AND a.notify_email = 1 JOIN claim_costs cc ON cc.claim_id = c.id AND cc.cost > cc.paid
          LEFT JOIN items i ON i.id = c.item_id LEFT JOIN group_orders go ON go.id = c.order_id
-        WHERE c.status = 'confirmed' AND COALESCE(c.pay_by, i.payment_deadline, go.payment_deadline) < CURDATE()
-          AND NOT EXISTS (SELECT 1 FROM notification_log n WHERE n.kind = 'overdue_reminder' AND n.ref_id = c.id)
-       HAVING owed > 0 ORDER BY c.joiner_id, c.id`);
+        WHERE c.status = 'confirmed' AND (${LINE_DUE}) < CURDATE()
+        GROUP BY c.id, c.joiner_id, c.label ORDER BY c.joiner_id, c.id`);
+    const [logged] = rows.length ? await pool.query("SELECT kind, ref_id AS refId FROM notification_log WHERE kind IN ('overdue_reminder', 'overdue_fee_reminder') AND ref_id IN (?)", [rows.map((r) => r.claimId)]) : [[]];
+    const done = new Set(logged.map((l) => `${l.kind}:${l.refId}`));
+    const wanted = rows.flatMap((r) => [
+      Number(r.owedItem) > 0 && !done.has(`overdue_reminder:${r.claimId}`) ? { kind: 'overdue_reminder', joinerId: r.joinerId, claimId: r.claimId, label: r.label, owed: r.owedItem, due: r.dueItem, fee: false } : null,
+      Number(r.owedFee) > 0 && !done.has(`overdue_fee_reminder:${r.claimId}`) ? { kind: 'overdue_fee_reminder', joinerId: r.joinerId, claimId: r.claimId, label: r.label, owed: r.owedFee, due: r.dueFee, fee: true } : null,
+    ]).filter(Boolean);
     let emails = 0, claims = 0;
-    for (const joinerId of [...new Set(rows.map((r) => r.joinerId))]) {
+    for (const joinerId of [...new Set(wanted.map((r) => r.joinerId))]) {
       const mine = [];
-      for (const r of rows.filter((x) => x.joinerId === joinerId)) {
-        const [ins] = await pool.query("INSERT IGNORE INTO notification_log (joiner_id, kind, ref_id) VALUES (?, 'overdue_reminder', ?)", [joinerId, r.claimId]);
+      for (const r of wanted.filter((x) => x.joinerId === joinerId)) {
+        const [ins] = await pool.query('INSERT IGNORE INTO notification_log (joiner_id, kind, ref_id) VALUES (?, ?, ?)', [joinerId, r.kind, r.claimId]);
         if (ins.affectedRows === 1) mine.push(r);
       }
       if (!mine.length) continue;
       const to = await recipient(joinerId, 'overdue');
       const ok = to && await deliver(to.email, `A friendly reminder: payment is overdue (@${to.handle})`,
-        `Hi @${to.handle},\n\nJust a friendly reminder — ${mine.length === 1 ? 'this item is' : 'these items are'} past the pay-by date:\n\n${mine.map((r) => `  • ${r.label} — ${pounds(r.owed)} still to pay (was due ${ukDate(r.due)})`).join('\n')}\n\nIf you've already paid, thank you — it may just not have been checked yet. Otherwise you can pay here: ${myOrders}#/pay\n\nThis is the only reminder we'll send for these items.`);
-      if (!ok) { await pool.query("DELETE FROM notification_log WHERE kind = 'overdue_reminder' AND ref_id IN (?)", [mine.map((r) => r.claimId)]); continue; }
+        `Hi @${to.handle},\\n\\nJust a friendly reminder — ${mine.length === 1 ? 'this item is' : 'these items are'} past the pay-by date:\\n\\n${mine.map((r) => `  • ${r.label} — ${pounds(r.owed)} ${r.fee ? 'in postage / fees ' : ''}still to pay (was due ${ukDate(r.due)})`).join('\\n')}\\n\\nIf you've already paid, thank you — it may just not have been checked yet. Otherwise you can pay here: ${myOrders}#/pay\\n\\nThis is the only reminder we'll send for these items.`);
+      if (!ok) { for (const r of mine) await pool.query('DELETE FROM notification_log WHERE kind = ? AND ref_id = ?', [r.kind, r.claimId]); continue; }
       emails += 1; claims += mine.length;
     }
     return { emails, claims };

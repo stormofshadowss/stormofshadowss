@@ -61,7 +61,7 @@
     if (c.priceTbc) return '<span class="pill">Price TBC — nothing to pay yet</span>';          // never shown as £0.00
     return CATS.filter(([k]) => c.costs[k] && (c.costs[k].cost || c.costs[k].paid)).map(([k, name]) => {
       const x = c.costs[k], owed = Math.max(0, x.cost - x.paid);
-      return `<span class="pill ${owed > 0 && c.status === 'confirmed' ? (c.overdue ? 'err' : 'warn') : 'ok'}">${name} ${money(x.cost)}${k === 'initials' && c.splitShare > 0 ? ` (includes ${money(c.splitShare)} for an unclaimed part)` : ''}${c.status !== 'confirmed' ? '' : owed > 0 ? ` · ${money(owed)} to pay` : x.paidDate ? ` · paid ${fmtDate(x.paidDate)}` : ' · paid'}</span>`;
+      return `<span class="pill ${owed > 0 && c.status === 'confirmed' ? (x.overdue ? 'err' : 'warn') : 'ok'}">${name} ${money(x.cost)}${k === 'initials' && c.splitShare > 0 ? ` (includes ${money(c.splitShare)} for an unclaimed part)` : ''}${c.status !== 'confirmed' ? '' : owed > 0 ? ` · ${money(owed)} to pay${k !== 'initials' && x.due ? ` by ${fmtDate(x.due)}` : ''}` : x.paidDate ? ` · paid ${fmtDate(x.paidDate)}` : ' · paid'}</span>`;
     }).join(' ');
   }
 
@@ -71,7 +71,7 @@
     const claims = S.allClaims();
     const ongoing = claims.filter((c) => c.pipeline !== 'completed'), completed = claims.filter((c) => c.pipeline === 'completed');
     const ready = S.readyItems().length;
-    const late = claims.filter((c) => c.overdue && c.owed > 0), lateTotal = late.reduce((n, c) => n + c.owed, 0), lateGos = [...new Set(late.map((c) => c.orderTitle))];
+    const late = claims.filter((c) => c.overdue && c.owed > 0), lateTotal = late.reduce((n, c) => n + c.overdueOwed, 0), lateGos = [...new Set(late.map((c) => c.orderTitle))];
     const tile = (label, n, cls = '') => `<div class="tile ${cls}"><div class="sub" style="color:inherit">${label}</div><div class="n">${money(n)}</div></div>`;
     const card = (href, title, hint) => `<a class="gocard" href="${href}"><strong>${title}</strong><span class="sub">${hint}</span></a>`;
     const settingsCard = card('#/settings', 'My settings', m.pending.length ? `${m.pending.length} handle${m.pending.length === 1 ? '' : 's'} waiting for the GOM` : 'handles, email & preferences');
@@ -131,7 +131,7 @@
     S.listKind = kind; S.goChosen ||= new Map();
     const goOpen = (title, cs) => { const k = `${kind}:${title}`; return S.goChosen.has(k) ? S.goChosen.get(k) : (cs.some((c) => c.overdue && c.owed > 0) || byGo.size <= 3); };
     const goCard = (title, cs) => {
-      const open = goOpen(title, cs), late = cs.filter((c) => c.overdue && c.owed > 0), lateTotal = late.reduce((n, c) => n + c.owed, 0), toPay = cs.reduce((n, c) => n + (c.owed > 0 ? c.owed : 0), 0);
+      const open = goOpen(title, cs), late = cs.filter((c) => c.overdue && c.owed > 0), lateTotal = late.reduce((n, c) => n + c.overdueOwed, 0), toPay = cs.reduce((n, c) => n + (c.owed > 0 ? c.owed : 0), 0);
       return `<div class="card gosec ${late.length ? 'has-overdue' : ''}" data-go="${esc(title)}"><div class="row"><h2 style="margin:0"><button class="ghost gohead" data-act="toggle-go" data-go="${esc(title)}" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} the items in ${esc(title)}"><span aria-hidden="true">${open ? '▾' : '▸'}</span> ${esc(title)}</button></h2>
         <div class="gobadges">${late.length ? `<span class="pill err" data-go-overdue>${late.length} overdue · ${money(lateTotal)}</span>` : toPay > 0 && !done ? `<span class="pill warn">${money(toPay)} to pay</span>` : ''}<span class="sub">${cs.length} item${cs.length === 1 ? '' : 's'}</span></div></div>
         ${open ? cs.map((c) => `<div class="itemrow ${c.overdue && c.owed > 0 ? 'overdue' : ''}"><div class="grow">${esc(c.label)}${S.tag(c.handle)} ${c.isFixed ? '<span class="pill">fixed</span>' : ''}

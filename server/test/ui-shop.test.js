@@ -230,7 +230,7 @@ test('My orders when signed in: handle, the five "what you owe" tiles, and each 
   for (const item of [w.keyring, w.album]) await app.api('POST', '/api/claims', { handle: 'owes_h', lines: [{ itemId: item }] });
   const [first] = (await claimsOf('owes_h'));
   await app.api('POST', '/api/admin/claims/secure', { claimIds: [first.id] }, admin);
-  await app.api('PATCH', `/api/admin/claims/${first.id}`, { costs: { ems: { cost: 2 }, doms: { cost: 3 }, packaging: { cost: 1 } } }, admin);
+  await app.api('PATCH', `/api/admin/claims/${first.id}`, { costs: { ems: { cost: 2, dueDate: '2099-12-31' }, doms: { cost: 3, dueDate: '2099-12-31' }, packaging: { cost: 1, dueDate: '2099-12-31' } } }, admin);          // fees due after the item, so the claim's "pay by" is still the item's date
   const p = await openPage(app, '/my.html', { cookies: [c] });
   const text = p.text(p.q('#view'));
   assert.match(text, /owes@x\.com/); assert.match(text, /@owes_h/);

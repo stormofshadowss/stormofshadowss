@@ -17,7 +17,7 @@ const verify = (id) => api('POST', `/api/admin/payments/${id}/verify`, {});
 
 test('THE BASICS: what they owe, across how many items and group orders, what it is made up of, and (with nothing late) the earliest due date', async () => {
   const { cookie, handles } = await person(u('basic')); const [h] = handles; const g = await goOrder('Skzoo Pop-up', '2099-03-04'); const a = await item(g, 12, 'Plush'), b = await item(g, 8, 'Keyring');
-  const [ca] = await claimAndSecure(app, admin, h, a); await claimAndSecure(app, admin, h, b); await api('PATCH', `/api/admin/claims/${ca}`, { costs: { ems: { cost: 4 }, customs: { cost: 3 } } }); void cookie;
+  const [ca] = await claimAndSecure(app, admin, h, a); await claimAndSecure(app, admin, h, b); await api('PATCH', `/api/admin/claims/${ca}`, { costs: { ems: { cost: 4, dueDate: '2099-06-01' }, customs: { cost: 3, dueDate: '2099-06-01' } } }); void cookie;                 // the fees' own due date, later than the item's
   const d = await due(h); assert.deepEqual([d.owedTotal, d.overdueTotal, d.items.length, d.many], [27, 0, 2, false]); assert.deepEqual([d.byCategory.initials, d.byCategory.ems, d.byCategory.customs], [20, 4, 3]);
   assert.equal(d.explanation[0], `@${h} owes £27.00 now, across 2 items on 1 group order.`); assert.equal(d.explanation[1], 'That is made up of £20.00 item cost, £4.00 EMS, £3.00 customs.'); assert.equal(d.explanation[2], 'Nothing is overdue yet — the earliest due date is 04/03/2099.');
   const plush = d.items.find((i) => i.label === 'Plush'); assert.deepEqual([plush.order, plush.owed, plush.owedBy.ems, plush.payBy, plush.overdue], ['Skzoo Pop-up', 19, 4, '2099-03-04', false]);

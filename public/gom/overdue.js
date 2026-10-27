@@ -20,7 +20,7 @@
       ${byPerson.size ? [...byPerson.entries()].map(([handle, rows]) => `<div style="border-top:1px solid var(--line); margin-top:10px; padding-top:8px" data-person="${esc(handle)}">
         <div class="row"><strong>@${esc(handle)}</strong><span>owes <strong>${money(rows.reduce((t, r) => t + r.owed, 0))}</strong> overdue · ${rows.length} item${rows.length === 1 ? '' : 's'}</span></div>
         ${rows.map((r) => `<div class="itemrow" data-claim="${r.claimId}"><div class="grow">${esc(r.label)} <span class="sub">${esc(r.orderTitle)}</span>
-          <div class="sub">Owed ${money(r.owed)} · was due ${fmtDate(r.due)}${r.ownDate ? " (this item's own date)" : ''}${r.remindedAt ? ` · reminder emailed ${fmtDate(r.remindedAt)}` : ''}</div></div><div>${late(r.daysOverdue)}</div></div>`).join('')}</div>`).join('')
+          <div class="sub">Owed ${money(r.owed)}${r.feesOwed > 0 ? ` (${money(r.feesOwed)} of it postage / fees)` : ''} · was due ${fmtDate(r.due)}${r.ownDate ? " (this item's own date)" : ''}${r.remindedAt ? ` · reminder emailed ${fmtDate(r.remindedAt)}` : ''}</div></div><div>${late(r.daysOverdue)}</div></div>`).join('')}</div>`).join('')
         : '<p class="muted">Nothing overdue right now.</p>'}</div>`;
   }
 

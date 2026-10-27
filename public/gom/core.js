@@ -45,6 +45,7 @@
       const primary = back.querySelector('button:not(.secondary)'); if (primary) primary.focus();
     });
   }
+  GOM.inDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);          // a suggested date: today + n days
   GOM.alert = (message) => dialog(message, [{ label: 'OK', value: true, primary: true }]);
   GOM.confirm = (message, o = {}) => dialog(message, [{ label: o.cancel || 'Cancel', value: false }, { label: o.ok || 'Yes, continue', value: true, primary: true }]);
 
