@@ -523,3 +523,11 @@ Your storage rule (an item ready to pack is kept for **60 days if it's XS/S, 30 
 
 ### Folding the Warehouse item list
 On **Warehouse → Boxes**, the long list of items waiting to be boxed now **folds away**: a one-line summary — **"▸ 123 items waiting to be boxed · 3 ticked"** — opens and closes it. It **starts folded** and **remembers how you left it on that device**. The **select-all buttons** (including "Select all in <group order>"), the **EMS / customs form** and the **boxes underneath** stay visible, and **what you've ticked survives folding** — so you can pick a group order with its button, enter the EMS and create the box without ever opening the list.
+
+### Fixing a member's name
+Member names used to be fixed once an item was saved. Now **Group Orders → an order's items → Edit** on a **member item** or a **member set** has a **Member names** section with each member in a box — fix a spelling and **Save**.
+- **The new name is carried through everywhere it was used:** the item's member list (joiners see the corrected name straight away), **every claim already made on that member** (its member and its label, e.g. *"Pop-up photocards — Hanni"*, including cancelled ones), the **set slots** (who holds which part), and any **fixed claimers**. Purchase limits counted per member keep counting. Prices, set numbers and who holds what don't change. The message after saving says what happened, e.g. *"Saved — “Han” is now “Hanni” (2 claims updated)."*
+- **It's rename only.** To add or remove a member, make a new item.
+- **It refuses** — with the reason, and **nothing saved** (all or nothing) — a blank name, a name another member already has (capitals ignored), two members given the same name, or swapping two names with each other (rename one to something else first).
+- Only the **member** part of a claim's label changes; the item title in an old label is left exactly as it was when the claim was made.
+- Each rename is recorded in your activity log.

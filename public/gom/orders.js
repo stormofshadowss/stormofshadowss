@@ -82,6 +82,7 @@
         <div class="span2"><label>Title</label><input name="title" value="${esc(it.title)}" maxlength="160" required></div>
         <div><label>Price (£)</label><input name="price" type="number" step="0.01" min="0" value="${it.priceTbc ? '' : it.price}" ${it.priceTbc ? 'disabled' : 'required'}><label class="chk" style="display:flex; margin-top:6px"><input type="checkbox" name="priceTbc" ${it.priceTbc ? 'checked' : ''}> Price to be confirmed (TBC)</label><div class="sub" data-price-note>Claims that haven't been secured yet will switch to the new price. Anything already secured keeps the price it was secured at. Tick TBC if the price isn't final yet: people can still claim, but nothing can be secured until you set a price.</div></div>
         <div class="full"><label>Description (optional)</label><textarea name="description" rows="3" maxlength="2000" style="width:100%; padding:10px 12px; border:1.5px solid var(--line); border-radius:8px; font:inherit" placeholder="Anything joiners should know…">${esc(it.description || '')}</textarea></div>
+        ${['independent', 'set'].includes(it.type) && it.members.length ? `<div class="full" data-members-edit><label>Member names</label><div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:8px">${it.members.map((m) => `<input data-member-id="${m.id}" data-orig="${esc(m.name)}" value="${esc(m.name)}" maxlength="80" aria-label="Member name">`).join('')}</div><div class="sub">Fix a spelling here — the new name is carried through to any claims already made. (To add or remove members, make a new item.)</div></div>` : ''}
         <div class="full">${GOM.pictureControl('item', it.id, it.image, 'Item picture')}</div>
         ${dateInput('paymentDeadline', it.ownPaymentDeadline, "Pay by (blank = the GO's date)")}
         <div>${dateInput('closeDate', it.closeDate, "Closes (blank = when the group order closes)")}<div class="sub">Claims on this item stop after this day (UK time).${currentOrder().closeDate ? ` It can't be later than the group order's ${fmtDate(currentOrder().closeDate)}.` : ''}</div></div>
@@ -366,15 +367,18 @@
       if (r.json.skipped.length) await GOM.alert(`Some weren't copied:\n\n${r.json.skipped.join('\n')}`);
     } else if (kind === 'edit-item') {
       if (!form.elements.priceTbc.checked && val(form, 'price') === '') return showMsg(form, 'Enter a price, or tick "price to be confirmed".');
+      const renames = []; for (const inp of $$('input[data-member-id]', form)) { const name = inp.value.trim(); if (!name) return showMsg(form, "A member's name can't be blank."); if (name !== inp.dataset.orig) renames.push({ id: Number(inp.dataset.memberId), name }); }
       const r = await api('PATCH', `/api/admin/items/${form.dataset.id}`, {
+        ...(renames.length ? { renameMembers: renames } : {}),
         title: val(form, 'title'), ...priceBody(form), description: val(form, 'description'),
         paymentDeadline: val(form, 'paymentDeadline') || null, closeDate: val(form, 'closeDate') || null, proxy: val(form, 'proxy') || null,
         hidden: form.elements.hidden.checked, purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), ...(form.elements.limitScope ? { limitScope: val(form, 'limitScope') } : {}),
       });
       if (!r.ok) return showMsg(form, errText(r));
       editingItem = null; await reload(true);
-      const n = r.json.repriced;
-      GOM.toast(!n ? 'Saved.' : form.elements.priceTbc.checked ? `Saved — ${n} unsecured claim${n === 1 ? ' is' : 's are'} now marked price TBC. Secured claims keep theirs.` : `Saved — ${n} unsecured claim${n === 1 ? ' now uses' : 's now use'} the new price. Secured claims keep theirs.`);
+      const n = r.json.repriced, ren = r.json.renamed || [], renNote = ren.length ? ` ${ren.map((c) => `“${c.from}” is now “${c.to}”${c.claims ? ` (${c.claims} claim${c.claims === 1 ? '' : 's'} updated)` : ''}`).join('; ')}.` : '';
+      if (ren.length && !n) return GOM.toast(`Saved —${renNote}`);
+      GOM.toast((!n ? 'Saved.' : form.elements.priceTbc.checked ? `Saved — ${n} unsecured claim${n === 1 ? ' is' : 's are'} now marked price TBC. Secured claims keep theirs.` : `Saved — ${n} unsecured claim${n === 1 ? ' now uses' : 's now use'} the new price. Secured claims keep theirs.`) + (n && renNote ? ` Also:${renNote}` : ''));
     }
   }
 

@@ -1,3 +1,4 @@
+import { renameMembers } from '../lib/rename-members.js';
 import { requireNotLive } from '../lib/launch.js';
 import { todayUK, datePassed, dayOf, ukDate } from '../lib/closing.js';
 import { hasOptions } from '../lib/claim-create.js';
@@ -39,7 +40,7 @@ async function loadOrders(pool, whereSql, params, { admin }) {
     `SELECT i.id, i.order_id, i.item_type, i.title, i.cancelled_at, i.description, i.price, i.price_tbc, i.payment_deadline, i.close_date, i.closed_by_hand, i.requires_full_set, i.purchase_limit, i.limit_scope, i.hidden_from_public, p.name AS proxy_name, im.filename AS image_file, im.width AS image_w, im.height AS image_h
        FROM items i LEFT JOIN proxies p ON p.id = i.proxy_id LEFT JOIN images im ON im.id = i.image_id WHERE i.order_id IN (?) ${admin ? '' : 'AND i.cancelled_at IS NULL AND i.hidden_from_public = 0'} ORDER BY i.sort_order, i.id`, [ids]);          // hidden items are for the GOM only
   const itemIds = items.map((i) => i.id);
-  const [members] = itemIds.length ? await pool.query('SELECT item_id, name, price FROM item_members WHERE item_id IN (?) ORDER BY sort_order, id', [itemIds]) : [[]];
+  const [members] = itemIds.length ? await pool.query('SELECT id, item_id, name, price FROM item_members WHERE item_id IN (?) ORDER BY sort_order, id', [itemIds]) : [[]];
   const [variants] = itemIds.length ? await pool.query('SELECT item_id, label FROM item_variants WHERE item_id IN (?) ORDER BY sort_order, id', [itemIds]) : [[]];
   const [counts] = itemIds.length ? await pool.query("SELECT item_id, COUNT(*) AS n FROM claims WHERE item_id IN (?) AND status <> 'cancelled' GROUP BY item_id", [itemIds]) : [[]];
   const countOf = Object.fromEntries(counts.map((c) => [c.item_id, c.n]));
@@ -65,7 +66,7 @@ async function loadOrders(pool, whereSql, params, { admin }) {
     ...(admin ? { proxy: o.proxy_name, isTest: !!o.is_test } : {}),
     items: items.filter((i) => i.order_id === o.id).map((i) => {
       // each part carries its effective price: its own if it has one, else the item's
-      const parts = members.filter((m) => m.item_id === i.id).map((m) => ({ name: m.name, price: m.price ?? (i.price_tbc ? null : i.price) }));   // null = price still TBC
+      const parts = members.filter((m) => m.item_id === i.id).map((m) => ({ ...(admin ? { id: m.id } : {}), name: m.name, price: m.price ?? (i.price_tbc ? null : i.price) }));   // null = price still TBC
       return {
       id: i.id, type: i.item_type, title: i.title, cancelled: !!i.cancelled_at, ...(admin ? { hidden: !!i.hidden_from_public } : {}), description: i.description || '', image: imageOut(i.image_file, i.image_w, i.image_h), price: i.price_tbc ? null : i.price, priceTbc: !!i.price_tbc,
       // an item's own pay-by date wins; otherwise the GO's applies
@@ -277,12 +278,17 @@ export function catalogRoutes(app, { pool, cfg }) {
   // Per-item proxy and pay-by date (blank = use the GO's).
   app.patch('/api/admin/items/:id', requireAdmin, wrap(async (req, res) => {
     const id = Number(req.params.id);
-    let repriced = 0;
-    const b = z.object({ paymentDeadline: date, closeDate: date, closed: z.boolean().optional(), proxy: z.string().trim().max(80).nullable().optional(), price: money.optional(), priceTbc: z.boolean().optional(), purchaseLimit: z.number().int().min(1).max(9999).nullable().optional(), limitScope: z.enum(['item', 'option']).optional(), hidden: z.boolean().optional(), title: z.string().trim().min(1).max(160).optional(), description: z.string().trim().max(2000).nullable().optional() }).parse(req.body);
+    let repriced = 0, renamed = [];
+    const b = z.object({ paymentDeadline: date, closeDate: date, closed: z.boolean().optional(), proxy: z.string().trim().max(80).nullable().optional(), price: money.optional(), priceTbc: z.boolean().optional(), purchaseLimit: z.number().int().min(1).max(9999).nullable().optional(), limitScope: z.enum(['item', 'option']).optional(), hidden: z.boolean().optional(), renameMembers: z.array(z.object({ id: z.number().int().positive(), name: z.string().trim().max(80) })).max(30).optional(),  title: z.string().trim().min(1).max(160).optional(), description: z.string().trim().max(2000).nullable().optional() }).parse(req.body);
     await withTx(pool, async (conn) => {
       const [[it]] = await conn.query('SELECT i.id, i.item_type, i.price, i.price_tbc, i.close_date, go.close_date AS go_close_date FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id = ? FOR UPDATE', [id]);
       if (!it) throw notFound('No such item');
       // the purchase limit: a number (or null/blank = none) and what it counts. Lowering it never cancels anything already claimed — it only stops NEW claims.
+      if (b.renameMembers?.length) {                                                                                 // fix a spelling: carried through to every claim, set slot and fixed claim already made
+        if (!['independent', 'set'].includes(it.item_type)) throw bad('Only a member item or a member set has member names.', 'no_members');
+        renamed = await renameMembers(conn, id, b.renameMembers);
+        for (const c of renamed) await audit(conn, req.account.id, 'item.rename_member', 'item', id, { from: c.from, to: c.to, claims: c.claims });
+      }
       if (b.hidden !== undefined) {                                                                                  // hide it from joiners (or show it again). Claims already on it are untouched.
         await conn.query('UPDATE items SET hidden_from_public = ? WHERE id = ?', [b.hidden ? 1 : 0, id]);
         await audit(conn, req.account.id, b.hidden ? 'item.hide' : 'item.unhide', 'item', id, null);
@@ -318,7 +324,7 @@ export function catalogRoutes(app, { pool, cfg }) {
       if (b.description !== undefined) await conn.query('UPDATE items SET description = ? WHERE id = ?', [b.description || null, id]);   // blank clears it
       await audit(conn, req.account.id, 'item.update', 'item', id, b);
     });
-    res.json({ ok: true, repriced });
+    res.json({ ok: true, repriced, renamed });
   }));
 }
 

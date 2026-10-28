@@ -131,7 +131,7 @@ test('adding items: the form adapts to the type, and every kind lands correctly'
   assert.deepEqual(items['Solo Photocards'].members.map((m) => m.name), ['Bang Chan', 'Han']);
   assert.deepEqual(items.Hoodie.variants, ['M', 'L']);
   const set = items['Seasons Greetings'];
-  assert.deepEqual(set.members, [{ name: 'Bang Chan', price: 3 }, { name: 'Han', price: 3 }, { name: 'Diary', price: 2 }, { name: 'Washi tape', price: 1 }]);
+  assert.deepEqual(set.members.map(({ name, price }) => ({ name, price })), [{ name: 'Bang Chan', price: 3 }, { name: 'Han', price: 3 }, { name: 'Diary', price: 2 }, { name: 'Washi tape', price: 1 }]);          // (the GOM's data also carries each member's id, for renaming)
   assert.deepEqual([set.requiresFullSet, set.wholeSetPrice], [true, 9]);
   const row = p.text(p.byText('#itemsPanel tbody tr', 'Seasons Greetings'));
   assert.match(row, /4 parts · £9\.00 whole set/);
