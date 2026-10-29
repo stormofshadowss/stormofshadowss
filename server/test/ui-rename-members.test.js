@@ -20,7 +20,7 @@ const save = async (p) => { await p.submit(form(p)); await sleep(400); await p.s
 
 test('THE EDIT FORM HAS A "MEMBER NAMES" SECTION for member items and member sets (in order, filled in); ordinary, size and random items have none', async () => {
   const go = await goOrder(); const ind = await item(go, 'Per member'), set = await item(go, 'A set', { type: 'set', members: ['A', 'B'] }), plain = await item(go, 'Plain', { type: 'normal', members: undefined }), size = await item(go, 'Sized', { type: 'size', members: undefined, variants: ['M'] });
-  let p = await editPage(go, ind); assert.deepEqual(inputs(p).map((i) => i.value), ['Han', 'Felix', 'Lee Know']); assert.match(p.text(p.q('[data-members-edit]')), /^Member names\s*Fix a spelling here — the new name is carried through to any claims already made\. \(To add or remove members, make a new item\.\)$/); assert.deepEqual([p.errors, p.native], [[], 0]); p.close();
+  let p = await editPage(go, ind); assert.deepEqual(inputs(p).map((i) => i.value), ['Han', 'Felix', 'Lee Know']); assert.match(p.text(p.q('[data-members-edit]')), /^Member names and prices\s*Fix a spelling, or give a size its own price \(blank = the item's price\) — the new name is carried through to any claims already made, and unsecured claims on a changed price switch to it \(secured ones keep theirs\)\. To add or remove members, make a new item\.$/); assert.deepEqual([p.errors, p.native], [[], 0]); p.close();
   p = await editPage(go, set); assert.deepEqual(inputs(p).map((i) => i.value), ['A', 'B']); p.close();
   for (const id of [plain, size]) { p = await editPage(go, id); assert.equal(p.q('[data-members-edit]', form(p)), null, `item ${id}`); p.close(); }
 });
@@ -35,7 +35,7 @@ test('FIXING A SPELLING: change the name, Save — the roster, the claims alread
 test('NOTHING CHANGED = A PLAIN "Saved."; a rename saved together with a price change mentions both', async () => {
   const go = await goOrder(); const it = await item(go, 'Plain save'); let p = await editPage(go, it); await save(p); assert.equal(toast(p), 'Saved.'); assert.deepEqual(await names(go, it), ['Han', 'Felix', 'Lee Know']); p.close();
   const h = u('rq'); await joinerSession(app, `${h}@x.com`, h); await app.api('POST', '/api/claims', { handle: h, lines: [{ itemId: it, member: 'Felix' }] });                              // an unsecured request, which a price change re-prices
-  p = await editPage(go, it); inputs(p)[1].value = 'Felixx'; form(p).elements.price.value = '9'; await save(p); assert.match(toast(p), /^Saved — 1 unsecured claim now uses the new price\. Secured claims keep theirs\. Also: “Felix” is now “Felixx” \(1 claim updated\)\.$/); p.close();
+  p = await editPage(go, it); inputs(p)[1].value = 'Felixx'; form(p).elements.price.value = '9'; await save(p); assert.match(toast(p), /^Saved — “Felix” is now “Felixx” \(1 claim updated\)\. 1 unsecured claim now uses the new price\. Secured claims keep theirs\.$/); p.close();
 });
 
 test('A MISTAKE IS SAID PLAINLY AND NOTHING IS SAVED: a blank name; a name another member has (even in other capitals)', async () => {

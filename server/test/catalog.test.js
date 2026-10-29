@@ -153,7 +153,8 @@ test('part prices and the full-set rule are validated', async () => {
   assert.equal((await mk({ type: 'set', members: ['A', 'a'] })).status, 400, 'duplicate part names (case-insensitive)');
   assert.equal((await mk({ type: 'set', members: [{ name: 'A', price: -1 }] })).status, 400, 'negative part price');
   assert.equal((await mk({ type: 'set', members: [{ name: 'A', price: 1.005 }] })).status, 400, 'more than 2 decimal places');
-  assert.equal((await mk({ type: 'independent', members: [{ name: 'A', price: 2 }] })).status, 400, 'part prices are for sets only');
+  assert.equal((await mk({ type: 'independent', members: [{ name: 'A', price: 2 }] })).status, 201, 'a size of an independent item may have its own price');
+  assert.equal((await mk({ type: 'size', variants: ['M'], members: [{ name: 'A', price: 2 }] })).status, 400, 'but member prices are only for member sets and member items');
   assert.equal((await mk({ type: 'normal', requiresFullSet: true })).status, 400, '"every part" is for sets only');
   assert.equal((await mk({ type: 'set', members: [{ name: 'A', price: 0 }] })).status, 201, 'a free part is allowed');
 });

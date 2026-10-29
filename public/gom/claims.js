@@ -59,13 +59,13 @@
       if (!p.change.ok) body = blocked(p.change.reasons);
       else {
         const live = orders.filter((o) => !o.cancelled && !o.archivedAt), items = (orders.find((o) => String(o.id) === String(fixS.orderId))?.items || []).filter((i) => !i.cancelled && i.type !== 'set'), it = items.find((i) => String(i.id) === String(fixS.itemId));
-        const changedItem = it && String(it.id) !== String(p.itemId), askPrice = changedItem && (it.priceTbc || Number(it.price) !== Number(p.cost));
+        const changedItem = it && String(it.id) !== String(p.itemId), newPrice = it && it.type === 'independent' && fixS.member ? (it.members.find((m) => m.name === fixS.member)?.price ?? it.price) : it?.price, askPrice = (changedItem || (it && it.type === 'independent' && fixS.member)) && (it.priceTbc || Number(newPrice) !== Number(p.cost));
         body = `<div class="formgrid"><div><label>Group order</label><select name="orderId">${live.map((o) => `<option value="${o.id}" ${String(o.id) === String(fixS.orderId) ? 'selected' : ''}>${esc(o.title)}${o.isPrivate ? ' (private)' : ''}${o.status && o.status !== 'open' ? ` (${esc(o.status)})` : ''}</option>`).join('')}</select></div>
           <div><label>Item</label><select name="itemId"><option value="">Choose…</option>${items.map((i) => `<option value="${i.id}" ${String(i.id) === String(fixS.itemId) ? 'selected' : ''}>${esc(i.title)}${i.priceTbc ? ' (price TBC)' : i.price != null ? ` — ${money(i.price)}` : ''}</option>`).join('')}</select></div>
           ${it?.type === 'independent' ? `<div><label>Member</label><select name="member"><option value="">Choose…</option>${it.members.map((m) => `<option ${m.name === fixS.member ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>` : ''}
           ${it?.type === 'size' ? `<div><label>Size</label><select name="variant"><option value="">Choose…</option>${(it.variants || []).map((v) => `<option ${v === fixS.variant ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>` : ''}</div>
           ${askPrice ? `<div class="sub" style="margin:10px 0 4px; font-weight:600" data-ask-price>What should happen to its price? — you choose each time</div>
-            <label class="chk"><input type="radio" name="pricing" value="reprice" ${fixS.pricing === 'reprice' ? 'checked' : ''}> <strong>Re-price it</strong> — set it to the new item's price (${it.priceTbc ? 'TBC' : money(it.price)}). What's already paid is kept, so any difference shows as owed or as credit.</label>
+            <label class="chk"><input type="radio" name="pricing" value="reprice" ${fixS.pricing === 'reprice' ? 'checked' : ''}> <strong>Re-price it</strong> — set it to the new ${changedItem ? 'item' : 'size'}'s price (${it.priceTbc && newPrice == null ? 'TBC' : money(newPrice)}). What's already paid is kept, so any difference shows as owed or as credit.</label>
             <label class="chk"><input type="radio" name="pricing" value="keep" ${fixS.pricing === 'keep' ? 'checked' : ''}> <strong>Keep the old price</strong> (${money(p.cost)}) — only what it's called changes.</label>` : ''}
           ${changedItem ? '<p class="sub">If you have already recorded a payment to a proxy for the old item, check the Proxy tab.</p>' : ''}
           <p class="msg err" data-fix-error hidden></p><div class="btn-row"><button type="button" class="sm" data-act="fix-change">Change it…</button></div>`;
@@ -478,11 +478,11 @@
       case 'fix-change': {
         const cid = fixing, p = fixS.plan, it = (orders.find((o) => String(o.id) === String(fixS.orderId))?.items || []).find((i) => String(i.id) === String(fixS.itemId));
         if (!it) return fixErr('Choose the item.');
-        const changedItem = String(it.id) !== String(p.itemId), askPrice = changedItem && (it.priceTbc || Number(it.price) !== Number(p.cost));
+        const changedItem = String(it.id) !== String(p.itemId), newPrice = it.type === 'independent' && fixS.member ? (it.members.find((m) => m.name === fixS.member)?.price ?? it.price) : it.price, askPrice = (changedItem || (it.type === 'independent' && fixS.member)) && (it.priceTbc || Number(newPrice) !== Number(p.cost));
         if (it.type === 'independent' && !fixS.member) return fixErr('Choose a member.'); if (it.type === 'size' && !fixS.variant) return fixErr('Choose a size.');
         if (askPrice && !fixS.pricing) return fixErr('Choose whether to re-price it or keep the old price — there is no default.');
-        const pricing = changedItem ? (askPrice ? fixS.pricing : 'keep') : undefined, now = `${it.title}${it.type === 'independent' ? ` — ${fixS.member}` : ''}${it.type === 'size' ? ` (${fixS.variant})` : ''}`;
-        const ok = await GOM.confirm(`Change “${p.label}” to “${now}” for @${p.handle}?${changedItem ? `\n\n${pricing === 'reprice' ? `Its price becomes ${it.priceTbc ? 'TBC (0)' : money(it.price)}; what's paid is kept, so any difference shows as owed or credit.` : `It keeps its price (${money(p.cost)}).`}` : ''}`, { ok: 'Change it', cancel: 'Not yet' });
+        const pricing = askPrice ? fixS.pricing : changedItem ? 'keep' : undefined, now = `${it.title}${it.type === 'independent' ? ` — ${fixS.member}` : ''}${it.type === 'size' ? ` (${fixS.variant})` : ''}`;
+        const ok = await GOM.confirm(`Change “${p.label}” to “${now}” for @${p.handle}?${changedItem || askPrice ? `\n\n${pricing === 'reprice' ? `Its price becomes ${it.priceTbc && newPrice == null ? 'TBC (0)' : money(newPrice)}; what's paid is kept, so any difference shows as owed or credit.` : `It keeps its price (${money(p.cost)}).`}` : ''}`, { ok: 'Change it', cancel: 'Not yet' });
         if (!ok) return;
         const changeBody = { itemId: it.id, ...(it.type === 'independent' ? { member: fixS.member } : {}), ...(it.type === 'size' ? { variant: fixS.variant } : {}), ...(pricing ? { pricing } : {}) };
         let r = await api('POST', `/api/admin/claims/${cid}/change`, changeBody);
@@ -559,7 +559,7 @@
 
   async function onChange(e) {
     const t = e.target;
-    if (t.closest?.('[data-form="fix"]')) { readFix(t); if (['orderId', 'itemId', 'pricing'].includes(t.name)) draw(); return; }
+    if (t.closest?.('[data-form="fix"]')) { readFix(t); if (['orderId', 'itemId', 'pricing', 'member'].includes(t.name)) draw(); return; }          // a different size can change the price question, so the panel redraws
     if (t.closest?.('#addClaim')) { readAdd(t); if (['orderId', 'itemId', 'status'].includes(t.name)) draw(); return; }
     if (t.id === 'moveCreate') { moveState.create = t.checked; return draw(); }
     if (t.dataset.filter) {

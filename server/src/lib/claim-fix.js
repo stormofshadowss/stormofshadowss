@@ -99,10 +99,10 @@ export async function changeClaim(conn, claimId, b, accountId, audit) {
   if (item.cancelled_at || item.go_cancelled) throw bad("That item isn't available any more", 'item_cancelled');
   if (item.item_type === 'set') throw bad("A claim can't be changed into a member-set part — use the Sets tab (Add someone) for that.", 'is_set');
   if (item.price_tbc && c.status === 'confirmed') throw conflict("That item's price is still TBC — a confirmed claim can't move to it until it has a price.", 'price_tbc');
-  let member = null, variant = null;
+  let member = null, variant = null, memberPrice = null;
   if (item.item_type === 'independent') {
-    const [[m]] = await conn.query('SELECT name FROM item_members WHERE item_id = ? AND name = ?', [item.id, b.member || '']); if (!m) throw bad(`Choose a member for "${item.title}"`);
-    member = m.name;
+    const [[m]] = await conn.query('SELECT name, price FROM item_members WHERE item_id = ? AND name = ?', [item.id, b.member || '']); if (!m) throw bad(`Choose a member for "${item.title}"`);
+    member = m.name; memberPrice = m.price === null || m.price === undefined ? null : Number(m.price);
   } else if (item.item_type === 'size') {
     const [[v]] = await conn.query('SELECT label FROM item_variants WHERE item_id = ? AND label = ?', [item.id, b.variant || '']); if (!v) throw bad(`Choose a size for "${item.title}"`);
     variant = v.label;
@@ -113,13 +113,17 @@ export async function changeClaim(conn, claimId, b, accountId, audit) {
   if (!changedItem && member === prev.member_name && variant === prev.variant_label) throw bad("That's what it already is.", 'no_change');
   // moving a claim onto an item (or option) that has a purchase limit takes one of its places — refused unless you knowingly go past it (the claim's own current place doesn't count against it)
   await checkPurchaseLimit(conn, item, { [member || variant || '']: 1 }, { asAdmin: true, overrideLimit: !!b.overrideLimit, excludeClaimId: claimId });
-  if (changedItem && !b.pricing) throw bad('Choose whether to re-price it or keep the old price.', 'pricing_needed');
+  // Moving to another SIZE (member) of the same item whose price is different is a price question too — you choose each time, like moving to another item.
+  let prevPrice = null; if (!changedItem && prev.member_name) { const [[pm]] = await conn.query('SELECT price FROM item_members WHERE item_id = ? AND name = ?', [item.id, prev.member_name]); prevPrice = pm?.price === null || pm?.price === undefined ? null : Number(pm.price); }
+  const newTbc = memberPrice === null && !!item.price_tbc, optionPriceDiffers = !changedItem && member !== null && member !== prev.member_name && Number(memberPrice ?? item.price) !== Number(prevPrice ?? item.price);
+  const askPricing = changedItem || optionPriceDiffers;
+  if (askPricing && !b.pricing) throw bad('Choose whether to re-price it or keep the old price.', 'pricing_needed');
   const [[pd]] = await conn.query('SELECT COALESCE(SUM(paid), 0) AS paid FROM claim_costs WHERE claim_id = ?', [claimId]);
-  if (changedItem && b.pricing === 'reprice' && item.price_tbc && pd.paid > 0.004) throw conflict(`That item's price is TBC, so it can't be re-priced while ${money(pd.paid)} is paid on this claim — choose "keep the old price".`, 'price_tbc');
+  if (askPricing && b.pricing === 'reprice' && newTbc && pd.paid > 0.004) throw conflict(`That item's price is TBC, so it can't be re-priced while ${money(pd.paid)} is paid on this claim — choose "keep the old price".`, 'price_tbc');
   await conn.query('UPDATE claims SET item_id = ?, order_id = ?, label = ?, member_name = ?, variant_label = ?, size_bucket = ?, price_tbc = ? WHERE id = ?',
-    [item.id, item.order_id, label, member, variant, changedItem ? item.size_bucket : c.size_bucket, item.price_tbc ? 1 : 0, claimId]);       // the size band follows the item only when the item changes
+    [item.id, item.order_id, label, member, variant, changedItem ? item.size_bucket : c.size_bucket, newTbc ? 1 : 0, claimId]);       // the size band follows the item only when the item changes
   let repriced = false;
-  if (changedItem && b.pricing === 'reprice') { await setCost(conn, claimId, 'initials', { cost: item.price_tbc ? 0 : item.price }); repriced = true; }
+  if (askPricing && b.pricing === 'reprice') { await setCost(conn, claimId, 'initials', { cost: memberPrice !== null ? memberPrice : item.price_tbc ? 0 : item.price }); repriced = true; }
   await audit(conn, accountId, 'claim.change', 'claim', claimId, { fromItem: c.item_id, toItem: item.id, from: c.label, to: label, pricing: changedItem ? b.pricing : null });
   return { label, repriced, changedItem };
 }

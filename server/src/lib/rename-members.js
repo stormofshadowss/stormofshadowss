@@ -43,3 +43,19 @@ export async function renameMembers(conn, itemId, renames) {
   }
   return out;
 }
+
+// A member (size) can have its OWN price: prices = [{ id, price }] where price is a number, or null = "the item's price". Run inside the item's transaction; the caller then re-prices unsecured claims
+// (a secured claim keeps the price it was secured at, exactly like an item price edit). Returns what changed: [{ id, name, from, to }].
+export async function setMemberPrices(conn, itemId, prices) {
+  const [roster] = await conn.query('SELECT id, name, price FROM item_members WHERE item_id = ?', [itemId]);
+  const byId = new Map(roster.map((m) => [m.id, m]));
+  const out = [];
+  for (const p of prices) {
+    const cur = byId.get(p.id); if (!cur) throw bad("That member isn't on this item.", 'no_such_member');
+    const next = p.price === null ? null : Math.round(p.price * 100) / 100, was = cur.price === null ? null : Number(cur.price);
+    if (next === was) continue;
+    await conn.query('UPDATE item_members SET price = ? WHERE id = ?', [next, cur.id]);
+    out.push({ id: cur.id, name: cur.name, from: was, to: next });
+  }
+  return out;
+}

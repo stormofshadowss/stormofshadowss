@@ -1,4 +1,4 @@
-import { renameMembers } from '../lib/rename-members.js';
+import { renameMembers, setMemberPrices } from '../lib/rename-members.js';
 import { requireNotLive } from '../lib/launch.js';
 import { todayUK, datePassed, dayOf, ukDate } from '../lib/closing.js';
 import { hasOptions } from '../lib/claim-create.js';
@@ -66,7 +66,7 @@ async function loadOrders(pool, whereSql, params, { admin }) {
     ...(admin ? { proxy: o.proxy_name, isTest: !!o.is_test } : {}),
     items: items.filter((i) => i.order_id === o.id).map((i) => {
       // each part carries its effective price: its own if it has one, else the item's
-      const parts = members.filter((m) => m.item_id === i.id).map((m) => ({ ...(admin ? { id: m.id } : {}), name: m.name, price: m.price ?? (i.price_tbc ? null : i.price) }));   // null = price still TBC
+      const parts = members.filter((m) => m.item_id === i.id).map((m) => ({ ...(admin ? { id: m.id, ownPrice: m.price === null || m.price === undefined ? null : Number(m.price) } : {}), name: m.name, price: m.price ?? (i.price_tbc ? null : i.price) }));   // null = price still TBC
       return {
       id: i.id, type: i.item_type, title: i.title, cancelled: !!i.cancelled_at, ...(admin ? { hidden: !!i.hidden_from_public } : {}), description: i.description || '', image: imageOut(i.image_file, i.image_w, i.image_h), price: i.price_tbc ? null : i.price, priceTbc: !!i.price_tbc,
       // an item's own pay-by date wins; otherwise the GO's applies
@@ -256,7 +256,7 @@ export function catalogRoutes(app, { pool, cfg }) {
     const parts = (b.members || []).map((m) => (typeof m === 'string' ? { name: m, price: null } : { name: m.name, price: m.price ?? null }));
     if ((b.type === 'set' || b.type === 'independent') && !parts.length) throw bad('This item type needs a member list');
     if (new Set(parts.map((p) => p.name.toLowerCase())).size !== parts.length) throw bad('Each part needs its own name');
-    if (parts.some((p) => p.price !== null) && b.type !== 'set') throw bad('Part prices only apply to sets');
+    if (parts.some((p) => p.price !== null) && b.type !== 'set' && b.type !== 'independent') throw bad('Member prices only apply to member sets and member items');          // a size of an independent item can have its own price
     if (b.requiresFullSet && b.type !== 'set') throw bad('"Every part must be claimed" only applies to sets');
     if (b.type === 'size' && !(b.variants || []).length) throw bad('Size items need at least one size');
     const id = await withTx(pool, async (conn) => {
@@ -278,8 +278,8 @@ export function catalogRoutes(app, { pool, cfg }) {
   // Per-item proxy and pay-by date (blank = use the GO's).
   app.patch('/api/admin/items/:id', requireAdmin, wrap(async (req, res) => {
     const id = Number(req.params.id);
-    let repriced = 0, renamed = [];
-    const b = z.object({ paymentDeadline: date, closeDate: date, closed: z.boolean().optional(), proxy: z.string().trim().max(80).nullable().optional(), price: money.optional(), priceTbc: z.boolean().optional(), purchaseLimit: z.number().int().min(1).max(9999).nullable().optional(), limitScope: z.enum(['item', 'option']).optional(), hidden: z.boolean().optional(), renameMembers: z.array(z.object({ id: z.number().int().positive(), name: z.string().trim().max(80) })).max(30).optional(),  title: z.string().trim().min(1).max(160).optional(), description: z.string().trim().max(2000).nullable().optional() }).parse(req.body);
+    let repriced = 0, memberRepriced = 0, renamed = [], memberPriced = [];
+    const b = z.object({ paymentDeadline: date, closeDate: date, closed: z.boolean().optional(), proxy: z.string().trim().max(80).nullable().optional(), price: money.optional(), priceTbc: z.boolean().optional(), purchaseLimit: z.number().int().min(1).max(9999).nullable().optional(), limitScope: z.enum(['item', 'option']).optional(), hidden: z.boolean().optional(), renameMembers: z.array(z.object({ id: z.number().int().positive(), name: z.string().trim().max(80) })).max(30).optional(), memberPrices: z.array(z.object({ id: z.number().int().positive(), price: money.nullable() })).max(30).optional(),  title: z.string().trim().min(1).max(160).optional(), description: z.string().trim().max(2000).nullable().optional() }).parse(req.body);
     await withTx(pool, async (conn) => {
       const [[it]] = await conn.query('SELECT i.id, i.item_type, i.price, i.price_tbc, i.close_date, go.close_date AS go_close_date FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id = ? FOR UPDATE', [id]);
       if (!it) throw notFound('No such item');
@@ -288,6 +288,11 @@ export function catalogRoutes(app, { pool, cfg }) {
         if (!['independent', 'set'].includes(it.item_type)) throw bad('Only a member item or a member set has member names.', 'no_members');
         renamed = await renameMembers(conn, id, b.renameMembers);
         for (const c of renamed) await audit(conn, req.account.id, 'item.rename_member', 'item', id, { from: c.from, to: c.to, claims: c.claims });
+      }
+      if (b.memberPrices?.length) {                                                                                  // a size can have its own price (null = the item's price)
+        if (!['independent', 'set'].includes(it.item_type)) throw bad('Only a member item or a member set has member prices.', 'no_members');
+        memberPriced = await setMemberPrices(conn, id, b.memberPrices);
+        for (const c of memberPriced) await audit(conn, req.account.id, 'item.member_price', 'item', id, { member: c.name, from: c.from, to: c.to });
       }
       if (b.hidden !== undefined) {                                                                                  // hide it from joiners (or show it again). Claims already on it are untouched.
         await conn.query('UPDATE items SET hidden_from_public = ? WHERE id = ?', [b.hidden ? 1 : 0, id]);
@@ -320,11 +325,16 @@ export function catalogRoutes(app, { pool, cfg }) {
         // once secured it keeps the price it was secured at. (A part with its own price in a mixed-price set keeps that.)
         if (changed) repriced = await repriceUnsecured(conn, id, nextTbc ? null : nextPrice);
       }
+      // a member's own price changed (and the item's price didn't re-price already): unsecured claims on it follow; secured ones keep what they were secured at
+      if (memberPriced.length) {
+        if (!repriced) { const [[cur]] = await conn.query('SELECT price, price_tbc FROM items WHERE id = ?', [id]); await repriceUnsecured(conn, id, cur.price_tbc ? null : Number(cur.price)); }
+        [[{ n: memberRepriced }]] = await conn.query("SELECT COUNT(*) AS n FROM claims WHERE item_id = ? AND status = 'requested' AND member_name IN (?)", [id, memberPriced.map((m) => m.name)]);         // only the claims on the sizes whose price changed
+      }
       if (b.title !== undefined) await conn.query('UPDATE items SET title = ? WHERE id = ?', [b.title, id]);
       if (b.description !== undefined) await conn.query('UPDATE items SET description = ? WHERE id = ?', [b.description || null, id]);   // blank clears it
       await audit(conn, req.account.id, 'item.update', 'item', id, b);
     });
-    res.json({ ok: true, repriced, renamed });
+    res.json({ ok: true, repriced, memberRepriced, renamed, memberPriced });
   }));
 }
 

@@ -22,8 +22,9 @@
     ['size', 'Sizes (hoodies, shirts…)'], ['set', 'Member set — one of each part per set'], ['random', 'Random'],
   ];
   const typeName = Object.fromEntries(TYPES.map(([k, v]) => [k, v.split(' —')[0].split(' (')[0]]));
+  const SPLIT = /^(.*\S)\s*=\s*(\d+(?:\.\d{1,2})?)$/;          // a name that already has its price typed into it: 70x110=0.70
   const EXTRA = {
-    independent: ['Members', 'Bang Chan, Han, Felix'], size: ['Sizes', 'S, M, L, XL'],
+    independent: ['Members — give one its own price like 70x110=0.70', 'Bang Chan, Han, 70x110=0.70, 80x120=0.90'], size: ['Sizes', 'S, M, L, XL'],
     set: ['Parts — give a part its own price like Diary=2', 'Bang Chan, Han, Diary=2, Washi tape=1'],
   };
 
@@ -63,7 +64,7 @@
       return `${it.members.length} parts${mixed && it.wholeSetPrice != null ? ' · ' + money(it.wholeSetPrice) + ' whole set' : ''}${it.requiresFullSet ? ' · <span class="pill warn">every part required</span>' : ''}
         <div class="sub">${it.members.map((m) => `${esc(m.name)}${m.price !== it.price ? ' ' + money(m.price) : ''}`).join(', ')}</div>`;
     }
-    if (it.type === 'independent') return `<span class="sub">${it.members.map((m) => esc(m.name)).join(', ')}</span>`;
+    if (it.type === 'independent') return `<span class="sub">${it.members.map((m) => `${esc(m.name)}${m.ownPrice != null ? ` ${money(m.ownPrice)}` : ''}`).join(', ')}</span>`;
     if (it.type === 'size') return `<span class="sub">${it.variants.map(esc).join(', ')}</span>`;
     return '';
   }
@@ -82,7 +83,10 @@
         <div class="span2"><label>Title</label><input name="title" value="${esc(it.title)}" maxlength="160" required></div>
         <div><label>Price (£)</label><input name="price" type="number" step="0.01" min="0" value="${it.priceTbc ? '' : it.price}" ${it.priceTbc ? 'disabled' : 'required'}><label class="chk" style="display:flex; margin-top:6px"><input type="checkbox" name="priceTbc" ${it.priceTbc ? 'checked' : ''}> Price to be confirmed (TBC)</label><div class="sub" data-price-note>Claims that haven't been secured yet will switch to the new price. Anything already secured keeps the price it was secured at. Tick TBC if the price isn't final yet: people can still claim, but nothing can be secured until you set a price.</div></div>
         <div class="full"><label>Description (optional)</label><textarea name="description" rows="3" maxlength="2000" style="width:100%; padding:10px 12px; border:1.5px solid var(--line); border-radius:8px; font:inherit" placeholder="Anything joiners should know…">${esc(it.description || '')}</textarea></div>
-        ${['independent', 'set'].includes(it.type) && it.members.length ? `<div class="full" data-members-edit><label>Member names</label><div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:8px">${it.members.map((m) => `<input data-member-id="${m.id}" data-orig="${esc(m.name)}" value="${esc(m.name)}" maxlength="80" aria-label="Member name">`).join('')}</div><div class="sub">Fix a spelling here — the new name is carried through to any claims already made. (To add or remove members, make a new item.)</div></div>` : ''}
+        ${['independent', 'set'].includes(it.type) && it.members.length ? `<div class="full" data-members-edit><label>Member names and prices</label>
+          <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:8px">${it.members.map((m) => `<div style="display:flex; gap:6px"><input data-member-id="${m.id}" data-orig="${esc(m.name)}" data-orig-price="${m.ownPrice ?? ''}" value="${esc(m.name)}" maxlength="80" aria-label="Member name" style="flex:1; min-width:0"><input data-member-price type="number" step="0.01" min="0" inputmode="decimal" value="${m.ownPrice ?? ''}" placeholder="${it.priceTbc ? 'TBC' : money(it.price).replace('£', '')}" aria-label="Price (blank = the item's price)" style="width:84px"></div>`).join('')}</div>
+          <div class="sub">Fix a spelling, or give a size its own price (blank = the item's price) — the new name is carried through to any claims already made, and unsecured claims on a changed price switch to it (secured ones keep theirs). To add or remove members, make a new item.</div>
+          ${it.members.some((m) => SPLIT.test(m.name)) ? '<div class="btn-row" style="margin-top:6px"><button type="button" class="sm secondary" data-act="split-prices">Move “name=price” into the name and price boxes</button></div>' : ''}</div>` : ''}
         <div class="full">${GOM.pictureControl('item', it.id, it.image, 'Item picture')}</div>
         ${dateInput('paymentDeadline', it.ownPaymentDeadline, "Pay by (blank = the GO's date)")}
         <div>${dateInput('closeDate', it.closeDate, "Closes (blank = when the group order closes)")}<div class="sub">Claims on this item stop after this day (UK time).${currentOrder().closeDate ? ` It can't be later than the group order's ${fmtDate(currentOrder().closeDate)}.` : ''}</div></div>
@@ -292,8 +296,7 @@
   function parseExtra(type, raw) {
     const tokens = raw.split(',').map((t) => t.trim()).filter(Boolean);
     if (type === 'size') return { variants: tokens };
-    if (type === 'independent') return { members: tokens };
-    if (type === 'set') {
+    if (type === 'independent' || type === 'set') {                                      // "Name=price" gives that member its own price (otherwise it uses the item's price)
       return { members: tokens.map((t) => {
         const i = t.lastIndexOf('=');
         if (i === -1) return t;
@@ -367,18 +370,25 @@
       if (r.json.skipped.length) await GOM.alert(`Some weren't copied:\n\n${r.json.skipped.join('\n')}`);
     } else if (kind === 'edit-item') {
       if (!form.elements.priceTbc.checked && val(form, 'price') === '') return showMsg(form, 'Enter a price, or tick "price to be confirmed".');
-      const renames = []; for (const inp of $$('input[data-member-id]', form)) { const name = inp.value.trim(); if (!name) return showMsg(form, "A member's name can't be blank."); if (name !== inp.dataset.orig) renames.push({ id: Number(inp.dataset.memberId), name }); }
+      const renames = [], prices = [];
+      for (const inp of $$('input[data-member-id]', form)) {
+        const name = inp.value.trim(); if (!name) return showMsg(form, "A member's name can't be blank."); if (name !== inp.dataset.orig) renames.push({ id: Number(inp.dataset.memberId), name });
+        const raw = inp.parentElement.querySelector('[data-member-price]').value.trim(), price = raw === '' ? null : Number(raw); if (price !== null && (Number.isNaN(price) || price < 0)) return showMsg(form, `“${name}” has a price that isn't a number.`);
+        if ((price === null ? '' : String(price)) !== (inp.dataset.origPrice === '' ? '' : String(Number(inp.dataset.origPrice)))) prices.push({ id: Number(inp.dataset.memberId), price });
+      }
       const r = await api('PATCH', `/api/admin/items/${form.dataset.id}`, {
-        ...(renames.length ? { renameMembers: renames } : {}),
+        ...(renames.length ? { renameMembers: renames } : {}), ...(prices.length ? { memberPrices: prices } : {}),
         title: val(form, 'title'), ...priceBody(form), description: val(form, 'description'),
         paymentDeadline: val(form, 'paymentDeadline') || null, closeDate: val(form, 'closeDate') || null, proxy: val(form, 'proxy') || null,
         hidden: form.elements.hidden.checked, purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), ...(form.elements.limitScope ? { limitScope: val(form, 'limitScope') } : {}),
       });
       if (!r.ok) return showMsg(form, errText(r));
       editingItem = null; await reload(true);
-      const n = r.json.repriced, ren = r.json.renamed || [], renNote = ren.length ? ` ${ren.map((c) => `“${c.from}” is now “${c.to}”${c.claims ? ` (${c.claims} claim${c.claims === 1 ? '' : 's'} updated)` : ''}`).join('; ')}.` : '';
-      if (ren.length && !n) return GOM.toast(`Saved —${renNote}`);
-      GOM.toast((!n ? 'Saved.' : form.elements.priceTbc.checked ? `Saved — ${n} unsecured claim${n === 1 ? ' is' : 's are'} now marked price TBC. Secured claims keep theirs.` : `Saved — ${n} unsecured claim${n === 1 ? ' now uses' : 's now use'} the new price. Secured claims keep theirs.`) + (n && renNote ? ` Also:${renNote}` : ''));
+      const n = r.json.repriced, mr = r.json.memberRepriced || 0, ren = r.json.renamed || [], mp = r.json.memberPriced || [];
+      const changes = [...ren.map((c) => `“${c.from}” is now “${c.to}”${c.claims ? ` (${c.claims} claim${c.claims === 1 ? '' : 's'} updated)` : ''}`), ...mp.map((c) => `“${c.name}” is now ${c.to === null ? "the item's price" : money(c.to)}`)];
+      const memberNote = mp.length && mr ? ` ${mr} unsecured claim${mr === 1 ? '' : 's'} now use${mr === 1 ? 's' : ''} it; secured claims keep theirs.` : '';
+      const itemNote = !n ? '' : form.elements.priceTbc.checked ? ` ${n} unsecured claim${n === 1 ? ' is' : 's are'} now marked price TBC. Secured claims keep theirs.` : ` ${n} unsecured claim${n === 1 ? ' now uses' : 's now use'} the new price. Secured claims keep theirs.`;
+      GOM.toast(!changes.length && !n ? 'Saved.' : `Saved —${changes.length ? ` ${changes.join('; ')}.` : ''}${memberNote}${itemNote}`);
     }
   }
 
@@ -421,6 +431,10 @@
       case 'unarchive-order': {
         const o = orders.find((x) => x.id === id); const r = await api('POST', `/api/admin/orders/${id}/unarchive`, {}); if (!r.ok) { GOM.toast(errText(r), true); break; }
         await render(root); GOM.toast(`“${o?.title}” is back in Closed.`); break;
+      }
+      case 'split-prices': {                                       // names like "70x110=0.70": move the price into the price box (you still press Save)
+        let n = 0; for (const inp of $$('input[data-member-id]', root)) { const m = SPLIT.exec(inp.value.trim()); if (!m) continue; inp.value = m[1].trim(); inp.parentElement.querySelector('[data-member-price]').value = String(Number(m[2])); n += 1; }
+        b.closest('[data-members-edit]').insertAdjacentHTML('beforeend', `<p class="sub" data-split-note>Moved ${n} price${n === 1 ? '' : 's'} into the price boxes — check them, then press Save.</p>`); b.hidden = true; break;
       }
       case 'open-items': benefitsFor = null; benefitEdit = null; itemsFor = id; editingItem = null; draw(); $('#itemsPanel', root)?.scrollIntoView?.(); break;
       case 'close-items': itemsFor = null; editingItem = null; fixedFor = null; benefitsFor = null; benefitEdit = null; draw(); break;

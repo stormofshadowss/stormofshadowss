@@ -83,11 +83,11 @@ export async function placeItemLine(conn, { joinerId, line, asAdmin = false, ove
     for (const p of await placeSetParts(conn, { joinerId, item, qtyByMember: asked, together: !!line.together })) { ids.push(p.claimId); placements.push(p); }
     return { ids, placements };
   }
-  let member = null, variant = null;
+  let member = null, variant = null, memberPrice = null;                                  // memberPrice: a member (size) with its OWN price is charged that, whatever the item's price
   if (item.item_type === 'independent') {
-    const [[m]] = await conn.query('SELECT name FROM item_members WHERE item_id = ? AND name = ?', [item.id, line.member || '']);
+    const [[m]] = await conn.query('SELECT name, price FROM item_members WHERE item_id = ? AND name = ?', [item.id, line.member || '']);
     if (!m) throw bad(`Choose a member for "${item.title}"`);
-    member = m.name;
+    member = m.name; memberPrice = m.price === null || m.price === undefined ? null : Number(m.price);
   } else if (item.item_type === 'size') {
     const [[v]] = await conn.query('SELECT label FROM item_variants WHERE item_id = ? AND label = ?', [item.id, line.variant || '']);
     if (!v) throw bad(`Choose a size for "${item.title}"`);
@@ -98,8 +98,8 @@ export async function placeItemLine(conn, { joinerId, line, asAdmin = false, ove
   for (let n = 0; n < (line.qty || 1); n++) {
     const [r] = await conn.query(
       `INSERT INTO claims (joiner_id, order_id, item_id, label, member_name, variant_label, size_bucket, price_tbc)
-       VALUES (?,?,?,?,?,?,?,?)`, [joinerId, item.order_id, item.id, label, member, variant, item.size_bucket, item.price_tbc ? 1 : 0]);
-    await addClaimCosts(conn, r.insertId, item.price_tbc ? 0 : item.price);        // a TBC price costs nothing yet, and the claim can't be secured until it's set
+       VALUES (?,?,?,?,?,?,?,?)`, [joinerId, item.order_id, item.id, label, member, variant, item.size_bucket, memberPrice === null && item.price_tbc ? 1 : 0]);
+    await addClaimCosts(conn, r.insertId, memberPrice !== null ? memberPrice : item.price_tbc ? 0 : item.price);        // a TBC price costs nothing yet, and the claim can't be secured until it's set (a member with its own price is not TBC)
     ids.push(r.insertId);
   }
   return { ids, placements };
