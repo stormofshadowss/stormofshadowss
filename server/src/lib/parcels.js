@@ -104,3 +104,9 @@ export async function markParcelReceived(conn, parcelId) {
   await conn.query(
     "UPDATE claims SET pipeline = 'completed', received_date = CURDATE() WHERE id IN (SELECT claim_id FROM parcel_items WHERE parcel_id = ?)", [parcelId]);
 }
+
+// The due date the parcel's EXISTING items already have for a fee (the earliest), so items added later get the same one.
+export async function feeDueOf(conn, parcelId, fee) {
+  const [[r]] = await conn.query("SELECT MIN(cc.due_date) AS due FROM parcel_items pi JOIN claim_costs cc ON cc.claim_id = pi.claim_id AND cc.category = ? WHERE pi.parcel_id = ? AND pi.added_at IS NULL AND cc.due_date IS NOT NULL", [fee, parcelId]);
+  return r?.due ? String(r.due).slice(0, 10) : null;
+}

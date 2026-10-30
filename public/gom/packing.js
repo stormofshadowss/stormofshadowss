@@ -26,7 +26,7 @@
   const checkDone = (p) => p.items.filter((i) => i.packed).length + (p.lomoName && p.lomoChecked ? 1 : 0) + (p.bias && p.biasChecked ? 1 : 0)
     + friends(p).reduce((n, f) => n + (f.lomoName && f.lomoChecked ? 1 : 0) + (f.bias && f.biasChecked ? 1 : 0), 0);
   const allTicked = (p) => checkDone(p) === checkTotal(p) && !waiting(p).length;
-  const tag = (p, i) => (friends(p).length ? ` <span class="sub">@${esc(i.owner)}</span>` : '');
+  const tag = (p, i) => (friends(p).length ? ` <span class="sub">@${esc(i.owner)}</span>` : '') + (i.addedLater ? ' <span class="pill warn" data-added-later title="The person added this after asking for the parcel">added later</span>' : '');
   const fromOrder = (i) => (showOrders ? `<div class="sub" data-order-name style="margin:0 0 2px 26px">from ${esc(i.orderTitle || 'Shop (on hand)')}</div>` : '');
   const splitWords = (p) => (p.feeSplit?.mode === 'weight' ? "by the weight of each person's items" : 'equally per person');
 
@@ -109,7 +109,8 @@
             <td>${p.domsTotal != null ? money(x.doms) : '—'}</td><td>${p.packagingTotal != null ? money(x.packaging) : '—'}</td></tr>`).join('')}</tbody></table></div>
           <div class="sub" data-split-hint>${p.feeSplit.mode === 'weight' ? "Each person pays in proportion to their weight. Type what you weighed for each person, or leave a box blank to use the estimate (from their items' own weights, or their sizes)." : 'Weights are only used when splitting by weight — you can still record them here.'}</div>
           <button class="sm" data-act="split-save" data-id="${p.id}" style="margin-top:6px">Save split</button></div>` : '';
-      return `<form data-form="fees" data-id="${p.id}" style="margin-top:10px"><div class="formgrid" style="max-width:520px">
+      const feesCheck = p.feesCheckNeeded ? `<div class="card" data-fees-check style="border:2px solid var(--warn-line); background:var(--warn-bg); color:var(--warn-ink); margin:10px 0 0"><strong>Items were added after the postage was set.</strong> The same totals (${[p.domsTotal != null && `postage ${money(p.domsTotal)}`, p.packagingTotal != null && `packaging ${money(p.packagingTotal)}`].filter(Boolean).join(' · ')}) were shared out again across all the items. Check they still cover the parcel — change them below, or <button type="button" class="sm secondary" data-act="fees-checked" data-id="${p.id}">Postage is fine</button></div>` : '';
+      return `${feesCheck}<form data-form="fees" data-id="${p.id}" style="margin-top:10px"><div class="formgrid" style="max-width:520px">
           <div><label>Postage — Doms (£)</label><input name="doms" type="number" step="0.01" min="0" value="${p.domsTotal ?? ''}" placeholder="e.g. 4.50"></div>
           <div><label>Packaging fee (£)</label><input name="packaging" type="number" step="0.01" min="0" value="${p.packagingTotal ?? ''}" placeholder="e.g. 1.00"></div>
           <div><label>Fees due by</label><input name="dueDate" type="date" value="${GOM.inDays(14)}" required></div>
@@ -152,6 +153,7 @@
     const act = b.dataset.act, id = Number(b.dataset.id);
     const p = parcels.find((x) => x.id === id);
     if (act === 'status') { status = b.dataset.status; return render(root); }
+    if (act === 'fees-checked') { const r = await api('POST', `/api/admin/parcels/${id}/fees-checked`, {}); if (!r.ok) return GOM.toast(errText(r), true); GOM.toast('Okay — marked as checked.'); return render(root); }
     if (act === 'toggle-orders') { showOrders = b.checked; try { localStorage.setItem(KEY, showOrders ? '1' : '0'); } catch { /* ignore */ } return draw(); }
     if (act === 'pic') {                                                                // tap a thumbnail: the full picture opens under that item (tap again to close)
       const row = b.closest('[data-item-row]'), open = row.nextElementSibling;

@@ -48,6 +48,16 @@
     const others = sh.people.filter((x) => x.status !== 'recipient').map((x) => x.handle);
     return `<div class="sub" data-share="friend">Posted together with <strong>@${esc(sh.people[0].handle)}</strong>'s items${others.length ? ` (and ${listNames(others)}'s)` : ''} to @${esc(sh.people[0].handle)}'s address. @${esc(sh.people[0].handle)} will confirm when it arrives. Postage and packaging are ${splitWords(p)}. ${p.status === 'requested' ? btn('leave', 'Take my items out') : ''}</div>`;
   };
+  // More of your items have arrived since you asked? Add them to a request the GOM hasn't packed yet (they go out together, and the request keeps its place in the queue).
+  const addMoreHtml = (S, p) => {
+    if (!p.canAddItems) return '';
+    const ready = S.readyItems(); if (!ready.length) return '';
+    const feesSet = p.domsTotal != null || p.packagingTotal != null;
+    return `<form data-form="add-items" data-id="${p.id}" style="margin-top:10px"><label>More items ready? Add them to this request — until the GOM packs it:</label>
+      ${ready.map((c) => `<label class="chk" style="margin:4px 0"><input type="checkbox" name="claim" value="${c.id}"> ${esc(c.label)} <span class="sub">${esc(c.orderTitle)}${c.storageDeadline ? ` · ${S.storageHtml(c)}` : ''}</span></label>`).join('')}
+      ${feesSet ? `<p class="sub" data-add-fees-note>Postage and packaging are already set for this parcel. They'll be shared out again across all the items${p.shared?.active ? ' (and everyone sharing it)' : ''}, so what you owe on each item may change.</p>` : ''}
+      <p class="msg err" data-msg hidden></p><button type="submit" class="sm" data-add-submit>Add to this request</button></form>`;
+  };
   const parcelsHtml = (S) => S.parcels.length ? `<div class="card"><h2>Your parcels</h2>${S.parcels.map((p) => {
     const active = p.shared?.active, mineItems = p.items.filter((i) => i.mine);
     const owners = [...new Set(p.items.filter((i) => !i.mine).map((i) => i.owner))];
@@ -56,7 +66,7 @@
       <strong>Parcel #${p.id}</strong> <span class="pill ${p.status === 'received' ? 'ok' : ''}">${STATUS[p.status](p)}</span>
       <div class="sub">${active ? `Your items: ${mineItems.map((i) => esc(i.label)).join(', ')}${owners.map((o) => ` · @${esc(o)}'s items: ${p.items.filter((i) => i.owner === o).map((i) => esc(i.label)).join(', ')}`).join('')}` : p.items.map((i) => esc(i.label)).join(', ')} · ${esc(p.method)}</div>
       ${feeBits.length ? `<div class="sub" data-fees>${active ? 'Your share — ' : ''}${feeBits.join(' · ')}${active ? ` <span class="muted">(${splitWords(p)})</span>` : ''}</div>` : ''}
-      ${p.lomoName ? `<div class="sub">Personalised Lomo: ${esc(p.lomoName)}</div>` : ''}${shareHtml(p)}</div>
+      ${p.lomoName ? `<div class="sub">Personalised Lomo: ${esc(p.lomoName)}</div>` : ''}${shareHtml(p)}${addMoreHtml(S, p)}</div>
       ${p.status === 'shipped' && p.canConfirm ? `<button data-act="received" data-id="${p.id}">It's arrived${active ? ' — confirms it for everyone' : ' — mark as received'}</button>` : ''}</div>`;
   }).join('')}</div>` : '';
 
@@ -124,6 +134,16 @@
       await S.reload(); await SITE.views.ship(view); SITE.toast(ask[4]);
     };
     view.onsubmit = async (e) => {
+      if (e.target.dataset.form === 'add-items') {                        // add more of your ready items to a request that isn't packed yet
+        e.preventDefault();
+        const form = e.target, msg = $('[data-msg]', form), btn = $('[data-add-submit]', form), ids = [...form.querySelectorAll('input[name="claim"]:checked')].map((i) => Number(i.value));
+        if (!ids.length) return S.say(msg, 'Tick the items you want to add.');
+        if (btn.disabled) return; btn.disabled = true; btn.textContent = 'Adding…';
+        const r = await S.api('POST', `/api/my/parcels/${form.dataset.id}/items`, { claimIds: ids });
+        if (!r.ok) { btn.disabled = false; btn.textContent = 'Add to this request'; return S.say(msg, errText(r)); }
+        await S.reload(); await SITE.views.ship(view); SITE.toast(`Added ${ids.length} item${ids.length === 1 ? '' : 's'} to Parcel #${form.dataset.id}.`);
+        return;
+      }
       if (e.target.dataset.form === 'invite') {                           // ask another friend to join an existing parcel
         e.preventDefault();
         const form = e.target, msg = $('[data-msg]', form), handles = form.elements.handles.value.trim();

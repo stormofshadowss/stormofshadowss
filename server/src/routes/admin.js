@@ -179,13 +179,13 @@ export function adminRoutes(app, { pool, notifier }) {
     const [parcels] = await pool.query(
       `SELECT p.id, p.joiner_id AS joinerId, j.instagram_handle AS handle, (j.verified_at IS NOT NULL) AS handleVerified, p.method, p.declared_value AS declaredValue, p.notes, p.bias, p.lomo_name AS lomoName, p.lomo_source AS lomoSource, p.status,
               p.requested_at, p.doms_total AS domsTotal, p.packaging_total AS packagingTotal, p.packed_date AS packedDate, p.shipped_date AS shippedDate, p.received_date AS receivedDate,
-              p.address_checked_at AS addressCheckedAt, p.lomo_checked_at AS lomoCheckedAt, p.bias_checked_at AS biasCheckedAt, p.fee_split AS feeSplitSetting, p.weight_g AS weightG,
+              p.address_checked_at AS addressCheckedAt, p.lomo_checked_at AS lomoCheckedAt, p.bias_checked_at AS biasCheckedAt, p.fee_split AS feeSplitSetting, p.weight_g AS weightG, p.fees_check_needed AS feesCheckNeeded,
               ad.full_name AS deliveryName, ad.address AS deliveryAddress, ad.phone AS deliveryPhone, ad.email AS deliveryEmail
          FROM parcels p JOIN joiners j ON j.id = p.joiner_id LEFT JOIN addresses ad ON ad.joiner_id = j.id
         WHERE p.status = ? ORDER BY p.requested_at, p.id`, [status]);
     const ids = parcels.map((p) => p.id);
     const items = ids.length ? (await pool.query(
-      'SELECT pi.parcel_id, c.id AS claimId, c.joiner_id AS ownerId, c.label, pi.packed_at AS packedAt, jc.instagram_handle AS owner, pi.doms_share AS doms, pi.packaging_share AS packaging, COALESCE(go.title, \'Shop (on hand)\') AS orderTitle, im.filename AS imgFile, im.width AS imgW, im.height AS imgH FROM parcel_items pi JOIN claims c ON c.id = pi.claim_id JOIN joiners jc ON jc.id = c.joiner_id LEFT JOIN items it ON it.id = c.item_id LEFT JOIN group_orders go ON go.id = c.order_id LEFT JOIN leftover_items lo ON lo.id = c.leftover_item_id LEFT JOIN images im ON im.id = COALESCE(it.image_id, lo.image_id) WHERE pi.parcel_id IN (?) ORDER BY c.id', [ids]))[0] : [];
+      'SELECT pi.parcel_id, c.id AS claimId, c.joiner_id AS ownerId, c.label, pi.packed_at AS packedAt, pi.added_at AS addedAt, jc.instagram_handle AS owner, pi.doms_share AS doms, pi.packaging_share AS packaging, COALESCE(go.title, \'Shop (on hand)\') AS orderTitle, im.filename AS imgFile, im.width AS imgW, im.height AS imgH FROM parcel_items pi JOIN claims c ON c.id = pi.claim_id JOIN joiners jc ON jc.id = c.joiner_id LEFT JOIN items it ON it.id = c.item_id LEFT JOIN group_orders go ON go.id = c.order_id LEFT JOIN leftover_items lo ON lo.id = c.leftover_item_id LEFT JOIN images im ON im.id = COALESCE(it.image_id, lo.image_id) WHERE pi.parcel_id IN (?) ORDER BY c.id', [ids]))[0] : [];
     for (const i of items) { i.image = imageOut(i.imgFile, i.imgW, i.imgH); delete i.imgFile; delete i.imgW; delete i.imgH; }
     // Money still owing on the claims in each parcel — a HEADS-UP for the GOM, never a block: people often pay the last balance together with the postage.
     // Per person (a shared parcel can hold a friend's items), by cost category, plus any payment of theirs that is waiting for the GOM to verify.
@@ -212,7 +212,7 @@ export function adminRoutes(app, { pool, notifier }) {
       p.handleVerified = !!p.handleVerified;
       p.queuePosition = await queuePosition(pool, p);
       const mine = items.filter((i) => i.parcel_id === p.id);
-      p.items = mine.map((i) => ({ claimId: i.claimId, label: i.label, orderTitle: i.orderTitle, packed: !!i.packedAt, owner: i.owner, image: i.image }));
+      p.items = mine.map((i) => ({ claimId: i.claimId, label: i.label, orderTitle: i.orderTitle, addedLater: !!i.addedAt, packed: !!i.packedAt, owner: i.owner, image: i.image }));
       p.owing = owingOf(p.id);
       p.addressChecked = !!p.addressCheckedAt; p.lomoChecked = !!p.lomoCheckedAt; p.biasChecked = !!p.biasCheckedAt;
       p.feesSet = feesSet({ doms_total: p.domsTotal, packaging_total: p.packagingTotal });
@@ -345,12 +345,20 @@ export function adminRoutes(app, { pool, notifier }) {
       if (p.status !== 'requested') throw conflict('Fees can only be set while the parcel is still in the queue, before it is marked packed', 'bad_state');
       if (b.doms !== undefined) await applyFee(conn, id, 'doms', round2(b.doms), b.dueDate);
       if (b.packaging !== undefined) await applyFee(conn, id, 'packaging', round2(b.packaging), b.dueDate);
+      await conn.query('UPDATE parcels SET fees_check_needed = 0 WHERE id = ?', [id]);                           // you've looked at the fees
       await audit(conn, req.account.id, 'parcel.fees', 'parcel', id, b);
     });
     res.json({ ok: true });
   }));
 
   // (older, postage-only form of the same thing)
+  // "Postage is fine": items were added after the fees were set, you've checked them and want the reminder gone.
+  app.post('/api/admin/parcels/:id/fees-checked', admin, wrap(async (req, res) => {
+    const [r] = await pool.query('UPDATE parcels SET fees_check_needed = 0 WHERE id = ?', [Number(req.params.id)]);
+    if (!r.affectedRows) throw notFound('No such parcel');
+    res.json({ ok: true });
+  }));
+
   app.post('/api/admin/parcels/:id/doms', admin, wrap(async (req, res) => {
     const { total } = z.object({ total: z.number().min(0).max(10000) }).parse(req.body);
     const id = Number(req.params.id);

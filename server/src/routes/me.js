@@ -3,13 +3,13 @@ import { NOTIFY_EVENTS, EVENT_KEYS, offSet, offString } from '../lib/notify-even
 import { z } from 'zod';
 import { randomBytes } from 'node:crypto';
 import { wrap } from '../lib/http.js';
-import { requireLogin } from '../auth.js';
+import { requireLogin, audit } from '../auth.js';
 import { withTx } from '../db.js';
 import { shareAddress } from '../lib/address-share.js';
 import { bad, conflict, forbidden, notFound, HttpError } from '../errors.js';
 import { resolveJoiner } from '../lib/joiner.js';
 import { owedInScope, owingPlan, lockJoiner, creditBalance } from '../lib/ledger.js';
-import { queuePosition, markParcelReceived } from '../lib/parcels.js';
+import { queuePosition, markParcelReceived, applyFee, feeDueOf } from '../lib/parcels.js';
 import { validateShippable, inviteCompanions, acceptCompanion, declineCompanion, withdrawInvitation, leaveParcel } from '../lib/combine.js';
 import { feeModeOf } from '../lib/parcels.js';
 import { CATS, round2 } from '../lib/money.js';
@@ -279,6 +279,47 @@ export function meRoutes(app, { pool }) {
     res.status(201).json(out);
   }));
 
+  // ADD ITEMS to a request that hasn't been packed: more of your items have arrived and could go out together. Your own items only (any of your handles); the request keeps its place in the queue.
+  // If the GOM has already put postage / packaging on it, the SAME totals are re-shared across all the items (only the differences move) and the parcel is flagged for the GOM to check the postage.
+  app.post('/api/my/parcels/:id/items', auth, wrap(async (req, res) => {
+    const b = z.object({ claimIds: z.array(z.number().int().positive()).min(1).max(50) }).parse(req.body);
+    const parcelId = Number(req.params.id), ids = [...new Set(b.claimIds)];
+    const handlesAll = await accountHandles(req.account.id), handleIds = new Set(handlesAll.map((h) => h.id));
+    const [owned] = await pool.query('SELECT id, joiner_id FROM claims WHERE id IN (?)', [ids]); const ownerOf = new Map(owned.map((c) => [c.id, c.joiner_id]));
+    if (ids.some((id) => !handleIds.has(ownerOf.get(id)))) throw forbidden("One of those items isn't yours");
+    const out = await withTx(pool, async (conn) => {
+      const [[peek]] = await conn.query('SELECT joiner_id FROM parcels WHERE id = ?', [parcelId]);
+      if (!peek || !handleIds.has(peek.joiner_id)) throw notFound('No such parcel');                          // only the person it is posted to can add to it (not a friend sharing it)
+      await lockJoiner(conn, peek.joiner_id);                                                                // joiner first, then the parcel — the order everything else uses
+      const [[p]] = await conn.query('SELECT id, joiner_id, status, doms_total, packaging_total FROM parcels WHERE id = ? FOR UPDATE', [parcelId]);
+      if (p.status !== 'requested') throw conflict("This request has already been packed, so it's too late to add items — ask for a new parcel for them instead.", 'parcel_not_open');
+      if (handlesAll.find((h) => h.id === p.joiner_id)?.blocked) throw forbidden("A parcel can't be sent to a blocked handle.", 'blocked');
+      const byHandle = new Map(); for (const id of ids) { const j = ownerOf.get(id); if (!byHandle.has(j)) byHandle.set(j, []); byHandle.get(j).push(id); }
+      for (const [jid, claimIds] of [...byHandle].sort((x, y) => x[0] - y[0])) {
+        if (jid !== p.joiner_id) await lockJoiner(conn, jid);
+        await validateShippable(conn, jid, claimIds);                                                         // confirmed, ready to pack, not already in a parcel, no pending cancel
+        if (jid !== p.joiner_id) {                                                                           // their other handle joins the parcel (the same person — no invitation to answer)
+          const [[ex]] = await conn.query('SELECT status FROM parcel_companions WHERE parcel_id = ? AND joiner_id = ? FOR UPDATE', [parcelId, jid]);
+          if (!ex || ex.status !== 'accepted') {
+            if (ex) await conn.query('DELETE FROM parcel_companions WHERE parcel_id = ? AND joiner_id = ?', [parcelId, jid]);
+            await conn.query("INSERT INTO parcel_companions (parcel_id, joiner_id, status, how, created_by, responded_at) VALUES (?, ?, 'accepted', 'own', ?, NOW(3))", [parcelId, jid, req.account.id]);
+          }
+        }
+      }
+      for (const id of ids) await conn.query('INSERT INTO parcel_items (parcel_id, claim_id, added_at) VALUES (?, ?, NOW(3))', [parcelId, id]);
+      let feesResplit = false;
+      for (const fee of ['doms', 'packaging']) {                                                             // the totals stay the same; they are shared out again across ALL the items
+        const total = p[`${fee}_total`]; if (total === null || total === undefined) continue;
+        await applyFee(conn, parcelId, fee, Number(total), await feeDueOf(conn, parcelId, fee)); feesResplit = true;
+      }
+      if (feesResplit) await conn.query('UPDATE parcels SET fees_check_needed = 1 WHERE id = ?', [parcelId]);
+      await audit(conn, req.account.id, 'parcel.add_items', 'parcel', parcelId, { claimIds: ids, feesResplit });
+      const [[parcel]] = await conn.query('SELECT id, status, requested_at FROM parcels WHERE id = ?', [parcelId]);
+      return { ok: true, added: ids.length, feesResplit, queuePosition: await queuePosition(conn, parcel) };
+    });
+    res.status(201).json(out);
+  }));
+
   // Your parcels: the ones you asked for AND the ones you share with friends, plus any invitations to share someone else's.
   app.get('/api/my/parcels', auth, wrap(async (req, res) => {
     const scope = await scopeOf(req), mine_ids = new Set(scope.joiners.map((j) => j.id)), idList = [...mine_ids];
@@ -295,6 +336,7 @@ export function meRoutes(app, { pool }) {
     for (const p of parcels) {
       const mine = mine_ids.has(p.ownerId), all = items.filter((i) => i.parcel_id === p.id), cs = comps.filter((c) => c.parcelId === p.id);
       p.queuePosition = await queuePosition(pool, p);
+      p.canAddItems = mine && p.status === 'requested';                          // more of your items can be added until it is packed
       p.items = all.map((i) => ({ claimId: i.claimId, label: i.label, mine: mine_ids.has(i.ownerId), owner: i.owner }));
       p.myDoms = Math.round(all.filter((i) => mine_ids.has(i.ownerId)).reduce((s, i) => s + Number(i.doms), 0) * 100) / 100;
       p.myPackaging = Math.round(all.filter((i) => mine_ids.has(i.ownerId)).reduce((s, i) => s + Number(i.packaging), 0) * 100) / 100;

@@ -213,7 +213,7 @@ test('request shipping end to end: choose items, method, notes, bias, Lomo name;
   const parcel = (await api('GET', '/api/admin/packing')).json.parcels.find((x) => x.handle === 'ship_h');
   assert.deepEqual([parcel.method, parcel.declaredValue, parcel.notes, parcel.bias, parcel.lomoName, parcel.lomoSource], ['WW Tracked', 'reduced', 'toploader please', 'Hyunjin', 'Sammy', 'custom']);
   assert.deepEqual(parcel.items.map((i) => i.claimId).sort(), [k1, k2].sort());
-  assert.equal(p.qa('input[name="claim"]').length, 1, 'only the item not yet requested is still listed');
+  assert.equal(p.qa('input[name="claim"]').length, 2, 'only the item not yet requested is still listed — in the new-request form and in the "add more items" form on the parcel'); assert.equal(p.qa('form[data-form="add-items"] input[name="claim"]').length, 1, 'once, on the parcel');
   assert.match(text(p), /Your parcels.*Parcel #\d+ In the queue — number 1.*Keyring, Keyring.*WW Tracked.*Personalised Lomo: Sammy/);
   assert.equal(p.window.document.querySelector('input[name="claim"]').value, String(album));
   p.close();
