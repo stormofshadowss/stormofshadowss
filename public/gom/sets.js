@@ -87,7 +87,7 @@
     for (const st of list) by.get(st.itemId ?? st.itemTitle).list.push(st);
     for (const g of by.values()) if (g.list.length) groups.push(g);
     const ready = list.filter(isReady);
-    root.innerHTML = `<h1 style="margin:18px 0 10px">Sets</h1>${reqCard}
+    root.innerHTML = `<h1 style="margin:18px 0 10px">Sets</h1><div class="row" style="margin:0 0 10px"><button type="button" class="sm secondary" data-act="fill-gaps" title="Moves people up from later sets into open spots">Fill gaps…</button><span class="sub">Moves people up from later sets into spots that are open now.</span></div>${reqCard}
       <div class="card"><div class="formgrid"><div><label>Group order</label><select data-filter="order"><option value="">All</option>${orders.filter((o) => o.items.some((i) => i.type === 'set') && (!o.archivedAt || String(o.id) === String(filter.order))).map((o) => `<option value="${o.id}" ${String(o.id) === String(filter.order) ? 'selected' : ''}>${esc(o.title)}</option>`).join('')}</select></div>
         <div><label for="setSearch">Find a handle, member or item</label><input id="setSearch" data-filter="q" value="${esc(filter.q)}" placeholder="@handle, Felix, photocard…" autocomplete="off"></div></div>
         <div class="chips" id="setChips" role="group" aria-label="Which sets" style="margin-top:10px">${[['none', 'To decide'], ['ready', 'Ready to secure'], ['secured', 'Secured'], ['cancelled', 'Cancelled'], ['all', 'All']].map(([v, l]) => `<button type="button" class="chip ${filter.decision === v ? 'on' : ''}" data-act="chip" data-v="${v}" aria-pressed="${filter.decision === v}">${l}<span class="n">${count[v]}</span></button>`).join('')}</div></div>
@@ -98,6 +98,16 @@
   async function onClick(e) {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const act = b.dataset.act, id = Number(b.dataset.id), s = sets.find((x) => x.id === id);
+    if (act === 'fill-gaps') {                                           // preview who would move up into every open spot, then do it
+      const pv = await api('GET', '/api/admin/sets/fill-gaps'); if (!pv.ok) return GOM.toast(errText(pv), true);
+      if (!pv.json.total) return GOM.alert('No gaps can be filled right now. Nobody is waiting in a later set for an open spot — or the people who are have asked to stay together, are fixed claimers, or are waiting on a cancel request.');
+      const lines = pv.json.items.flatMap((it) => [`${it.itemTitle} — ${it.orderTitle}`, ...pv.json.moves.filter((m) => m.itemId === it.itemId).map((m) => `  • @${m.handle} — ${m.member}: Set ${m.fromSet} → Set ${m.toSet}${m.secured ? ' (secured straight away)' : ''}`)]);
+      const shown = lines.slice(0, 40), more = lines.length - shown.length;
+      const ok = await GOM.confirm(`Move ${pv.json.total} ${pv.json.total === 1 ? 'person' : 'people'} up?\n\n${shown.join('\n')}${more > 0 ? `\n…and ${more} more line${more === 1 ? '' : 's'}` : ''}\n\nThey aren't emailed. Anyone moved into a secured set is secured straight away.`, { ok: 'Move them up', cancel: 'Not yet' });
+      if (!ok) return;
+      const r = await api('POST', '/api/admin/sets/fill-gaps', {}); if (!r.ok) return GOM.toast(errText(r), true);
+      await render(root); return GOM.toast(r.json.total ? `Moved ${r.json.total} ${r.json.total === 1 ? 'person' : 'people'} up.` : 'Nothing needed moving any more.');
+    }
     if (act === 'approve-req') {
       const ok = await GOM.confirm(`Approve @${b.dataset.handle}'s request to ${b.dataset.action === 'ot8' ? 'swap to the full set' : 'give up their fixed claim'}?\n\nTheir fixed claim ends, anything already paid goes back to them as credit, and ${b.dataset.action === 'ot8' ? 'a full set is placed for them in a set that is still open.' : 'the part opens up in the secured set (you can put someone into it from here).'}`, { ok: 'Approve it' });
       if (!ok) return;

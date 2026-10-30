@@ -44,3 +44,16 @@ export async function withTx(pool, fn, attempts = 3) {
     }
   }
 }
+
+// Runs fn inside a transaction and ALWAYS rolls it back — so a "preview" can run the real logic (and so cannot disagree with what will happen) without changing anything.
+export async function withRollback(pool, fn) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+    await conn.beginTransaction();
+    return await fn(conn);
+  } finally {
+    try { await conn.rollback(); } catch { /* ignore */ }
+    conn.release();
+  }
+}

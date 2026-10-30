@@ -230,6 +230,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
       pipeline: z.enum(PIPELINE).optional(), status: z.enum(['confirmed', 'cancelled']).optional(),
       sizeBucket: z.enum(['XS', 'S', 'M', 'L', 'XL']).optional(), weightG: z.number().int().min(1).max(100000).nullable().optional(), storageDeadlineOverride: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
     }).parse(req.body);
+    let movedUp = [];
     await withTx(pool, async (conn) => {
       const [[c]] = await conn.query('SELECT id, joiner_id, pipeline, ready_to_pack_date, set_id, price_tbc FROM claims WHERE id = ?', [id]);
       if (!c) throw notFound('No such claim');
@@ -250,10 +251,10 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
       if (b.storageDeadlineOverride !== undefined) { set.push('storage_deadline_override = ?'); vals.push(b.storageDeadlineOverride); }
       if (set.length) await conn.query(`UPDATE claims SET ${set.join(', ')} WHERE id = ?`, [...vals, id]);
       if (b.status === 'confirmed') { await lockJoiner(conn, c.joiner_id); await sweepCredit(conn, c.joiner_id); }
-      if (b.status === 'cancelled') await cancelClaim(conn, id, 'Cancelled by the GOM');
+      if (b.status === 'cancelled') movedUp = (await cancelClaim(conn, id, 'Cancelled by the GOM')).moved || [];                // someone from a later set may move up into the freed spot
       await audit(conn, req.account.id, 'claim.update', 'claim', id, b);
     });
-    res.json({ ok: true });
+    res.json({ ok: true, moved: movedUp });
   }));
 
   // Move claims to another person (e.g. old claims imported under the wrong handle). dryRun reports what would happen and changes nothing.
@@ -313,7 +314,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
     });
     res.json({
       ok: true, cancelled: out.filter((x) => x.cancelled).length,
-      refunded: round2(out.reduce((s, x) => s + x.refunded, 0)), forfeited: round2(out.reduce((s, x) => s + x.forfeited, 0)),
+      refunded: round2(out.reduce((s, x) => s + x.refunded, 0)), forfeited: round2(out.reduce((s, x) => s + x.forfeited, 0)), moved: out.flatMap((x) => x.moved || []),
     });
   }));
 }

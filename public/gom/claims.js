@@ -1,6 +1,8 @@
 // Claims tab: everyone's claims, grouped by group order then person. Secure, edit costs, move along the pipeline, cancel.
 (function () {
   const { esc, money, fmtDate, api, errText, $, $$ } = GOM;
+  // "@x moved up from Set 3 into Set 1." — when a cancellation made someone from a later set move up into the freed spot
+  const movedNote = (moved) => ((moved || []).length ? ` ${moved.map((m) => `@${m.handle} moved up from Set ${m.fromSet} into Set ${m.toSet}`).join('; ')}.` : '');
   const CATS = [['initials', 'Initials'], ['ems', 'EMS'], ['customs', 'Customs'], ['doms', 'Doms'], ['packaging', 'Packaging']];
   const PIPELINE = ['awaiting fulfillment', 'ordered via proxy / warehouse', 'arrived at proxy / warehouse', 'shipping requested',
     'enroute to GOM', 'arrived at GOM', 'checking parcel', 'ready to pack / on hand', 'packed', 'shipped', 'completed'];
@@ -271,7 +273,7 @@
     if (!ok) return;
     const res = await api('POST', `/api/admin/cancel-requests/${id}/approve`, { keep, ...(note ? { note } : {}) });
     await render(root); GOM.refreshBadges();
-    GOM.toast(res.ok ? `Cancelled — ${money(res.json.refunded)} returned as credit${res.json.kept > 0 ? `, ${money(res.json.kept)} kept` : ''}.` : errText(res), !res.ok);
+    GOM.toast(res.ok ? `Cancelled — ${money(res.json.refunded)} returned as credit${res.json.kept > 0 ? `, ${money(res.json.kept)} kept` : ''}.${movedNote(res.json.moved)}` : errText(res), !res.ok);
   }
 
   // ── Add a claim for someone ──
@@ -526,7 +528,7 @@
         if (!ok) return;
         const r = await api('PATCH', `/api/admin/claims/${id}`, { status: 'cancelled' });
         if (!r.ok) return GOM.toast(errText(r), true);
-        await render(root); GOM.toast(paid > 0 ? `Cancelled. ${money(paid)} returned as credit.` : 'Cancelled.');
+        await render(root); GOM.toast((paid > 0 ? `Cancelled. ${money(paid)} returned as credit.` : 'Cancelled.') + movedNote(r.json.moved));
         break;
       }
       default:

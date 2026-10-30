@@ -61,7 +61,7 @@ export async function cancelNow(conn, { orderId = null, itemId = null, confirm, 
   if (plan.blockers.length) throw conflict(`Nothing was cancelled: ${plan.blockers.slice(0, 3).map((b) => `“${b.label}” (@${b.handle}) — ${b.reason}`).join('; ')}${plan.blockers.length > 3 ? `; and ${plan.blockers.length - 3} more` : ''}.`, 'cannot_cancel');
   let credit = 0, forfeited = 0;
   for (const c of plan.claims) {
-    const r = await cancelClaim(conn, c.id, `Cancelled by the GOM (${plan.kind === 'order' ? 'the group order' : 'the item'} could not go ahead)`);
+    const r = await cancelClaim(conn, c.id, `Cancelled by the GOM (${plan.kind === 'order' ? 'the group order' : 'the item'} could not go ahead)`, { fillGaps: false });          // the whole item / order is being cancelled: nobody moves
     credit = round2(credit + r.refunded); forfeited = round2(forfeited + r.forfeited);
   }
   await conn.query('UPDATE items SET cancelled_at = NOW(3) WHERE id IN (?)', [plan.itemIds.length ? plan.itemIds : [0]]);

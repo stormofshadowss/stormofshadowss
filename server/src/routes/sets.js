@@ -3,7 +3,8 @@ import { checkPurchaseLimit } from '../lib/claim-create.js';
 import { z } from 'zod';
 import { wrap } from '../lib/http.js';
 import { requireAdmin, audit } from '../auth.js';
-import { withTx } from '../db.js';
+import { withTx, withRollback } from '../db.js';
+import { fillAllGaps } from '../lib/fill-gaps.js';
 import { bad, conflict, notFound, HttpError } from '../errors.js';
 import { normalizeHandle, isValidHandle } from '../lib/handles.js';
 import { lockJoiner, sweepCredit } from '../lib/ledger.js';
@@ -15,6 +16,21 @@ export function setRoutes(app, { pool, notifier }) {
   const admin = [requireAdmin];
 
   // Every set, with who holds each part.
+  // FILL GAPS ("Fill gaps…" on the Sets tab): preview who would move up into every existing open spot, then do it. The preview runs the real thing and rolls it back, so it can't disagree with what then happens.
+  // (Registered first so "fill-gaps" is never read as a set id.)
+  const planSummary = (moves) => ({ moves, total: moves.length, items: [...new Map(moves.map((m) => [m.itemId, { itemId: m.itemId, itemTitle: m.itemTitle, orderTitle: m.orderTitle, count: 0 }])).values()].map((it) => ({ ...it, count: moves.filter((m) => m.itemId === it.itemId).length })) });
+  app.get('/api/admin/sets/fill-gaps', admin, wrap(async (req, res) => {
+    res.json(planSummary(await withRollback(pool, (conn) => fillAllGaps(conn, { accountId: req.account.id }))));
+  }));
+  app.post('/api/admin/sets/fill-gaps', admin, wrap(async (req, res) => {
+    const moves = await withTx(pool, async (conn) => {
+      const done = await fillAllGaps(conn, { accountId: req.account.id });
+      await audit(conn, req.account.id, 'sets.fill_gaps', 'sets', null, { moves: done.length });
+      return done;
+    });
+    res.json({ ok: true, ...planSummary(moves) });
+  }));
+
   app.get('/api/admin/sets', admin, wrap(async (req, res) => {
     const where = ['1=1']; const params = [];
     if (req.query.order) { where.push('go.id = ?'); params.push(Number(req.query.order)); }
@@ -89,7 +105,7 @@ export function setRoutes(app, { pool, notifier }) {
       const [[s]] = await conn.query('SELECT admin_decision AS decision FROM item_sets WHERE id = ? FOR UPDATE', [id]);
       if (s.decision === 'cancelled') throw conflict('That set is already cancelled', 'bad_state');
       const results = [];
-      for (const c of claims) results.push(await cancelClaim(conn, c.id, 'Set cancelled'));
+      for (const c of claims) results.push(await cancelClaim(conn, c.id, 'Set cancelled', { fillGaps: false }));
       await conn.query('DELETE FROM set_slots WHERE set_id = ? AND joiner_id IS NULL', [id]);   // a pending raffle goes with the set
       await conn.query("UPDATE item_sets SET admin_decision = 'cancelled' WHERE id = ?", [id]);
       await audit(conn, req.account.id, 'set.cancel', 'set', id, { claims: claims.length });

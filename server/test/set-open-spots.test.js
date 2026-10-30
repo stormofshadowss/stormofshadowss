@@ -24,23 +24,21 @@ const claimOf = async (handle, item) => (await api('GET', `/api/admin/claims?han
 const cancelClaim = async (handle) => { const c = (await api('GET', `/api/admin/claims?handle=${handle}`)).json.claims.find((x) => x.status !== 'cancelled'); const r = await api('PATCH', `/api/admin/claims/${c.id}`, { status: 'cancelled' }); assert.equal(r.status, 200, r.text); return c.id; };
 const secure = async (id) => { const r = await api('POST', `/api/admin/sets/${id}/secure`, {}); assert.equal(r.status, 200, r.text); return r.json; };
 
-test('CANCELLING A CLAIM in a set still waiting for your decision frees the spot, and the next person fills it (the case that always worked)', async () => {
+test('CANCELLING A CLAIM in a set still waiting for your decision frees the spot, and the person holding that part in the next set moves UP into it (so the next new claim lands in the set they left)', async () => {
   const { item } = await newSet(); const [p1, p2, p3] = [u(), u(), u()];
   await claim(item, p1, ['A']); await claim(item, p2, ['A']); await claim(item, p3, ['B']);               // Set 1: A,B   Set 2: A
-  await cancelClaim(p1);
-  assert.equal(await claim(item, u(), ['A']), 'A→1', 'back into Set 1, not Set 3');
+  await cancelClaim(p1);                                                                                    // p2 (A, Set 2) moves up into Set 1 — see set-fill-gaps.test.js
+  assert.equal(await claim(item, u(), ['A']), 'A→2', 'Set 1 is complete again, so the next A goes where p2 was');
 });
 
-test('AN OPEN SPOT IN A SECURED SET IS FILLED FIRST (your report): the new claim goes there, not into a brand-new set — and it waits as "requested"', async () => {
+test('AN OPEN SPOT IN A SECURED SET IS FILLED FIRST (your report): the person holding that part in the next set moves up into it (secured straight away); a NEW claim for a free spot in a secured set waits as "requested"', async () => {
   const { item } = await newSet(); const [p1, p2] = [u(), u()];
   await claim(item, p1, ['A', 'B']); await claim(item, p2, ['A']);                                          // Set 1: A,B   Set 2: A
   const s1 = await set(item, 1); await secure(s1.id);                                                        // secured with C still open
-  await cancelClaim(p1);                                                                                     // …and now A and B are open in the secured Set 1 too (cancel removes both? one claim each)
-  const state = await layout(item); assert.equal(state[0].d, 'secured');
+  await cancelClaim(p1);                                                                                     // A in the secured Set 1 is freed: p2 (A, Set 2) moves up into it and is secured straight away
+  const state = await layout(item); assert.equal(state[0].d, 'secured'); assert.equal(state[0].parts.A, `${p2}:confirmed`, 'the person from Set 2 filled the spot, secured straight away');
   const h = u(); assert.equal(await claim(item, h, ['C']), 'C→1', 'C was never taken in Set 1');
-  const open = Object.entries((await set(item, 1)).parts).filter(([, v]) => !v).map(([k]) => k);
-  const a = u(); const where = await claim(item, a, ['A']);
-  assert.equal(where, open.includes('A') ? 'A→1' : 'A→3', `A goes to the earliest set with A free (open in Set 1: ${open})`);
+  const a = u(); assert.equal(await claim(item, a, ['A']), 'A→2', 'A is held in Set 1 now, and free in Set 2 (where p2 used to be)');
   assert.equal((await set(item, 1)).parts.C, `${h}:requested`, 'the claim in the secured set is requested, not confirmed');
 });
 

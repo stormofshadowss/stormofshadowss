@@ -1,17 +1,19 @@
 import { HttpError, notFound, bad } from '../errors.js';
 import { round2 } from './money.js';
 import { addLedger, lockJoiner, sweepCredit } from './ledger.js';
+import { fillVacancy } from './fill-gaps.js';
 
 // Cancels one claim. Whatever has been paid towards it goes back to the joiner as CREDIT —
 // unless their handle is blocked, in which case it is recorded as forfeited instead.
 // `keep` is a cancellation fee the GOM keeps out of what was paid (never more than was paid): it is recorded as kept, not credited.
 // If the joiner had a pending cancellation request for it, that request is settled as approved (with `note`, or "Cancelled by the GOM" if the GOM cancelled directly).
 // Locks the person first (like every money flow), so it can run alongside payments safely.
-export async function cancelClaim(conn, claimId, reason = 'Claim cancelled', { keep = 0, decidedBy = null, note = null } = {}) {
+// fillGaps (default on): if this frees a spot in an unsecured set, someone from a later set moves up into it (see fill-gaps.js). Switched OFF when a whole set / item / order is being cancelled.
+export async function cancelClaim(conn, claimId, reason = 'Claim cancelled', { keep = 0, decidedBy = null, note = null, fillGaps = true } = {}) {
   const [[peek]] = await conn.query('SELECT joiner_id FROM claims WHERE id = ?', [claimId]);
   if (!peek) throw notFound('No such claim');
   await lockJoiner(conn, peek.joiner_id);
-  const [[c]] = await conn.query('SELECT id, joiner_id, status, label, slot_id FROM claims WHERE id = ? FOR UPDATE', [claimId]);
+  const [[c]] = await conn.query('SELECT id, joiner_id, status, label, slot_id, item_id FROM claims WHERE id = ? FOR UPDATE', [claimId]);
   if (c.status === 'cancelled') return { claimId, cancelled: false, refunded: 0, forfeited: 0, kept: 0 };
 
   const [busy] = await conn.query(
@@ -35,11 +37,13 @@ export async function cancelClaim(conn, claimId, reason = 'Claim cancelled', { k
     }
   }
   await conn.query('UPDATE claim_costs SET paid = 0, paid_date = NULL WHERE claim_id = ?', [claimId]);
-  if (c.slot_id) await conn.query('DELETE FROM set_slots WHERE id = ?', [c.slot_id]);   // the part becomes free for someone else
+  let vacated = null;
+  if (c.slot_id) { [[vacated]] = await conn.query('SELECT set_id AS setId, member_name AS member FROM set_slots WHERE id = ?', [c.slot_id]); await conn.query('DELETE FROM set_slots WHERE id = ?', [c.slot_id]); }   // the part becomes free for someone else
   await conn.query("UPDATE claims SET status = 'cancelled', slot_id = NULL WHERE id = ?", [claimId]);
   await conn.query(
     "UPDATE cancel_requests SET status = 'approved', open_flag = NULL, decided_at = NOW(3), decided_by = ?, decision_note = COALESCE(?, 'Cancelled by the GOM'), paid_at_decision = ?, kept = ?, refunded = ? WHERE claim_id = ? AND status = 'pending'",
     [decidedBy, note, paid, kept + forfeited, refunded, claimId]);
   if (refunded > 0) await sweepCredit(conn, c.joiner_id); // credit meets anything else they owe, as always
-  return { claimId, cancelled: true, refunded, forfeited, kept };
+  const moved = fillGaps && vacated ? await fillVacancy(conn, { itemId: c.item_id, setId: vacated.setId, member: vacated.member, accountId: decidedBy }) : [];          // someone from a later set moves up into the spot
+  return { claimId, cancelled: true, refunded, forfeited, kept, moved };
 }

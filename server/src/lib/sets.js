@@ -59,8 +59,8 @@ export async function placeSetParts(conn, { joinerId, item, qtyByMember, togethe
     const [slot] = await conn.query("INSERT INTO set_slots (set_id, member_name, joiner_id, state, is_fixed) VALUES (?, ?, ?, 'held', ?)", [set.id, member, joinerId, fixed ? 1 : 0]);
     const label = `${item.title} — ${member} (Set ${set.set_number})`;
     const [c] = await conn.query(
-      `INSERT INTO claims (joiner_id, order_id, item_id, set_id, slot_id, label, member_name, size_bucket, status, is_fixed, price_tbc)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`, [joinerId, item.order_id, item.id, set.id, slot.insertId, label, member, item.size_bucket, status, fixed ? 1 : 0, priceOf[member] === null ? 1 : 0]);
+      `INSERT INTO claims (joiner_id, order_id, item_id, set_id, slot_id, label, member_name, size_bucket, status, is_fixed, price_tbc, keep_together)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, [joinerId, item.order_id, item.id, set.id, slot.insertId, label, member, item.size_bucket, status, fixed ? 1 : 0, priceOf[member] === null ? 1 : 0, together && list.length > 1 ? 1 : 0]);        // they asked to keep their parts in one set: never moved to fill a gap
     await addClaimCosts(conn, c.insertId, priceOf[member] ?? 0);
     placed.push({ claimId: c.insertId, itemId: item.id, member, setId: set.id, setNumber: set.set_number, label, price: priceOf[member] });
   }

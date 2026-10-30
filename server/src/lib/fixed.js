@@ -1,3 +1,4 @@
+import { fillVacancy } from './fill-gaps.js';
 import { bad, conflict, notFound } from '../errors.js';
 import { lockJoiner } from './ledger.js';
 import { cancelClaim } from './cancel.js';
@@ -22,7 +23,7 @@ export async function addFixed(conn, { itemId, joinerId, member }) {
 }
 
 // Ends a fixed claim: its claim is cancelled (anything paid returns as credit, or is forfeited for a blocked handle) and the part reopens.
-export async function removeFixed(conn, fixedId, via, reason = 'Fixed claim removed') {
+export async function removeFixed(conn, fixedId, via, reason = 'Fixed claim removed', { fillGaps = true } = {}) {
   const [[f0]] = await conn.query('SELECT id, joiner_id FROM fixed_claims WHERE id = ?', [fixedId]);
   if (!f0) throw notFound('No such fixed claim');
   await lockJoiner(conn, f0.joiner_id);
@@ -30,7 +31,7 @@ export async function removeFixed(conn, fixedId, via, reason = 'Fixed claim remo
   if (f.ended_at) throw conflict('That fixed claim has already ended', 'fixed_ended');
   const [[claim]] = await conn.query(
     'SELECT id FROM claims WHERE set_id = ? AND member_name = ? AND joiner_id = ? AND is_fixed = 1 AND status <> \'cancelled\' LIMIT 1', [f.set_id, f.member_name, f.joiner_id]);
-  const r = claim ? await cancelClaim(conn, claim.id, reason) : { refunded: 0, forfeited: 0 };
+  const r = claim ? await cancelClaim(conn, claim.id, reason, { fillGaps }) : { refunded: 0, forfeited: 0 };
   await conn.query('UPDATE fixed_claims SET ended_at = NOW(3), ended_via = ? WHERE id = ?', [via, fixedId]);
   return { refunded: r.refunded, forfeited: r.forfeited, member: f.member_name, setId: f.set_id, itemId: f.item_id, joinerId: f.joiner_id };
 }
@@ -41,10 +42,11 @@ export async function changeFixed(conn, fixedId, action) {
   const [[f0]] = await conn.query('SELECT item_id, set_id FROM fixed_claims WHERE id = ?', [fixedId]);
   if (!f0) throw notFound('No such fixed claim');
   await conn.query('SELECT id FROM items WHERE id = ? FOR UPDATE', [f0.item_id]);       // the item first, then the person: the order every placement uses
-  const removed = await removeFixed(conn, fixedId, action === 'ot8' ? 'ot8' : 'giveup', action === 'ot8' ? 'Swapped to the full set' : 'Fixed claim given up');
+  const removed = await removeFixed(conn, fixedId, action === 'ot8' ? 'ot8' : 'giveup', action === 'ot8' ? 'Swapped to the full set' : 'Fixed claim given up', { fillGaps: action !== 'ot8' });   // a swap fills its old spot only AFTER the full set is placed
   if (action !== 'ot8') return { action, setNumber: null, slotOpened: true, ...removed };
   const [[item]] = await conn.query('SELECT id, order_id, title, price, price_tbc, size_bucket FROM items WHERE id = ?', [f0.item_id]);
   const [members] = await conn.query('SELECT name FROM item_members WHERE item_id = ? ORDER BY sort_order, id', [f0.item_id]);
   const placed = await placeSetParts(conn, { joinerId: removed.joinerId, item, qtyByMember: Object.fromEntries(members.map((m) => [m.name, 1])), together: true });
-  return { action, setNumber: placed[0].setNumber, slotOpened: placed[0].setId !== f0.set_id, ...removed };
+  const moved = await fillVacancy(conn, { itemId: f0.item_id, setId: f0.set_id, member: removed.member });             // if the old spot is still empty, fill it
+  return { action, setNumber: placed[0].setNumber, slotOpened: placed[0].setId !== f0.set_id, moved, ...removed };
 }
