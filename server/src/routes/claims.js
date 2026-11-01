@@ -141,6 +141,11 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
     const truncated = rows.length > maxList(); if (truncated) rows.length = maxList();          // the screen says so, so nothing is ever cut off silently
     // THE GROUP ORDER'S TOTAL (item cost only — what you pay the store or proxy), for cross-checking against what you actually paid. Worked out in the database over EVERY claim in the order, so it doesn't depend on
     // the status filter, the search box or the list being cut off. Secured and still-requested are kept apart; cancelled claims never count; fees (EMS, customs, postage, packaging) are not in it.
+    // …and every group order's item cost, for the cards in the list (whole orders, whatever the list is filtered by)
+    const [perOrder] = await pool.query(
+      `SELECT c.order_id AS orderId, COALESCE(SUM(CASE WHEN c.status = 'confirmed' THEN cc.cost END), 0) AS securedCost, COALESCE(SUM(CASE WHEN c.status = 'requested' THEN cc.cost END), 0) AS requestedCost
+         FROM claims c JOIN claim_costs cc ON cc.claim_id = c.id AND cc.category = 'initials' WHERE c.order_id IS NOT NULL AND c.status IN ('confirmed', 'requested') GROUP BY c.order_id`);
+    const itemCostByOrder = Object.fromEntries(perOrder.map((r) => [r.orderId, { secured: round2(r.securedCost), requested: round2(r.requestedCost) }]));
     let orderTotals = null;
     if (req.query.order) {
       const [[t]] = await pool.query(
@@ -164,7 +169,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
     const costsOf = new Map();
     for (const c of costs) { if (!costsOf.has(c.claim_id)) costsOf.set(c.claim_id, {}); costsOf.get(c.claim_id)[c.category] = { cost: c.cost, paid: c.paid, paidDate: c.paid_date, due: c.due_date || null }; }
     res.json({
-      people, truncated, orderTotals,
+      people, truncated, orderTotals, itemCostByOrder,
       claims: rows.map((r) => ({ ...r, priceTbc: !!r.priceTbc, is_direct: !!r.is_direct, is_fixed: !!r.is_fixed, costs: costsOf.get(r.id) || {} })),
     });
   }));

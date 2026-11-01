@@ -28,13 +28,14 @@
   const PAGE = 25;
   let truncated = false;          // the server had more claims than it sends — the screen says so
 
+  let itemCostByOrder = {};                                // every group order's item cost (secured / requested), for the cards
   let orderTotals = null;                                  // the chosen group order's total item cost (secured / still requested) — see orderTotalsCard()
   async function render(el) {
     root = el;
     const [o, c, cr, cd] = await Promise.all([api('GET', '/api/admin/orders'), api('GET', `/api/admin/claims${filter.order ? `?order=${filter.order}` : ''}`), api('GET', '/api/admin/cancel-requests'), api('GET', '/api/admin/cancel-requests?status=decided')]);
     orders = o.json?.orders || []; claims = c.json?.claims || []; people = c.json?.people || {};
     cancelReqs = cr.json?.requests || []; cancelDone = cd.json?.requests || [];
-    truncated = !!c.json?.truncated; orderTotals = filter.order ? (c.json?.orderTotals || null) : null;
+    truncated = !!c.json?.truncated; orderTotals = filter.order ? (c.json?.orderTotals || null) : null; itemCostByOrder = c.json?.itemCostByOrder || {};
     draw();
   }
 
@@ -410,7 +411,7 @@
         const tbcWaiting = all.filter((c) => c.status === 'requested' && c.priceTbc).length;
         const setWaiting = all.filter((c) => c.status === 'requested' && c.setId && c.setDecision !== 'secured').length;
         const gOpen = goOpen(g.id || 0, goCount), gOwed = all.reduce((n, c) => n + owedOf(c), 0);
-        return `<div class="card" data-go="${g.id || 0}"><div class="row"><div><h2 style="margin:0"><button class="ghost gotoggle" data-act="toggle-go" data-go="${g.id || 0}" aria-expanded="${gOpen}" aria-label="${gOpen ? 'Hide' : 'Show'} the claims in ${esc(g.title)}"><span aria-hidden="true">${gOpen ? '▾' : '▸'}</span> ${esc(g.title)}</button></h2><div class="sub">${all.length} claim${all.length === 1 ? '' : 's'} · ${requested} waiting to be secured${tbcWaiting ? ` · ${tbcWaiting} waiting for a price (TBC)` : ''}${setWaiting ? ` · ${setWaiting} set part${setWaiting === 1 ? '' : 's'} waiting for their set (see the Sets tab)` : ''}${gOwed > 0 ? ` · owed <strong>${money(gOwed)}</strong>` : ''}</div></div>
+        return `<div class="card" data-go="${g.id || 0}"><div class="row"><div><h2 style="margin:0"><button class="ghost gotoggle" data-act="toggle-go" data-go="${g.id || 0}" aria-expanded="${gOpen}" aria-label="${gOpen ? 'Hide' : 'Show'} the claims in ${esc(g.title)}"><span aria-hidden="true">${gOpen ? '▾' : '▸'}</span> ${esc(g.title)}</button></h2><div class="sub">${all.length} claim${all.length === 1 ? '' : 's'} · ${requested} waiting to be secured${tbcWaiting ? ` · ${tbcWaiting} waiting for a price (TBC)` : ''}${setWaiting ? ` · ${setWaiting} set part${setWaiting === 1 ? '' : 's'} waiting for their set (see the Sets tab)` : ''}${itemCostByOrder[g.id] ? ` · item cost <strong data-go-cost>${money(itemCostByOrder[g.id].secured)}</strong>${itemCostByOrder[g.id].requested > 0 ? ` (+${money(itemCostByOrder[g.id].requested)} requested)` : ''}` : ''}${gOwed > 0 ? ` · owed <strong>${money(gOwed)}</strong>` : ''}</div></div>
           ${requested && g.id ? `<button data-act="secure" data-id="${g.id}" data-n="${requested}" data-title="${esc(g.title)}">Secure all requested (${requested})</button>` : ''}</div>
           ${gOpen ? `${pickRow(g)}${view === 'item' ? itemsBlock(g) : peopleBlock(g)}` : ''}</div>`;
       }).join('') : '<div class="card"><p class="muted">No claims match.</p></div>'}`;

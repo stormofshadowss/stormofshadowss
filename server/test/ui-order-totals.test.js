@@ -40,3 +40,13 @@ test('IT IS THE WHOLE ORDER WHATEVER ELSE IS FILTERED: a search for one person, 
 test('THE GROUP ORDER\'S NAME IS SHOWN AS TEXT', async () => {
   const { go } = await mk('<img src=x onerror="window.pwned=1"> Odd <b>GO</b>', { secured: 1 }); const p = await claimsTab(); await pick(p, go); assert.equal(p.q('img[src="x"]', card(p)), null); assert.equal(p.q('b', card(p)), null); assert.equal(p.window.pwned, undefined); assert.ok(p.text(card(p)).startsWith('<img src=x onerror="window.pwned=1"> Odd <b>GO</b> — item cost £10.00')); p.close();
 });
+
+test('EVERY GROUP ORDER CARD SHOWS ITS ITEM COST without choosing anything: "item cost £X" (and "+£Y requested" when there are requests); the stage chips and search do not change it', async () => {
+  const a = await mk('Card order with requests', { secured: 2, requested: 1 }), b = await mk('Card order all secured', { secured: 3 }), c = await mk('Card order without claims', {});
+  const p = await claimsTab(); const cardOf = (go) => p.q(`[data-go="${go}"]`);
+  assert.match(p.text(cardOf(a.go).querySelector('.sub')), /^3 claims · 1 waiting to be secured · item cost £20\.00 \(\+£10\.00 requested\)/); assert.equal(p.text(cardOf(a.go).querySelector('[data-go-cost]')), '£20.00');
+  assert.match(p.text(cardOf(b.go).querySelector('.sub')), /^3 claims · 0 waiting to be secured · item cost £30\.00(?! \(\+)/); assert.equal(cardOf(c.go), null, 'an order with no claims has no card');
+  await p.type(p.q('[data-filter="q"]'), 'nobody-will-match-this'); await p.settle(); assert.equal(p.q('[data-go-cost]'), null, 'no cards when the search matches nothing'); await p.type(p.q('[data-filter="q"]'), ''); await p.settle();
+  await p.click(p.q('[data-act="stage-chip"][data-stage="awaiting fulfillment"]')); await p.settle(); assert.equal(p.text(p.q(`[data-go="${a.go}"] [data-go-cost]`)), '£20.00', 'choosing a stage does not change the order\'s item cost'); p.close();
+  const q = await claimsTab(); await q.choose(q.q('[data-filter="order"]'), String(a.go)); await sleep(350); await q.settle(); assert.match(q.text(q.q('[data-order-total]')), /item cost £20\.00 across 2 secured claims/); assert.equal(q.text(q.q(`[data-go="${a.go}"] [data-go-cost]`)), '£20.00', 'the card shows it too'); q.close();
+});

@@ -42,3 +42,11 @@ test('IT IS THE WHOLE ORDER, whatever the list is filtered by; other group order
 test('ONLY THE GOM can see it (the same route as before)', async () => {
   const j = await joinerSession(app, `${u('jj')}@x.com`, u('jj')); assert.equal((await api('GET', '/api/admin/claims?order=1', undefined, j)).status, 403); assert.equal((await app.api('GET', '/api/admin/claims?order=1')).status, 401);
 });
+
+test('EVERY GROUP ORDER\'S ITEM COST COMES WITH THE LIST (for the cards): secured and requested per order, fees and cancelled claims excluded, the same figures as the single-order total, whatever the list is filtered by', async () => {
+  const g1 = await goOrder(), g2 = await goOrder(), empty = await goOrder(); const a = await item(g1, 10), b = await item(g2, 3); const [s1, r1, gone, s2] = [u(), u(), u(), u()];
+  const [id1] = await claimAndSecure(app, admin, s1, a); await request(r1, a); await request(gone, a); await app.q("UPDATE claims SET status = 'cancelled' WHERE id = ?", [await idOf(gone, a)]); await claimAndSecure(app, admin, s2, b); await api('PATCH', `/api/admin/claims/${id1}`, { costs: { ems: { cost: 9, dueDate: '2099-01-01' } } });
+  const all = (await api('GET', '/api/admin/claims')).json.itemCostByOrder; assert.deepEqual([all[g1], all[g2], all[empty]], [{ secured: 10, requested: 10 }, { secured: 3, requested: 0 }, undefined], 'an order with no claims is simply absent');
+  for (const qs of [`?order=${g1}`, '?status=requested', `?handle=${s1}`]) assert.deepEqual((await api('GET', `/api/admin/claims${qs}`)).json.itemCostByOrder, all, `unchanged by ${qs}`);
+  const one = await totals(g1); assert.deepEqual([all[g1].secured, all[g1].requested], [one.secured.cost, one.requested.cost], 'the same figures as the single-order total');
+});
