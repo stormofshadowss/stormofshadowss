@@ -139,6 +139,17 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
       `SELECT c.id, c.joiner_id AS joinerId, c.price_tbc AS priceTbc, c.label, c.status, c.pipeline, c.order_id, go.title AS orderTitle, c.set_id AS setId, (SELECT admin_decision FROM item_sets WHERE id = c.set_id) AS setDecision, c.is_direct, c.is_fixed, c.ready_to_pack_date, c.received_date, j.instagram_handle AS handle
          FROM claims c JOIN joiners j ON j.id = c.joiner_id LEFT JOIN group_orders go ON go.id = c.order_id WHERE ${where.join(' AND ')} ORDER BY j.instagram_handle, c.id LIMIT ${maxList() + 1}`, params);
     const truncated = rows.length > maxList(); if (truncated) rows.length = maxList();          // the screen says so, so nothing is ever cut off silently
+    // THE GROUP ORDER'S TOTAL (item cost only — what you pay the store or proxy), for cross-checking against what you actually paid. Worked out in the database over EVERY claim in the order, so it doesn't depend on
+    // the status filter, the search box or the list being cut off. Secured and still-requested are kept apart; cancelled claims never count; fees (EMS, customs, postage, packaging) are not in it.
+    let orderTotals = null;
+    if (req.query.order) {
+      const [[t]] = await pool.query(
+        `SELECT COALESCE(SUM(CASE WHEN c.status = 'confirmed' THEN cc.cost END), 0) AS securedCost, COALESCE(SUM(CASE WHEN c.status = 'confirmed' THEN cc.paid END), 0) AS securedPaid,
+                COALESCE(SUM(CASE WHEN c.status = 'confirmed' THEN GREATEST(cc.cost - cc.paid, 0) END), 0) AS securedOwed, COALESCE(SUM(c.status = 'confirmed'), 0) AS securedClaims,
+                COALESCE(SUM(CASE WHEN c.status = 'requested' THEN cc.cost END), 0) AS requestedCost, COALESCE(SUM(c.status = 'requested'), 0) AS requestedClaims, COALESCE(SUM(c.price_tbc = 1), 0) AS tbcClaims
+           FROM claims c JOIN claim_costs cc ON cc.claim_id = c.id AND cc.category = 'initials' WHERE c.order_id = ? AND c.status IN ('confirmed', 'requested')`, [Number(req.query.order)]);
+      orderTotals = { secured: { claims: Number(t.securedClaims), cost: round2(t.securedCost), paid: round2(t.securedPaid), owed: round2(t.securedOwed) }, requested: { claims: Number(t.requestedClaims), cost: round2(t.requestedCost) }, tbcClaims: Number(t.tbcClaims) };
+    }
     const costs = rows.length ? (await pool.query('SELECT claim_id, category, cost, paid, paid_date, due_date FROM claim_costs WHERE claim_id IN (?)', [rows.map((r) => r.id)]))[0] : [];
     // What each person owes, has paid, and holds as credit — across ALL their claims, not just the ones this list is showing.
     const who = [...new Set(rows.map((r) => r.joinerId))];
@@ -153,7 +164,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
     const costsOf = new Map();
     for (const c of costs) { if (!costsOf.has(c.claim_id)) costsOf.set(c.claim_id, {}); costsOf.get(c.claim_id)[c.category] = { cost: c.cost, paid: c.paid, paidDate: c.paid_date, due: c.due_date || null }; }
     res.json({
-      people, truncated,
+      people, truncated, orderTotals,
       claims: rows.map((r) => ({ ...r, priceTbc: !!r.priceTbc, is_direct: !!r.is_direct, is_fixed: !!r.is_fixed, costs: costsOf.get(r.id) || {} })),
     });
   }));

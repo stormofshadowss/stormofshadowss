@@ -28,15 +28,22 @@
   const PAGE = 25;
   let truncated = false;          // the server had more claims than it sends — the screen says so
 
+  let orderTotals = null;                                  // the chosen group order's total item cost (secured / still requested) — see orderTotalsCard()
   async function render(el) {
     root = el;
     const [o, c, cr, cd] = await Promise.all([api('GET', '/api/admin/orders'), api('GET', `/api/admin/claims${filter.order ? `?order=${filter.order}` : ''}`), api('GET', '/api/admin/cancel-requests'), api('GET', '/api/admin/cancel-requests?status=decided')]);
     orders = o.json?.orders || []; claims = c.json?.claims || []; people = c.json?.people || {};
     cancelReqs = cr.json?.requests || []; cancelDone = cd.json?.requests || [];
-    truncated = !!c.json?.truncated;
+    truncated = !!c.json?.truncated; orderTotals = filter.order ? (c.json?.orderTotals || null) : null;
     draw();
   }
 
+  // The chosen group order's TOTAL item cost, for cross-checking against what you actually pay when you buy (conversion rates, price tweaks). Secured and still-requested are kept apart; fees aren't included.
+  const orderTotalsCard = () => {
+    if (!filter.order || !orderTotals) return '';
+    const t = orderTotals, title = orders.find((o) => String(o.id) === String(filter.order))?.title || 'This group order';
+    return `<div class="card" data-order-total style="margin:10px 0"><strong>${esc(title)}</strong> — item cost <strong>${money(t.secured.cost)}</strong> across ${t.secured.claims} secured claim${t.secured.claims === 1 ? '' : 's'} · paid ${money(t.secured.paid)} · still owed ${money(t.secured.owed)}${t.requested.claims ? ` · <span class="pill warn">plus ${money(t.requested.cost)} in ${t.requested.claims} requested claim${t.requested.claims === 1 ? '' : 's'} not secured yet</span>` : ''}${t.tbcClaims ? ` · ${t.tbcClaims} still price TBC` : ''}<div class="sub">Item cost only — postage, EMS, customs and packaging aren't included.</div></div>`;
+  };
   const owedOf = (c) => (c.status !== 'confirmed' ? 0 : CATS.reduce((s, [k]) => s + Math.max(0, (c.costs[k]?.cost || 0) - (c.costs[k]?.paid || 0)), 0));
   const paidOf = (c) => CATS.reduce((s, [k]) => s + (c.costs[k]?.paid || 0), 0);
   const statusPill = (s) => `<span class="pill ${s === 'confirmed' ? 'ok' : s === 'requested' ? 'warn' : 'dim'}">${s === 'requested' ? 'requested' : s}</span>`;
@@ -385,6 +392,7 @@
       ${truncated ? `<div class="card" data-truncated style="border:2px solid var(--accent)"><strong>Only the first ${claims.length.toLocaleString('en-GB')} claims are shown.</strong> There are more than that — narrow it with <em>Group order</em> above to see the rest.</div>` : ''}
       ${cancelCard()}
       ${addCard()}
+      ${orderTotalsCard()}
       <div class="card"><div class="formgrid">
         <div><label>Group order</label><select data-filter="order"><option value="">All</option>${orders.filter((o) => !o.archivedAt || String(o.id) === String(filter.order)).map((o) => `<option value="${o.id}" ${String(o.id) === String(filter.order) ? 'selected' : ''}>${esc(o.title)}</option>`).join('')}</select></div>
         <div><label>Show</label><select data-filter="status">${[['active', 'Active (requested + confirmed)'], ['requested', 'Requested only'], ['confirmed', 'Confirmed only'], ['cancelled', 'Cancelled'], ['all', 'Everything']].map(([v, l]) => `<option value="${v}" ${filter.status === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
