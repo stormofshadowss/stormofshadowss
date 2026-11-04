@@ -605,3 +605,11 @@ For when the price goes up **after** a set is secured (last-minute service fees 
 - **All or nothing:** it refuses (changing nothing) if a selected claim is cancelled, if a take-off would take a claim below £0, or if you try to *add* to a claim whose price is still TBC (use *Set a new price* for those).
 - **People are emailed** — one email each (per handle) listing every claim, what it was and is, and what they now owe — **if they have emails turned on and haven't switched this kind off** (there's a new tick in their email settings: *"The price of one of my claims changes"*). Untick **Email the people affected** to send none.
 - Every change is recorded in your activity log (`claims.price`).
+
+### Moving set parts and fixed claims to another handle
+**Claims tab → tick the claims → "Move to another person…"** now moves **parts of member sets and fixed claims** too — so when a joiner **mistypes their handle** you can move *everything* (ordinary claims and set parts) to the right one in one go. Before, set parts were refused ("set parts can't be moved").
+- **A set part keeps its place in its set:** same set number, same member, same label — only the person changes. Its **slot moves with it** (so the Sets tab shows the new handle), a **secured set stays secured and full**, nobody is moved up to fill a gap, and the claim's status and stage don't change. A **raffle win** moves with the part.
+- **A fixed claim stays a fixed claim:** its standing record moves too, so the new person can give it up or swap it and the old handle can't.
+- **The preview tells you:** *"9 can move … 9 are parts of a member set — they keep their place in the set (1 is a fixed claim, which stays fixed)."* Press **Move N claims**, then confirm.
+- **Still left where they are (with the reason):** a claim the person has asked to cancel (answer that first), money paid that isn't tied to a payment (e.g. credit was used), a part already belonging to the target, a claim in a parcel being packed — **and a fixed claim when the target already has a fixed claim on that same member of that item** (the rest of the move still goes ahead).
+- Money paid follows the claims as before, and the move is in your activity log (including how many were set parts).

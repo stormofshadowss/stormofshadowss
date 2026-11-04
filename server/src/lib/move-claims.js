@@ -7,6 +7,7 @@ const same = (a, b) => Math.abs(round2(a) - round2(b)) < 0.005;
 
 // Moves claims from whoever holds them to another person — for example old claims that were imported under the wrong handle. Everything a claim carries goes with it:
 // its costs, its stage, its dates, and the money paid on it (the payment records are moved or split so every person's books still add up).
+// A part of a MEMBER SET moves too (e.g. someone mistyped their handle): it keeps its place in its set — its slot, and for a fixed claim the standing fixed-claim record, move with it.
 // It is deliberately cautious: a claim it can't move SAFELY is left where it is, with the reason — it never half-moves anything.
 //   dryRun: work it all out and report, change nothing.
 export async function moveClaims(conn, { claimIds, handle, create = false, dryRun = false, accountId }) {
@@ -22,7 +23,7 @@ export async function moveClaims(conn, { claimIds, handle, create = false, dryRu
     await conn.query('SELECT id FROM claims WHERE id IN (?) ORDER BY id FOR UPDATE', [ids]);
   }
   const [rows] = await conn.query(
-    `SELECT c.id, c.label, c.status, c.joiner_id AS joinerId, c.set_id AS setId, c.is_fixed AS fixed, j.instagram_handle AS handle,
+    `SELECT c.id, c.label, c.status, c.joiner_id AS joinerId, c.set_id AS setId, c.slot_id AS slotId, c.item_id AS itemId, c.member_name AS member, c.is_fixed AS fixed, j.instagram_handle AS handle,
             (SELECT COALESCE(SUM(cost), 0) FROM claim_costs WHERE claim_id = c.id) AS cost, (SELECT COALESCE(SUM(paid), 0) FROM claim_costs WHERE claim_id = c.id) AS paid,
             (SELECT COALESCE(SUM(amount), 0) FROM payment_allocations WHERE claim_id = c.id) AS allocated
        FROM claims c JOIN joiners j ON j.id = c.joiner_id WHERE c.id IN (?) ORDER BY c.id`, [ids]);
@@ -37,7 +38,7 @@ export async function moveClaims(conn, { claimIds, handle, create = false, dryRu
     else if (target.blocked) no(`@${handle} is blocked`);
     else if (t0 && r.joinerId === t0.id) no(`it already belongs to @${handle}`);
     else if (askedSet.has(id)) no('the person has asked to cancel it — answer that request first')
-    else if (r.setId || r.fixed) no("it's part of a member set (or a fixed claim) — set parts can't be moved");
+    else if (r.fixed && t0 && (await conn.query('SELECT 1 FROM fixed_claims WHERE item_id = ? AND joiner_id = ? AND member_name = ? AND ended_at IS NULL', [r.itemId, t0.id, r.member]))[0].length) no(`@${handle} already has a fixed claim on ${r.member} for this item`);
     else if (!same(r.paid, r.allocated)) no("some of what's been paid on it isn't tied to a payment (for example credit was used), so it can't be moved safely");
     else ok.set(id, r);
   }
@@ -55,13 +56,20 @@ export async function moveClaims(conn, { claimIds, handle, create = false, dryRu
     for (const m of members) if (ok.has(m)) { const r = ok.get(m); ok.delete(m); blocked.push({ id: m, label: r.label, from: r.handle, reason }); }
   }
   const movable = [...ok.values()].map((r) => ({ id: r.id, label: r.label, from: r.handle, paid: round2(r.paid), owed: round2(r.status === 'confirmed' ? Math.max(0, r.cost - r.paid) : 0) }));
-  const result = { target, movable, blocked, parcels: [...movingParcels], money: { paid: round2(movable.reduce((s, m) => s + m.paid, 0)), owed: round2(movable.reduce((s, m) => s + m.owed, 0)) } };
+  const movingRows = [...ok.values()];
+  const result = { target, movable, blocked, parcels: [...movingParcels], setParts: movingRows.filter((r) => r.setId).length, fixed: movingRows.filter((r) => r.fixed).length, money: { paid: round2(movable.reduce((s, m) => s + m.paid, 0)), owed: round2(movable.reduce((s, m) => s + m.owed, 0)) } };
   if (dryRun) return result;
   if (!movable.length) throw new HttpError(409, `Nothing could be moved: ${blocked.slice(0, 3).map((b) => `${b.label} — ${b.reason}`).join('; ')}${blocked.length > 3 ? '…' : ''}`, 'nothing_movable');
 
   let targetId = t0?.id;
   if (!targetId) { const [r] = await conn.query('INSERT INTO joiners (instagram_handle) VALUES (?)', [handle]); targetId = r.insertId; await lockJoiner(conn, targetId); }
   const moveIds = movable.map((m) => m.id);
+  const setRows = movingRows.filter((r) => r.setId && r.slotId);
+  if (setRows.length) {                                                      // a set part keeps its place in its set: the slot (and a raffle win) change hands with it
+    await conn.query('UPDATE set_slots SET joiner_id = ? WHERE id IN (?)', [targetId, setRows.map((r) => r.slotId)]);
+    await conn.query('UPDATE set_slots SET raffle_winner_joiner_id = ? WHERE id IN (?) AND raffle_winner_joiner_id IS NOT NULL', [targetId, setRows.map((r) => r.slotId)]);
+  }
+  for (const r of movingRows.filter((x) => x.fixed)) await conn.query('UPDATE fixed_claims SET joiner_id = ? WHERE item_id = ? AND joiner_id = ? AND member_name = ? AND set_id = ? AND ended_at IS NULL', [targetId, r.itemId, r.joinerId, r.member, r.setId]);
   await conn.query('UPDATE claims SET joiner_id = ? WHERE id IN (?)', [targetId, moveIds]);
   if (movingParcels.size) await conn.query('UPDATE parcels SET joiner_id = ? WHERE id IN (?)', [targetId, [...movingParcels]]);
 
@@ -86,6 +94,6 @@ export async function moveClaims(conn, { claimIds, handle, create = false, dryRu
     money.split += 1;
   }
   await conn.query("UPDATE import_records SET moved_at = NOW(3) WHERE kind = 'claim' AND entity_id IN (?)", [moveIds]);      // an import that made these can no longer be undone
-  await audit(conn, accountId, 'claims.move', 'joiner', targetId, { to: handle, claims: moveIds.length, parcels: movingParcels.size, ...money });
+  await audit(conn, accountId, 'claims.move', 'joiner', targetId, { to: handle, claims: moveIds.length, setParts: setRows.length, fixed: movingRows.filter((r) => r.fixed).length, parcels: movingParcels.size, ...money });
   return { ...result, moved: moveIds.length, payments: money };
 }

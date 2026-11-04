@@ -93,7 +93,7 @@ test('a dry run reports exactly what would happen — what moves, what cannot an
   assert.deepEqual(await snapshot(), before, 'not a single row changed');
 });
 
-test('what cannot be moved is left alone, with the reason: already theirs, set parts, fixed claims, and money that is not tied to a payment', async () => {
+test('what cannot be moved is left alone, with the reason: already theirs, and money that is not tied to a payment — set parts and fixed claims CAN move (see move-set-parts.test.js)', async () => {
   const a = await payer(u('from'), [ITEM.ten], 0), b = await payer(u('to'), [ITEM.five]);
   const go = (await api('POST', '/api/admin/orders', { groupId: w.group, title: `Set GO ${++N}` })).json.id;
   const set = (await api('POST', `/api/admin/orders/${go}/items`, { type: 'set', title: `Set ${N}`, price: 3, members: ['X', 'Y'] })).json.id;
@@ -108,9 +108,9 @@ test('what cannot be moved is left alone, with the reason: already theirs, set p
   const r = await move([a.ids[0], ...setClaims.map((c) => c.id), mine[0].id], b.handle, { dryRun: true });
   const why = Object.fromEntries(r.json.blocked.map((x) => [x.id, x.reason]));
   assert.match(why[a.ids[0]], /isn't tied to a payment \(for example credit was used\)/);
-  for (const c of setClaims) assert.match(why[c.id], /part of a member set \(or a fixed claim\)/);
+  for (const c of setClaims) assert.equal(why[c.id], undefined, 'a set part is no longer refused');
   assert.match(why[mine[0].id], new RegExp(`already belongs to @${b.handle}`));
-  assert.deepEqual(r.json.movable, []);
+  assert.deepEqual(r.json.movable.map((m) => m.id).sort((x, y) => x - y), setClaims.map((c) => c.id).sort((x, y) => x - y), 'only the set parts can go'); assert.deepEqual([r.json.setParts, r.json.fixed], [2, 1]);
   const real = await move([a.ids[0]], b.handle);
   assert.equal(real.status, 409); assert.equal(real.json.code, 'nothing_movable'); assert.match(real.json.error, /Nothing could be moved/);
 });
