@@ -12,6 +12,7 @@
   const filter = { order: '', status: 'active', q: '', stage: '', unpaid: false, sort: 'person' };
   const picked = new Set();    // claim ids ticked for a bulk stage move
   let moveState = null;        // the "move to another person" panel: { handle, create, preview, previewFor, error }
+  let priceState = null;       // the "change price" panel: { mode: 'set' | 'adjust', amount, notify, error }
   const open = new Set();      // "orderId::handle" accordions that are open
   let editing = null;          // claim id being edited
   // "Fix…" on a claim row: change WHAT it is (item / size / member, with the price question asked each time), delete it outright (when nothing has been paid), or turn a filler line into credit
@@ -241,9 +242,33 @@
         ${pv.blocked.length ? `<ul style="margin:0 0 8px; padding-left:20px" data-move-blocked>${pv.blocked.slice(0, 8).map((b) => `<li>${esc(b.label)} — ${esc(b.reason)}</li>`).join('')}${pv.blocked.length > 8 ? `<li class="sub">…and ${pv.blocked.length - 8} more</li>` : ''}</ul>` : ''}
         <button data-act="move-go" ${pv.movable.length && t && !t.blocked && (t.exists || moveState.create) ? '' : 'disabled'}>Move ${pv.movable.length} claim${pv.movable.length === 1 ? '' : 's'} to @${esc(t.handle)}</button></div>` : ''}</div>`;
   }
+  // "Change the price of these claims" — set a new price, or add / take off an amount, for every selected claim; shows exactly what will happen (and who is told) before anything changes.
+  function pricePanel() {
+    if (!priceState) return '';
+    const set = priceState.mode === 'set';
+    return `<div id="pricePanel" style="margin-top:10px; padding-top:10px; border-top:1px solid var(--line)"><strong>Change the price of the ${picked.size} selected claim${picked.size === 1 ? '' : 's'}</strong>
+      <p class="sub" style="margin:4px 0 8px">Changes each claim's item cost, whatever stage it is at. Postage, EMS and customs aren't touched, and neither is the item's price for new claims. You'll see exactly what happens before anything changes.</p>
+      <div class="btn-row" style="align-items:end; margin:0; flex-wrap:wrap; gap:12px">
+        <div><label class="chk" style="display:flex; margin:0 0 4px"><input type="radio" name="priceMode" value="set" ${set ? 'checked' : ''}> Set a new price</label><label class="chk" style="display:flex; margin:0"><input type="radio" name="priceMode" value="adjust" ${set ? '' : 'checked'}> Add or take off an amount</label></div>
+        <div><label for="priceAmount">${set ? 'New price for each (£)' : 'Amount to add to each (£) — a minus takes off'}</label><input id="priceAmount" type="number" step="0.01" ${set ? 'min="0"' : ''} value="${esc(priceState.amount)}" style="max-width:150px" placeholder="${set ? 'e.g. 10.75' : 'e.g. 0.75'}"></div>
+        <label class="chk" style="display:inline-flex; margin:0"><input type="checkbox" id="priceNotify" ${priceState.notify ? 'checked' : ''}> Email the people affected (those with emails on)</label>
+        <button class="sm" data-act="price-review">Review…</button><button class="sm secondary" data-act="price-close">Cancel</button></div>
+      ${priceState.error ? `<p class="msg" style="margin:8px 0 0" data-price-error>${esc(priceState.error)}</p>` : ''}</div>`;
+  }
+  const signed = (n) => `${n < 0 ? '−' : '+'}${money(Math.abs(n))}`;
+  function priceSummary(pv, mode, amount, notify) {
+    const groups = new Map();
+    for (const c of pv.changes) { const k = `${c.label}|${c.from}|${c.to}`; if (!groups.has(k)) groups.set(k, { label: c.label, from: c.from, to: c.to, n: 0 }); groups.get(k).n += 1; }
+    const lines = [...groups.values()].map((g) => `• ${g.label} — ${g.n} claim${g.n === 1 ? '' : 's'}: ${money(g.from)} → ${money(g.to)} (${signed(g.to - g.from)}${g.n === 1 ? '' : ' each'})`);
+    const shown = lines.slice(0, 12), more = lines.length - shown.length, bought = PIPELINE.indexOf('ordered via proxy / warehouse');
+    const purchased = pv.changes.filter((c) => PIPELINE.indexOf(c.pipeline) >= bought).length, back = pv.changes.filter((c) => c.creditBack > 0);
+    return `Change the price of ${pv.changes.length} claim${pv.changes.length === 1 ? '' : 's'}?\n\n${shown.join('\n')}${more > 0 ? `\n…and ${more} more line${more === 1 ? '' : 's'}` : ''}\n\nIn total ${signed(pv.total)} across ${pv.people} ${pv.people === 1 ? 'person' : 'people'}${pv.unchanged ? ` (${pv.unchanged} already at that price, left alone)` : ''}.`
+      + `${purchased ? `\n${purchased} ${purchased === 1 ? 'is' : 'are'} already ordered or further along — they'll owe the difference.` : ''}${back.length ? `\n${new Set(back.map((c) => c.joinerId)).size} ${new Set(back.map((c) => c.joinerId)).size === 1 ? 'person has' : 'people have'} paid more than the new price — ${money(back.reduce((s, c) => s + c.creditBack, 0))} goes back to them as credit.` : ''}`
+      + `\nNew claims still use the item's price — change that in Group Orders if it should change too.\n${notify ? "They'll be emailed (those with emails on)." : 'Nobody will be emailed.'}`;
+  }
   const bulkBar = () => `<div class="card" id="bulkBar" style="position:sticky; top:0; z-index:5; background:var(--paper)"><div class="row"><strong>${picked.size} claim${picked.size === 1 ? '' : 's'} selected</strong>
       <div class="btn-row" style="margin:0; align-items:center"><label for="bulkStage" class="sub" style="margin:0">Move to</label><select id="bulkStage">${BULK_STAGES.map((s) => `<option>${esc(s)}</option>`).join('')}</select>
-        <button class="sm" data-act="bulk-apply">Move them</button><button class="sm secondary" data-act="move-open">Move to another person…</button><button class="sm secondary" data-act="bulk-delete">Delete…</button><button class="sm secondary" data-act="bulk-clear">Clear</button></div></div>${movePanel()}</div>`;
+        <button class="sm" data-act="bulk-apply">Move them</button><button class="sm secondary" data-act="move-open">Move to another person…</button><button class="sm secondary" data-act="price-open">Change price…</button><button class="sm secondary" data-act="bulk-delete">Delete…</button><button class="sm secondary" data-act="bulk-clear">Clear</button></div></div>${movePanel()}${pricePanel()}</div>`;
 
   // Joiners' requests to cancel an item. You decide each one, and choose how much of what they paid to KEEP as a cancellation fee.
   const asked = (iso) => `${fmtDate((iso || '').slice(0, 10))} ${(iso || '').slice(11, 16)}`;
@@ -377,6 +402,7 @@
 
   function draw() {
     if (moveState) { const h = $('#moveHandle', root), cr = $('#moveCreate', root); if (h) moveState.handle = h.value; if (cr) moveState.create = cr.checked; }
+    if (priceState) { const a = $('#priceAmount', root), n = $('#priceNotify', root); if (a) priceState.amount = a.value; if (n) priceState.notify = n.checked; }
     const list = visible();
     const shown = new Set(list.filter((c) => c.status === 'confirmed').map((c) => c.id));
     for (const id of [...picked]) if (!shown.has(id)) picked.delete(id);      // never act on a claim you can't currently see
@@ -431,9 +457,22 @@
         ids.forEach((i) => (b.dataset.act === 'pick-person' ? b.checked : !all) ? picked.add(i) : picked.delete(i));
         draw(); break;
       }
-      case 'bulk-clear': picked.clear(); moveState = null; draw(); break;
+      case 'bulk-clear': picked.clear(); moveState = null; priceState = null; draw(); break;
       case 'move-open': moveState = { handle: '', create: false, preview: null, previewFor: '', error: '' }; draw(); $('#moveHandle', root)?.focus(); break;
       case 'move-close': moveState = null; draw(); break;
+      case 'price-open': priceState = { mode: 'set', amount: '', notify: true, error: '' }; moveState = null; draw(); $('#priceAmount', root)?.focus(); break;
+      case 'price-close': priceState = null; draw(); break;
+      case 'price-review': {                                              // show exactly what would happen, then do it only when you say so
+        const raw = ($('#priceAmount', root).value || '').trim(), amount = Number(raw); priceState.amount = raw; priceState.notify = $('#priceNotify', root).checked;
+        if (raw === '' || Number.isNaN(amount)) { priceState.error = 'Enter an amount.'; draw(); break; }
+        if (priceState.mode === 'set' && amount < 0) { priceState.error = "A price can't be below £0."; draw(); break; }
+        priceState.error = ''; const body = { claimIds: [...picked], mode: priceState.mode, amount };
+        const pv = await api('POST', '/api/admin/claims/price', { ...body, preview: true }); if (!pv.ok) { priceState.error = errText(pv); draw(); break; }
+        if (!pv.json.changes.length) { priceState.error = 'Nothing to change — every selected claim is already at that price.'; draw(); break; }
+        const ok = await GOM.confirm(priceSummary(pv.json, priceState.mode, amount, priceState.notify), { ok: 'Change the price', cancel: 'Not yet' }); if (!ok) { draw(); break; }
+        const r = await api('POST', '/api/admin/claims/price', { ...body, notify: priceState.notify }); if (!r.ok) { priceState.error = errText(r); draw(); break; }
+        picked.clear(); priceState = null; await render(root); GOM.toast(`Changed the price of ${r.json.changes.length} claim${r.json.changes.length === 1 ? '' : 's'} (${signed(r.json.total)} in total).`); break;
+      }
       case 'move-check': {
         moveState.handle = ($('#moveHandle', root).value || '').trim(); moveState.error = ''; moveState.preview = null;
         if (!moveState.handle) { moveState.error = 'Enter the handle to move them to.'; draw(); break; }
@@ -572,6 +611,7 @@
     const t = e.target;
     if (t.closest?.('[data-form="fix"]')) { readFix(t); if (['orderId', 'itemId', 'pricing', 'member'].includes(t.name)) draw(); return; }          // a different size can change the price question, so the panel redraws
     if (t.closest?.('#addClaim')) { readAdd(t); if (['orderId', 'itemId', 'status'].includes(t.name)) draw(); return; }
+    if (t.name === 'priceMode' && priceState) { priceState.amount = $('#priceAmount', root)?.value ?? priceState.amount; priceState.mode = t.value; return draw(); }
     if (t.id === 'moveCreate') { moveState.create = t.checked; return draw(); }
     if (t.dataset.filter) {
       filter[t.dataset.filter] = t.type === 'checkbox' ? t.checked : t.value;

@@ -51,6 +51,17 @@ export function createNotifier({ pool, mailer, cfg }) {
     }
   });
 
+  // The GOM changed the price of some claims (e.g. a last-minute service fee): say what each one was and is, and what they now owe. changes: [{ joinerId, label, from, to }].
+  const claimPriceChanged = safe(async (changes) => {
+    for (const joinerId of [...new Set((changes || []).map((c) => c.joinerId))]) {
+      const to = await recipient(joinerId, 'priceChanged'); if (!to) continue;
+      const mine = changes.filter((c) => c.joinerId === joinerId), owed = await owedNow(joinerId), credit = await creditNow(joinerId);
+      const lines = mine.map((c) => `  • ${c.label} — ${pounds(c.from)} → ${pounds(c.to)} (${c.to >= c.from ? '+' : '−'}${pounds(Math.abs(c.to - c.from))})`).join('\n');
+      await deliver(to.email, `The price of your order has changed (@${to.handle})`,
+        `Hi @${to.handle},\n\nThe price of ${mine.length === 1 ? 'one of your claims has' : 'some of your claims have'} changed:\n\n${lines}\n\n${owed > 0 ? `You now owe ${pounds(owed)} in total across your orders.` : 'Nothing is owing right now.'}${credit > 0 ? ` You have ${pounds(credit)} credit on your account.` : ''}\n\nYou can see the details in My orders: ${myOrders}`);
+    }
+  });
+
   // 2. A payment was verified or rejected.
   const paymentDecided = safe(async (paymentId) => {
     const [[p]] = await pool.query('SELECT joiner_id AS joinerId, amount, method, reference, status, batch_key AS batchKey FROM payments WHERE id = ?', [paymentId]);
@@ -167,5 +178,5 @@ export function createNotifier({ pool, mailer, cfg }) {
     return { emails, claims };
   }
 
-  return { claimsSecured, paymentDecided, parcelShipped, companionInvited, cancelDecided, sendOverdueReminders, idle: async () => { while (inflight.size) await Promise.allSettled([...inflight]); } };
+  return { claimsSecured, claimPriceChanged, paymentDecided, parcelShipped, companionInvited, cancelDecided, sendOverdueReminders, idle: async () => { while (inflight.size) await Promise.allSettled([...inflight]); } };
 }

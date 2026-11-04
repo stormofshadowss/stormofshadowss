@@ -594,3 +594,14 @@ Some things shouldn't take a share of a box's **EMS** or **customs** — above a
 - **The others carry it:** an excluded item's share is spread across the rest, so the EMS and customs totals you enter are **always fully charged**. (If **none** of the items in a box can carry an amount — e.g. everything is "no EMS" and you've entered an EMS total — it **refuses and says so** rather than losing the money.)
 - **Customs added later** (Update customs total on an existing box) is split **the same way as that box was made** — the box remembers who was left out, even if you've since changed the item's tick.
 - Boxes show small *no EMS* / *no customs* labels on the items they left out. Needs migration **`038_no_ems_customs.sql`**.
+
+### Changing the price of several claims at once
+For when the price goes up **after** a set is secured (last-minute service fees on the site, etc.) and you don't want to open each claim. **Claims tab → tick the claims** (e.g. *Select all N confirmed claims here* after narrowing by group order or item) → **Change price…** in the bar at the top.
+- **Two ways to enter it:** **Set a new price** (each claim's item cost becomes £X) or **Add or take off an amount** (each claim moves by that much from where it is — a minus takes off; claims at different prices stay different).
+- **Whatever stage the claims are at** — including ones already ordered (those people simply owe the difference).
+- **You see exactly what will happen first:** *"Change the price of 12 claims? • Album — 12 claims: £10.00 → £10.75 (+£0.75 each) — In total +£9.00 across 9 people. 3 are already ordered or further along — they'll owe the difference. 2 people have paid more than the new price — £4.00 goes back to them as credit."* Press **Change the price**, or **Not yet** to change nothing.
+- **Money:** only each claim's **item cost** changes (postage, EMS, customs and packaging aren't touched). Anyone who has **already paid more** than the new cost has the difference **returned as credit**; anyone who has paid less owes more, and credit they already had meets it. A claim whose price was **TBC** and is given a price is no longer TBC.
+- **The item's own price (for NEW claims) is not changed** — the review reminds you; change that in Group Orders → the item → Edit if new claims should pay more too.
+- **All or nothing:** it refuses (changing nothing) if a selected claim is cancelled, if a take-off would take a claim below £0, or if you try to *add* to a claim whose price is still TBC (use *Set a new price* for those).
+- **People are emailed** — one email each (per handle) listing every claim, what it was and is, and what they now owe — **if they have emails turned on and haven't switched this kind off** (there's a new tick in their email settings: *"The price of one of my claims changes"*). Untick **Email the people affected** to send none.
+- Every change is recorded in your activity log (`claims.price`).

@@ -181,7 +181,7 @@ test('EACH KIND OF EMAIL RESPECTS ITS SWITCH: confirmed claims, payment decision
 test('STRUCTURE: every email the system sends names its kind from the registry, and every kind in the registry is actually used — so a switch can never be a dead switch', () => {
   const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../src/lib/notify.js'), 'utf8');
   const calls = [...src.matchAll(/recipient\(([^)]*)\)/g)].map((m) => m[1]).filter((a) => a !== 'joinerId, event = null');
-  assert.equal(calls.length, 6, 'six places send a kind of email');
+  assert.equal(calls.length, 7, 'seven places send a kind of email');
   const used = calls.map((a) => /'([A-Za-z]+)'/.exec(a)?.[1]);
   assert.ok(used.every((k) => EVENT_KEYS.includes(k)), `every call names a registered kind: ${used}`);
   assert.deepEqual([...new Set(used)].sort(), [...EVENT_KEYS].sort(), 'and every registered kind is used');

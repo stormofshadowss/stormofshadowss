@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { wrap } from '../lib/http.js';
 import rateLimit from 'express-rate-limit';
 import { requireAdmin, audit } from '../auth.js';
-import { withTx } from '../db.js';
+import { withTx, withRollback } from '../db.js';
 import { bad, notFound, conflict } from '../errors.js';
 import { normalizeHandle, isValidHandle } from '../lib/handles.js';
 import { addClaimCosts, lockJoiner, setCost, sweepCredit } from '../lib/ledger.js';
@@ -11,6 +11,7 @@ import { ensureDevice, deviceHasProof, grantProof } from '../lib/device.js';
 import { placeSetParts } from '../lib/sets.js';
 import { placeItemLine, lockLineItems, alreadyHas } from '../lib/claim-create.js';
 import { moveClaims } from '../lib/move-claims.js';
+import { changeClaimPrices } from '../lib/reprice-claims.js';
 import { HttpError } from '../errors.js';
 import { CATS, round2 } from '../lib/money.js';
 
@@ -291,6 +292,26 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
 
   // Move many claims to a new stage in one go (e.g. a whole order to "ordered via proxy"). Safer than changing them one at a time: it only
   // touches confirmed claims, and leaves alone anything whose stage is driven by another screen (boxes, packing), saying so for each one.
+
+  // CHANGE THE PRICE OF SEVERAL CLAIMS AT ONCE (see lib/reprice-claims.js). `preview: true` runs the real thing and rolls it back, so it shows exactly what will happen. The people affected are emailed (those with emails on)
+  // unless notify is false.
+  const priceBody = z.object({
+    claimIds: z.array(z.number().int().positive()).min(1).max(1000), mode: z.enum(['set', 'adjust']),
+    amount: z.number().min(-100000).max(100000).refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, 'At most 2 decimal places'),
+    notify: z.boolean().optional(), preview: z.boolean().optional(),
+  });
+  app.post('/api/admin/claims/price', requireAdmin, wrap(async (req, res) => {
+    const b = priceBody.parse(req.body);
+    if (b.mode === 'set' && b.amount < 0) throw bad("A price can't be below £0", 'negative_price');
+    if (b.preview) { res.json(await withRollback(pool, (conn) => changeClaimPrices(conn, b))); return; }
+    const out = await withTx(pool, async (conn) => {
+      const r = await changeClaimPrices(conn, b);
+      await audit(conn, req.account.id, 'claims.price', 'claim', null, { mode: b.mode, amount: b.amount, claims: r.changes.map((c) => [c.claimId, c.from, c.to]) });
+      return r;
+    });
+    if (b.notify !== false && out.changes.length) notifier.claimPriceChanged(out.changes.map((c) => ({ joinerId: c.joinerId, label: c.label, from: c.from, to: c.to })));
+    res.json({ ok: true, ...out });
+  }));
 
   app.post('/api/admin/claims/pipeline', requireAdmin, wrap(async (req, res) => {
     const b = z.object({ claimIds: z.array(z.number().int().positive()).min(1).max(500), pipeline: z.enum(BULK_STAGES) }).parse(req.body);

@@ -115,7 +115,7 @@ test('with two handles the defaults are per handle, and the heading says which',
 test('CHOOSING WHICH EMAILS: switching emails on enables the list; each kind saves on its own tick; switching off greys them out but remembers; the home card reflects it', async () => {
   const p = await person(); const pg = await page(p, '#/notifications');
   const boxes = () => pg.qa('input[data-event]');
-  assert.equal(boxes().length, 6); assert.ok(boxes().every((b) => b.disabled && b.checked)); assert.match(text(pg, '[data-kinds-off]'), /Turn on order emails above to choose which ones/);
+  assert.equal(boxes().length, 7); assert.ok(boxes().every((b) => b.disabled && b.checked)); assert.match(text(pg, '[data-kinds-off]'), /Turn on order emails above to choose which ones/);
   await pg.click(pg.q('#notifyToggle'));
   assert.match(toast(pg), /Email notifications turned on/); assert.ok(boxes().every((b) => !b.disabled && b.checked), 'now they can be chosen');
   await pg.click(pg.q('input[data-event="parcelShipped"]')); await pg.click(pg.q('input[data-event="overdue"]'));

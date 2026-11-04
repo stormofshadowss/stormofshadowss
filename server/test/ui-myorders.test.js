@@ -359,7 +359,7 @@ test('email notifications: off by default, explained plainly, and turned on and 
   await go(p, '#/notifications');
   const t = text(p);
   assert.match(t, new RegExp(`These are off unless you turn them on.*notify_nia@x\\.com`, 's'));
-  assert.match(t, /My claims are confirmed.*A payment of mine is approved or declined.*My parcel is posted.*A friend asks to ship a parcel together.*The GOM answers my request to cancel.*Reminders about payments that are overdue/s);
+  assert.match(t, /My claims are confirmed.*A payment of mine is approved or declined.*My parcel is posted.*A friend asks to ship a parcel together.*The GOM answers my request to cancel.*The price of one of my claims changes.*Reminders about payments that are overdue/s);
   assert.ok(p.qa('input[data-event]').every((x) => x.disabled && x.checked), 'every kind is listed, on by default, but greyed out until emails are switched on');
   assert.equal(p.q('#notifyToggle').checked, false);
   assert.match(t, /Notifications are off\./);

@@ -5,6 +5,7 @@ export const NOTIFY_EVENTS = [
   { key: 'parcelShipped', label: 'My parcel is posted' },
   { key: 'companionInvited', label: 'A friend asks to ship a parcel together' },
   { key: 'cancelDecided', label: 'The GOM answers my request to cancel' },
+  { key: 'priceChanged', label: 'The price of one of my claims changes' },
   { key: 'overdue', label: 'Reminders about payments that are overdue' },
 ];
 export const EVENT_KEYS = NOTIFY_EVENTS.map((e) => e.key);
