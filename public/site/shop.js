@@ -98,9 +98,9 @@
     const droppedClosed = basket.filter((l) => !l.shopId && closedNow.has(l.itemId)).length;
     const liveShop = new Map(shopItems.map((i) => [i.id, i]));
     const before = JSON.stringify(basket);
-    basket = basket.filter((l) => (l.shopId ? liveShop.has(l.shopId) : live.has(l.itemId)))
+    basket = basket.filter((l) => (l.shopId ? liveShop.has(l.shopId) && (!l.option || !!shopOpt(liveShop.get(l.shopId), l.option)) : live.has(l.itemId)))
       .map((l) => {
-        if (l.shopId) return { ...l, qty: Math.min(l.qty, liveShop.get(l.shopId).left) };
+        if (l.shopId) { const si = liveShop.get(l.shopId), o = shopOpt(si, l.option); return { ...l, qty: Math.min(l.qty, o ? o.left : si.left), ...(o ? { price: o.price } : {}) }; }
         const it = live.get(l.itemId);
         return { ...l, price: l.member ? (it.members?.find((m) => m.name === l.member)?.price ?? it.price) : it.price };
       }).filter((l) => l.qty > 0);
@@ -148,12 +148,17 @@
   }
 
   // ── shop (items already on hand) ──
-  const shopQty = (id) => basket.find((l) => l.shopId === id)?.qty || 0;
-  function bumpShop(id, delta) {
+  // A shop item can have OPTIONS (a member, a size, a version): each has its own stock and maybe its own price, and a basket line is for one option.
+  const shopOpt = (it, name) => (name ? it?.options?.find((o) => o.name === name) || null : null);
+  const shopLine = (id, option) => basket.find((l) => l.shopId === id && (l.option || '') === (option || ''));
+  const shopQty = (id, option) => shopLine(id, option)?.qty || 0;
+  const shopLeft = (l) => { const it = shopItems.find((x) => x.id === l.shopId); const o = shopOpt(it, l.option); return o ? o.left : (it?.left ?? 0); };
+  function bumpShop(id, delta, option) {
     const it = shopItems.find((x) => x.id === id); if (!it) return;
-    let line = basket.find((l) => l.shopId === id);
-    if (!line) { if (delta < 0 || it.left < 1) return; line = { key: `shop:${id}`, shopId: id, orderTitle: 'Shop (on hand)', title: it.title, label: it.title, price: it.price, qty: 0, payDays: it.payDays }; basket.push(line); }
-    line.qty = Math.max(0, Math.min(MAX_QTY, it.left, line.qty + delta));
+    const opt = shopOpt(it, option); if (it.options && !opt) return;                                   // an item with options is claimed one option at a time
+    const room = opt ? opt.left : it.left; let line = shopLine(id, option);
+    if (!line) { if (delta < 0 || room < 1) return; line = { key: `shop:${id}${opt ? `:${opt.name}` : ''}`, shopId: id, ...(opt ? { option: opt.name } : {}), orderTitle: 'Shop (on hand)', title: it.title, label: opt ? `${it.title} — ${opt.name}` : it.title, price: opt ? opt.price : it.price, qty: 0, payDays: it.payDays }; basket.push(line); }
+    line.qty = Math.max(0, Math.min(MAX_QTY, room, line.qty + delta));
     if (!line.qty) basket = basket.filter((l) => l !== line);
     saveBasket();
   }
@@ -172,10 +177,11 @@
     view.innerHTML = `<div class="crumb"><a href="#/">← Group orders</a></div><h1 style="margin:4px 0 6px">Shop</h1>
       <p class="muted">Items we already have on hand — no waiting for an order to arrive. They're held for you as soon as you claim them, and you pay afterwards; once paid they're ready to send.</p>
       ${shopArtists()}
-      ${shopItems.length ? shown.map((it) => { const q = shopQty(it.id), out = it.left < 1;
+      ${shopItems.length ? shown.map((it) => { const q = shopQty(it.id), out = it.left < 1, prices = it.options ? it.options.map((o) => o.price) : [], from = prices.length && Math.min(...prices) !== Math.max(...prices);
         return `<div class="card" data-shop-item="${it.id}">${it.image ? picbox(it.image, it.title) : ''}<div class="itemrow" style="border:0; padding:0"><div class="grow"><strong>${esc(it.title)}</strong>
-          <div class="sub">${money(it.price)} · ${out ? '<strong>Sold out</strong>' : `${it.left} left`} · pay within ${it.payDays} day${it.payDays === 1 ? '' : 's'} of claiming</div></div>
-          ${out ? '' : `<span class="stepper"><button class="secondary" data-act="shopdec" data-shop="${it.id}" ${q ? '' : 'disabled'} aria-label="One fewer">−</button><span>${q}</span><button data-act="shopinc" data-shop="${it.id}" ${q >= it.left || q >= MAX_QTY ? 'disabled' : ''} aria-label="One more">+</button></span>`}</div>
+          <div class="sub">${from ? `from ${money(Math.min(...prices))}` : money(it.price)} · ${out ? '<strong>Sold out</strong>' : `${it.left} left`} · pay within ${it.payDays} day${it.payDays === 1 ? '' : 's'} of claiming</div></div>
+          ${out || it.options ? '' : `<span class="stepper"><button class="secondary" data-act="shopdec" data-shop="${it.id}" ${q ? '' : 'disabled'} aria-label="One fewer">−</button><span>${q}</span><button data-act="shopinc" data-shop="${it.id}" ${q >= it.left || q >= MAX_QTY ? 'disabled' : ''} aria-label="One more">+</button></span>`}</div>
+          ${it.options ? `<div class="shopopts" data-shop-options="${it.id}">${it.options.map((o) => { const oq = shopQty(it.id, o.name), oout = o.left < 1; return `<div class="itemrow" data-shop-option="${esc(o.name)}"><div class="grow">${esc(o.name)}<div class="sub">${o.price !== it.price ? `${money(o.price)} · ` : ''}${oout ? '<strong>Sold out</strong>' : `${o.left} left`}</div></div>${oout ? '' : `<span class="stepper"><button class="secondary" data-act="shopdec" data-shop="${it.id}" data-option="${esc(o.name)}" ${oq ? '' : 'disabled'} aria-label="One fewer ${esc(o.name)}">−</button><span>${oq}</span><button data-act="shopinc" data-shop="${it.id}" data-option="${esc(o.name)}" ${oq >= o.left || oq >= MAX_QTY ? 'disabled' : ''} aria-label="One more ${esc(o.name)}">+</button></span>`}</div>`; }).join('')}</div>` : ''}
           ${it.notes ? `<p class="itemdesc">${esc(it.notes)}</p>` : ''}</div>`; }).join('')
         : '<div class="card"><p class="muted">Nothing in the shop right now — check back soon.</p></div>'}`;
   }
@@ -262,7 +268,7 @@
     const handle = typedHandle || store.get('sos_handle', '');
     view.innerHTML = `<div class="crumb"><a href="#/">← Keep browsing</a></div>${basket.length ? stepsHtml(2) : ''}<h1 style="margin:4px 0 10px">Your selections</h1>
       ${basket.length ? `<div class="card">${basket.map((l) => `<div class="itemrow"><div class="grow">${esc(l.label)}<div class="sub">${esc(l.orderTitle)} · ${eachText(l.price)}</div></div>
-        <span class="stepper">${l.shopId ? `<button class="secondary" data-act="shopdec" data-shop="${l.shopId}" aria-label="One fewer">−</button><span>${l.qty}</span><button data-act="shopinc" data-shop="${l.shopId}" ${l.qty >= (shopItems.find((x) => x.id === l.shopId)?.left ?? 0) ? 'disabled' : ''} aria-label="One more">+</button>` : `<button class="secondary" data-act="dec" data-item="${l.itemId}" ${l.member ? `data-member="${esc(l.member)}"` : ''} ${l.variant ? `data-variant="${esc(l.variant)}"` : ''} aria-label="One fewer">−</button><span>${l.qty}</span><button data-act="inc" data-item="${l.itemId}" ${l.member ? `data-member="${esc(l.member)}"` : ''} ${l.variant ? `data-variant="${esc(l.variant)}"` : ''} ${l.qty >= MAX_QTY ? 'disabled' : ''} aria-label="One more">+</button>`}</span>
+        <span class="stepper">${l.shopId ? `<button class="secondary" data-act="shopdec" data-shop="${l.shopId}" ${l.option ? `data-option="${esc(l.option)}"` : ''} aria-label="One fewer">−</button><span>${l.qty}</span><button data-act="shopinc" data-shop="${l.shopId}" ${l.option ? `data-option="${esc(l.option)}"` : ''} ${l.qty >= shopLeft(l) ? 'disabled' : ''} aria-label="One more">+</button>` : `<button class="secondary" data-act="dec" data-item="${l.itemId}" ${l.member ? `data-member="${esc(l.member)}"` : ''} ${l.variant ? `data-variant="${esc(l.variant)}"` : ''} aria-label="One fewer">−</button><span>${l.qty}</span><button data-act="inc" data-item="${l.itemId}" ${l.member ? `data-member="${esc(l.member)}"` : ''} ${l.variant ? `data-variant="${esc(l.variant)}"` : ''} ${l.qty >= MAX_QTY ? 'disabled' : ''} aria-label="One more">+</button>`}</span>
         <strong class="nowrap" style="min-width:70px; text-align:right">${l.price == null ? 'TBC' : money(l.qty * l.price)}</strong></div>`).join('')}
         <div class="itemrow" style="font-weight:700"><div class="grow">Total</div><div>${totalText()}</div></div>
         ${tbcN(basket) ? `<p class="sub" style="margin:6px 0 0"><strong>Price TBC:</strong> the price of ${tbcN(basket) === 1 ? 'one item is' : `${tbcN(basket)} items are`} still to be confirmed. You won't owe anything for ${tbcN(basket) === 1 ? 'it' : 'them'} until the price is set and the GOM confirms your claim.</p>` : ''}
@@ -319,7 +325,7 @@
     }
     if (b.dataset.act === 'moresets') { const id = Number(b.dataset.item); if (moreSets.has(id)) moreSets.delete(id); else moreSets.add(id); return route(); }
     if (b.dataset.act === 'shopgroup') { const g = b.dataset.g === 'all' ? null : b.dataset.g === 'other' ? 'other' : Number(b.dataset.g); shopGroup = g === shopGroup ? null : g; return shopPage(); }
-    if (b.dataset.act === 'shopinc' || b.dataset.act === 'shopdec') { bumpShop(Number(b.dataset.shop), b.dataset.act === 'shopinc' ? 1 : -1); return route(); }
+    if (b.dataset.act === 'shopinc' || b.dataset.act === 'shopdec') { bumpShop(Number(b.dataset.shop), b.dataset.act === 'shopinc' ? 1 : -1, b.dataset.option); return route(); }
     if (b.dataset.act === 'whole') {                        // one of every part, kept together
       const f = findItem(Number(b.dataset.item));
       if (f.item.members.some((m) => roomFor(f.item, m.name, null) < 1)) { SITE.toast(`“${f.item.title}” can't be claimed as a whole set — part of it has reached its purchase limit.`, true); return; }
@@ -328,7 +334,7 @@
     }
     if (b.dataset.act === 'dup-yes') return submitClaims(dup.handle, true);
     if (b.dataset.act === 'dup-no') {                                                                             // take just the repeats out of the basket
-      const same = (l, h) => (h.leftoverId ? l.shopId === h.leftoverId : l.itemId === h.itemId && (!h.option || l.member === h.option || l.variant === h.option));
+      const same = (l, h) => (h.leftoverId ? l.shopId === h.leftoverId && (!h.option || l.option === h.option) : l.itemId === h.itemId && (!h.option || l.member === h.option || l.variant === h.option));
       basket = basket.filter((l) => !dup.have.some((h) => same(l, h))); together = {}; dup = null; saveBasket(); return basketPage();
     }
     if (b.dataset.act === 'dismiss-recent') { const r = store.sget('sos_done', null); if (r) store.sset('sos_done', { ...r, dismissed: true }); return route(); }
@@ -345,7 +351,7 @@
     const btn = $('form[data-form="claim"] button[type="submit"]', view); if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
     try {
       const lines = basket.filter((l) => !l.isSet && !l.shopId).map((l) => ({ itemId: l.itemId, qty: l.qty, ...(l.member ? { member: l.member } : {}), ...(l.variant ? { variant: l.variant } : {}) }));
-      for (const l of basket.filter((x) => x.shopId)) lines.push({ leftoverId: l.shopId, qty: l.qty });
+      for (const l of basket.filter((x) => x.shopId)) lines.push({ leftoverId: l.shopId, ...(l.option ? { member: l.option } : {}), qty: l.qty });
       for (const id of [...new Set(basket.filter((l) => l.isSet).map((l) => l.itemId))]) {
         lines.push({ itemId: id, parts: basket.filter((l) => l.itemId === id).map((l) => ({ member: l.member, qty: l.qty })), together: !!together[id] });
       }

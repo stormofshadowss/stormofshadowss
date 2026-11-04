@@ -53,11 +53,11 @@ test('GROUPED UNDER THEIR ITEM, with counts: sets, ready, to fill, secured', asy
   assert.equal(p.qa('.setrow', secA).length, 3, 'To decide: the secured one is not listed'); p.close();
 });
 
-test('CHIPS: To decide / Ready to secure / Secured / Cancelled / All, with counts, filtering what is listed', async () => {
+test('CHIPS: To decide / Ready to secure / Secured / Ordered / Cancelled / All, with counts, filtering what is listed', async () => {
   const go = await goOrder('Chip GO'); const item = await newSet(go, 'Chip set'); await fullSets(item, 3); await claim(u(), item, ['A']);
   const all = await sets(item); await api('POST', `/api/admin/sets/${all[0].id}/secure`, {}); await api('POST', `/api/admin/sets/${all[1].id}/cancel`, {});
   const p = await open('Chip GO'); const labels = () => p.qa('#setChips .chip').map((c) => p.text(c));
-  assert.deepEqual(labels(), ['To decide2', 'Ready to secure1', 'Secured1', 'Cancelled1', 'All4']); assert.equal(p.q('#setChips .chip.on').textContent, 'To decide2'); assert.equal(p.q('#setChips .chip.on').getAttribute('aria-pressed'), 'true');
+  assert.deepEqual(labels(), ['To decide2', 'Ready to secure1', 'Secured1', 'Ordered0', 'Cancelled1', 'All4']); assert.equal(p.q('#setChips .chip.on').textContent, 'To decide2'); assert.equal(p.q('#setChips .chip.on').getAttribute('aria-pressed'), 'true');
   assert.equal(p.qa('.setrow').length, 2); await chip(p, 'Ready to secure'); assert.equal(p.qa('.setrow').length, 1); assert.ok(p.q('[data-ready]'));
   await chip(p, 'Secured'); assert.deepEqual(p.qa('.setrow').map((r) => r.dataset.set), [String(all[0].id)]); assert.ok(!p.q('[data-act="secure"]'), 'a secured set offers no Secure');
   await chip(p, 'Cancelled'); assert.deepEqual(p.qa('.setrow').map((r) => r.dataset.set), [String(all[1].id)]); await chip(p, 'All'); assert.equal(p.qa('.setrow').length, 4);

@@ -37,7 +37,7 @@ async function loadOrders(pool, whereSql, params, { admin }) {
   if (!orders.length) return [];
   const ids = orders.map((o) => o.id);
   const [items] = await pool.query(
-    `SELECT i.id, i.order_id, i.item_type, i.title, i.cancelled_at, i.description, i.price, i.price_tbc, i.payment_deadline, i.close_date, i.closed_by_hand, i.requires_full_set, i.purchase_limit, i.limit_scope, i.hidden_from_public, p.name AS proxy_name, im.filename AS image_file, im.width AS image_w, im.height AS image_h
+    `SELECT i.id, i.no_ems, i.no_customs, i.order_id, i.item_type, i.title, i.cancelled_at, i.description, i.price, i.price_tbc, i.payment_deadline, i.close_date, i.closed_by_hand, i.requires_full_set, i.purchase_limit, i.limit_scope, i.hidden_from_public, p.name AS proxy_name, im.filename AS image_file, im.width AS image_w, im.height AS image_h
        FROM items i LEFT JOIN proxies p ON p.id = i.proxy_id LEFT JOIN images im ON im.id = i.image_id WHERE i.order_id IN (?) ${admin ? '' : 'AND i.cancelled_at IS NULL AND i.hidden_from_public = 0'} ORDER BY i.sort_order, i.id`, [ids]);          // hidden items are for the GOM only
   const itemIds = items.map((i) => i.id);
   const [members] = itemIds.length ? await pool.query('SELECT id, item_id, name, price FROM item_members WHERE item_id IN (?) ORDER BY sort_order, id', [itemIds]) : [[]];
@@ -68,7 +68,7 @@ async function loadOrders(pool, whereSql, params, { admin }) {
       // each part carries its effective price: its own if it has one, else the item's
       const parts = members.filter((m) => m.item_id === i.id).map((m) => ({ ...(admin ? { id: m.id, ownPrice: m.price === null || m.price === undefined ? null : Number(m.price) } : {}), name: m.name, price: m.price ?? (i.price_tbc ? null : i.price) }));   // null = price still TBC
       return {
-      id: i.id, type: i.item_type, title: i.title, cancelled: !!i.cancelled_at, ...(admin ? { hidden: !!i.hidden_from_public } : {}), description: i.description || '', image: imageOut(i.image_file, i.image_w, i.image_h), price: i.price_tbc ? null : i.price, priceTbc: !!i.price_tbc,
+      id: i.id, type: i.item_type, title: i.title, cancelled: !!i.cancelled_at, ...(admin ? { hidden: !!i.hidden_from_public, noEms: !!i.no_ems, noCustoms: !!i.no_customs } : {}), description: i.description || '', image: imageOut(i.image_file, i.image_w, i.image_h), price: i.price_tbc ? null : i.price, priceTbc: !!i.price_tbc,
       // an item's own pay-by date wins; otherwise the GO's applies
       payBy: i.payment_deadline || o.payment_deadline,
       // an item can close before the rest of its group order: on a date of its own, or when the GOM closes it by hand
@@ -249,7 +249,7 @@ export function catalogRoutes(app, { pool, cfg }) {
       members: z.array(z.union([z.string().trim().min(1).max(80), z.object({ name: z.string().trim().min(1).max(80), price: money.optional() })])).max(30).optional(),
       requiresFullSet: z.boolean().optional(), variants: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
       sizeBucket: z.enum(['XS', 'S', 'M', 'L', 'XL']).optional(), paymentDeadline: date, closeDate: date, proxy: z.string().trim().max(80).nullable().optional(),
-      purchaseLimit: z.number().int().min(1).max(9999).nullable().optional(), limitScope: z.enum(['item', 'option']).optional(), hidden: z.boolean().optional(),          // hidden: not shown to joiners, and only the GOM can add claims to it
+      purchaseLimit: z.number().int().min(1).max(9999).nullable().optional(), limitScope: z.enum(['item', 'option']).optional(), hidden: z.boolean().optional(), noEms: z.boolean().optional(), noCustoms: z.boolean().optional(),          // hidden: not shown to joiners, and only the GOM can add claims to it; noEms / noCustoms: carries no EMS / customs when boxed
     }).parse(req.body);
     if (b.priceTbc && b.price !== undefined) throw bad('Either enter a price or tick "price to be confirmed" — not both.');
     if (!b.priceTbc && b.price === undefined) throw bad('Enter a price, or tick "price to be confirmed".');
@@ -265,8 +265,8 @@ export function catalogRoutes(app, { pool, cfg }) {
       checkItemCloseDate(b.closeDate, o.close_date);
       const proxyId = await proxyIdFor(conn, b.proxy);
       const [r] = await conn.query(
-        'INSERT INTO items (order_id, item_type, title, description, price, price_tbc, size_bucket, payment_deadline, close_date, proxy_id, requires_full_set, purchase_limit, limit_scope, hidden_from_public) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-        [orderId, b.type, b.title, b.description || null, b.priceTbc ? 0 : b.price, b.priceTbc ? 1 : 0, b.sizeBucket || 'M', b.paymentDeadline || null, b.closeDate || null, proxyId, b.requiresFullSet ? 1 : 0, b.purchaseLimit || null, hasOptions(b.type) && b.limitScope === 'option' ? 'option' : 'item', b.hidden ? 1 : 0]);
+        'INSERT INTO items (order_id, item_type, title, description, price, price_tbc, size_bucket, payment_deadline, close_date, proxy_id, requires_full_set, purchase_limit, limit_scope, hidden_from_public, no_ems, no_customs) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        [orderId, b.type, b.title, b.description || null, b.priceTbc ? 0 : b.price, b.priceTbc ? 1 : 0, b.sizeBucket || 'M', b.paymentDeadline || null, b.closeDate || null, proxyId, b.requiresFullSet ? 1 : 0, b.purchaseLimit || null, hasOptions(b.type) && b.limitScope === 'option' ? 'option' : 'item', b.hidden ? 1 : 0, b.noEms ? 1 : 0, b.noCustoms ? 1 : 0]);
       for (const [i, m] of parts.entries()) await conn.query('INSERT INTO item_members (item_id, name, price, sort_order) VALUES (?,?,?,?)', [r.insertId, m.name, m.price, i]);
       for (const [i, v] of (b.variants || []).entries()) await conn.query('INSERT INTO item_variants (item_id, label, sort_order) VALUES (?,?,?)', [r.insertId, v, i]);
       await audit(conn, req.account.id, 'item.create', 'item', r.insertId);
@@ -279,7 +279,7 @@ export function catalogRoutes(app, { pool, cfg }) {
   app.patch('/api/admin/items/:id', requireAdmin, wrap(async (req, res) => {
     const id = Number(req.params.id);
     let repriced = 0, memberRepriced = 0, renamed = [], memberPriced = [];
-    const b = z.object({ paymentDeadline: date, closeDate: date, closed: z.boolean().optional(), proxy: z.string().trim().max(80).nullable().optional(), price: money.optional(), priceTbc: z.boolean().optional(), purchaseLimit: z.number().int().min(1).max(9999).nullable().optional(), limitScope: z.enum(['item', 'option']).optional(), hidden: z.boolean().optional(), renameMembers: z.array(z.object({ id: z.number().int().positive(), name: z.string().trim().max(80) })).max(30).optional(), memberPrices: z.array(z.object({ id: z.number().int().positive(), price: money.nullable() })).max(30).optional(),  title: z.string().trim().min(1).max(160).optional(), description: z.string().trim().max(2000).nullable().optional() }).parse(req.body);
+    const b = z.object({ paymentDeadline: date, closeDate: date, closed: z.boolean().optional(), proxy: z.string().trim().max(80).nullable().optional(), price: money.optional(), priceTbc: z.boolean().optional(), purchaseLimit: z.number().int().min(1).max(9999).nullable().optional(), limitScope: z.enum(['item', 'option']).optional(), hidden: z.boolean().optional(), noEms: z.boolean().optional(), noCustoms: z.boolean().optional(), renameMembers: z.array(z.object({ id: z.number().int().positive(), name: z.string().trim().max(80) })).max(30).optional(), memberPrices: z.array(z.object({ id: z.number().int().positive(), price: money.nullable() })).max(30).optional(),  title: z.string().trim().min(1).max(160).optional(), description: z.string().trim().max(2000).nullable().optional() }).parse(req.body);
     await withTx(pool, async (conn) => {
       const [[it]] = await conn.query('SELECT i.id, i.item_type, i.price, i.price_tbc, i.close_date, go.close_date AS go_close_date FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id = ? FOR UPDATE', [id]);
       if (!it) throw notFound('No such item');
@@ -293,6 +293,10 @@ export function catalogRoutes(app, { pool, cfg }) {
         if (!['independent', 'set'].includes(it.item_type)) throw bad('Only a member item or a member set has member prices.', 'no_members');
         memberPriced = await setMemberPrices(conn, id, b.memberPrices);
         for (const c of memberPriced) await audit(conn, req.account.id, 'item.member_price', 'item', id, { member: c.name, from: c.from, to: c.to });
+      }
+      if (b.noEms !== undefined || b.noCustoms !== undefined) {                                                      // carries no EMS / customs when it is boxed (boxes already made keep what they used)
+        await conn.query('UPDATE items SET no_ems = COALESCE(?, no_ems), no_customs = COALESCE(?, no_customs) WHERE id = ?', [b.noEms === undefined ? null : b.noEms ? 1 : 0, b.noCustoms === undefined ? null : b.noCustoms ? 1 : 0, id]);
+        await audit(conn, req.account.id, 'item.box_ticks', 'item', id, { noEms: b.noEms, noCustoms: b.noCustoms });
       }
       if (b.hidden !== undefined) {                                                                                  // hide it from joiners (or show it again). Claims already on it are untouched.
         await conn.query('UPDATE items SET hidden_from_public = ? WHERE id = ?', [b.hidden ? 1 : 0, id]);

@@ -26,7 +26,10 @@ export async function alreadyHas(conn, joinerId, lines) {
   const add = (label, n, ref) => { if (n > 0) { const e = seen.get(label) || { label, count: 0, ...ref }; e.count += n; seen.set(label, e); } };      // ref says which item (and member/size) it is, so a screen can match its basket lines
   for (const line of lines) {
     if (line.leftoverId) {
-      const [[it]] = await conn.query('SELECT title FROM leftover_items WHERE id = ?', [line.leftoverId]); if (!it) continue;
+      const [[it]] = await conn.query('SELECT title, option_label FROM leftover_items WHERE id = ?', [line.leftoverId]); if (!it) continue;
+      if (it.option_label && line.member) {                                                                     // one of its options (a member, a size…)
+        const [[{ n }]] = await conn.query("SELECT COUNT(*) AS n FROM claims WHERE joiner_id = ? AND leftover_item_id = ? AND member_name = ? AND status <> 'cancelled'", [joinerId, line.leftoverId, line.member]); add(`${it.title} — ${line.member}`, Number(n), { leftoverId: line.leftoverId, option: line.member }); continue;
+      }
       const [[{ n }]] = await conn.query("SELECT COUNT(*) AS n FROM claims WHERE joiner_id = ? AND leftover_item_id = ? AND status <> 'cancelled'", [joinerId, line.leftoverId]); add(it.title, Number(n), { leftoverId: line.leftoverId }); continue;
     }
     const [[it]] = await conn.query('SELECT title FROM items WHERE id = ?', [line.itemId]); if (!it) continue;                 // an unknown item is reported by placeItemLine

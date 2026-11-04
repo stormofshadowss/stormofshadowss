@@ -5,7 +5,7 @@ import { requireAdmin, audit } from '../auth.js';
 import { withTx } from '../db.js';
 import { bad, conflict, notFound } from '../errors.js';
 import { lockJoiner, sweepCredit, reduceCost } from '../lib/ledger.js';
-import { boxSplit } from '../lib/box.js';
+import { boxSplit, splitCustoms } from '../lib/box.js';
 import { round2, splitAmount } from '../lib/money.js';
 
 const ARRIVED = 'arrived at proxy / warehouse';
@@ -20,10 +20,10 @@ export function boxRoutes(app, { pool }) {
   app.get('/api/admin/boxes/candidates', admin, wrap(async (req, res) => {
     const [rows] = await pool.query(
       `SELECT c.id AS claimId, j.instagram_handle AS handle, c.label, COALESCE(go.title, 'Shop (on hand)') AS orderTitle,
-              c.weight_g AS weightG, c.size_bucket AS size, ${PRICE} AS price
-         FROM claims c JOIN joiners j ON j.id = c.joiner_id LEFT JOIN group_orders go ON go.id = c.order_id
+              c.weight_g AS weightG, c.size_bucket AS size, ${PRICE} AS price, COALESCE(it.no_ems, 0) AS noEms, COALESCE(it.no_customs, 0) AS noCustoms
+         FROM claims c JOIN joiners j ON j.id = c.joiner_id LEFT JOIN group_orders go ON go.id = c.order_id LEFT JOIN items it ON it.id = c.item_id
         WHERE c.status = 'confirmed' AND c.pipeline = ? AND c.box_id IS NULL ORDER BY go.id, j.instagram_handle, c.id`, [ARRIVED]);
-    res.json({ candidates: rows });
+    res.json({ candidates: rows.map((c) => ({ ...c, noEms: !!c.noEms, noCustoms: !!c.noCustoms })) });
   }));
 
   // Loads and checks the items for a box. Locks the people first, then the claims (the order every money flow uses).
@@ -34,23 +34,26 @@ export function boxRoutes(app, { pool }) {
       for (const { joiner_id } of who) await lockJoiner(conn, joiner_id);
     }
     const [rows] = await conn.query(
-      `SELECT c.id, c.joiner_id AS joinerId, c.status, c.pipeline, c.box_id AS boxId, c.weight_g AS weight, c.size_bucket AS size, c.label, ${PRICE} AS price
-         FROM claims c WHERE c.id IN (?) ORDER BY c.id ${lock ? 'FOR UPDATE' : ''}`, [sorted]);
+      `SELECT c.id, c.joiner_id AS joinerId, c.status, c.pipeline, c.box_id AS boxId, c.weight_g AS weight, c.size_bucket AS size, c.label, ${PRICE} AS price, COALESCE(it.no_ems, 0) AS noEms, COALESCE(it.no_customs, 0) AS noCustoms
+         FROM claims c LEFT JOIN items it ON it.id = c.item_id WHERE c.id IN (?) ORDER BY c.id ${lock ? 'FOR UPDATE' : ''}`, [sorted]);
     if (rows.length !== sorted.length) throw notFound('One of those items doesn\'t exist');
     const notOk = rows.filter((r) => r.status !== 'confirmed' || r.pipeline !== ARRIVED || r.boxId);
     if (notOk.length) throw conflict(`Not ready to box (it must have arrived at the proxy and not be in a box already): ${notOk.map((r) => r.label).join(', ')}`, 'not_boxable');
-    return rows;
+    return rows.map((r) => ({ ...r, noEms: !!r.noEms, noCustoms: !!r.noCustoms }));
   }
   const dueDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional();                           // when the EMS / customs fees are due (the GOM picks it)
-  const splitBody = z.object({ claimIds: ids, emsTotal: money, customsTotal: money.optional(), totalWeightG: z.number().int().min(0).max(1_000_000).optional(), dueDate });
+  const splitBody = z.object({ claimIds: ids, emsTotal: money, customsTotal: money.optional(), totalWeightG: z.number().int().min(0).max(1_000_000).optional(), dueDate,
+    exclusions: z.array(z.object({ claimId: z.number().int().positive(), noEms: z.boolean().optional(), noCustoms: z.boolean().optional() })).max(1000).optional() });   // per-box: change an item's standing "no EMS" / "no customs" for THIS box
+  // the item's standing ticks, changed where the GOM changed them for this box
+  const withExclusions = (items, b) => items.map((it) => { const o = b.exclusions?.find((e) => e.claimId === it.id); return { ...it, noEms: o?.noEms ?? it.noEms, noCustoms: o?.noCustoms ?? it.noCustoms }; });
   const splitFor = (items, b) => boxSplit(items, { emsTotal: b.emsTotal, customsTotal: b.customsTotal || 0, boxTotal: b.totalWeightG || 0 });
 
   // What the split WOULD be, before anything is saved.
   app.post('/api/admin/boxes/preview', admin, wrap(async (req, res) => {
     const b = splitBody.parse(req.body);
-    const items = await withTx(pool, (conn) => loadItems(conn, b.claimIds, false));
+    const items = withExclusions(await withTx(pool, (conn) => loadItems(conn, b.claimIds, false)), b);
     const s = splitFor(items, b);
-    res.json({ note: s.note, rows: items.map((it, i) => ({ claimId: it.id, label: it.label, weightUsedG: Math.round(s.weights[it.id]), estimated: !it.weight, emsShare: s.emsShares[i], customsShare: s.customsShares[i] })) });
+    res.json({ note: s.note, rows: items.map((it, i) => ({ claimId: it.id, label: it.label, weightUsedG: Math.round(s.weights[it.id]), estimated: !it.weight, noEms: it.noEms, noCustoms: it.noCustoms, emsShare: s.emsShares[i], customsShare: s.customsShares[i] })) });
   }));
 
   // Create a box: the EMS (and customs, if known) are added to each item's costs, and they all move to "shipping requested".
@@ -58,12 +61,12 @@ export function boxRoutes(app, { pool }) {
     const b = splitBody.extend({ trackingId: z.string().trim().max(80).optional() }).parse(req.body);
     if (!(b.emsTotal > 0)) throw bad("Enter an EMS total — that's what creates the box.", 'ems_required');
     const out = await withTx(pool, async (conn) => {
-      const items = await loadItems(conn, b.claimIds, true);
+      const items = withExclusions(await loadItems(conn, b.claimIds, true), b);
       const s = splitFor(items, b);
       const [box] = await conn.query('INSERT INTO boxes (tracking_id, ems_total, customs_total, total_weight_g, status) VALUES (?,?,?,?,?)',
         [b.trackingId || null, b.emsTotal, b.customsTotal || 0, b.totalWeightG || null, 'shipping_requested']);
       for (const [i, it] of items.entries()) {
-        await conn.query('INSERT INTO box_items (box_id, claim_id, weight_used_g, ems_share, customs_share) VALUES (?,?,?,?,?)', [box.insertId, it.id, Math.round(s.weights[it.id]), s.emsShares[i], s.customsShares[i]]);
+        await conn.query('INSERT INTO box_items (box_id, claim_id, weight_used_g, ems_share, customs_share, ems_excluded, customs_excluded) VALUES (?,?,?,?,?,?,?)', [box.insertId, it.id, Math.round(s.weights[it.id]), s.emsShares[i], s.customsShares[i], it.noEms ? 1 : 0, it.noCustoms ? 1 : 0]);        // what was used is remembered, so customs added later is split the same way
         await conn.query("UPDATE claim_costs SET cost = ROUND(cost + ?, 2) WHERE claim_id = ? AND category = 'ems'", [s.emsShares[i], it.id]);
         if (s.customsShares[i] > 0) await conn.query("UPDATE claim_costs SET cost = ROUND(cost + ?, 2) WHERE claim_id = ? AND category = 'customs'", [s.customsShares[i], it.id]);
         if (s.emsShares[i] > 0) await stampFeeDue(conn, it.id, 'ems', b.dueDate);
@@ -81,10 +84,10 @@ export function boxRoutes(app, { pool }) {
     const [boxes] = await pool.query(`SELECT id, tracking_id AS trackingId, ems_total AS emsTotal, customs_total AS customsTotal, total_weight_g AS totalWeightG, status, created_at AS createdAt FROM boxes ${where} ORDER BY id DESC LIMIT 500`, params);
     if (!boxes.length) return [];
     const [items] = await pool.query(
-      `SELECT bi.box_id, bi.claim_id AS claimId, j.instagram_handle AS handle, c.label, c.pipeline, bi.weight_used_g AS weightUsedG, bi.ems_share AS emsShare, bi.customs_share AS customsShare, bi.item_status AS itemStatus
+      `SELECT bi.box_id, bi.claim_id AS claimId, j.instagram_handle AS handle, c.label, c.pipeline, bi.weight_used_g AS weightUsedG, bi.ems_share AS emsShare, bi.customs_share AS customsShare, bi.ems_excluded AS emsExcluded, bi.customs_excluded AS customsExcluded, bi.item_status AS itemStatus
          FROM box_items bi JOIN claims c ON c.id = bi.claim_id JOIN joiners j ON j.id = c.joiner_id WHERE bi.box_id IN (?) ORDER BY bi.claim_id`, [boxes.map((x) => x.id)]);
     return boxes.map((x) => {
-      const its = items.filter((i) => i.box_id === x.id).map(({ box_id, ...rest }) => rest);
+      const its = items.filter((i) => i.box_id === x.id).map(({ box_id, ...rest }) => ({ ...rest, emsExcluded: !!rest.emsExcluded, customsExcluded: !!rest.customsExcluded }));
       // done with once it has arrived and every item has been checked as ready
       return { ...x, items: its, archived: x.status === 'arrived' && its.length > 0 && its.every((i) => i.itemStatus === 'ready') };
     });
@@ -160,9 +163,8 @@ export function boxRoutes(app, { pool }) {
       const [who] = await conn.query('SELECT DISTINCT c.joiner_id FROM box_items bi JOIN claims c ON c.id = bi.claim_id WHERE bi.box_id = ? ORDER BY c.joiner_id', [id]);
       for (const { joiner_id } of who) await lockJoiner(conn, joiner_id);
       await conn.query('SELECT id FROM boxes WHERE id = ? FOR UPDATE', [id]);
-      const [items] = await conn.query(`SELECT bi.claim_id AS id, bi.customs_share AS old, c.joiner_id AS joinerId, ${PRICE} AS price FROM box_items bi JOIN claims c ON c.id = bi.claim_id WHERE bi.box_id = ? ORDER BY bi.claim_id`, [id]);
-      const prices = items.map((i) => i.price);
-      const shares = splitAmount(customsTotal, prices.every((p) => !(p > 0)) ? prices.map(() => 1) : prices);
+      const [items] = await conn.query(`SELECT bi.claim_id AS id, bi.customs_share AS old, bi.customs_excluded AS noCustoms, c.joiner_id AS joinerId, ${PRICE} AS price FROM box_items bi JOIN claims c ON c.id = bi.claim_id WHERE bi.box_id = ? ORDER BY bi.claim_id`, [id]);
+      const shares = splitCustoms(items.map((i) => ({ ...i, noCustoms: !!i.noCustoms })), customsTotal);          // the same rule as when the box was made (items that carry no customs stay at nothing)
       for (const [i, it] of items.entries()) {
         const delta = round2(shares[i] - it.old);
         if (delta > 0) await conn.query("UPDATE claim_costs SET cost = ROUND(cost + ?, 2) WHERE claim_id = ? AND category = 'customs'", [delta, it.id]);

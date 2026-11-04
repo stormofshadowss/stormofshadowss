@@ -5,6 +5,7 @@ import { wrap } from '../lib/http.js';
 import { requireAdmin, audit } from '../auth.js';
 import { withTx, withRollback } from '../db.js';
 import { fillAllGaps } from '../lib/fill-gaps.js';
+import { STAGES } from '../lib/incoming.js';
 import { bad, conflict, notFound, HttpError } from '../errors.js';
 import { normalizeHandle, isValidHandle } from '../lib/handles.js';
 import { lockJoiner, sweepCredit } from '../lib/ledger.js';
@@ -44,16 +45,16 @@ export function setRoutes(app, { pool, notifier }) {
     const itemIds = [...new Set(sets.map((s) => s.itemId))];
     const [members] = await pool.query('SELECT item_id, name, price FROM item_members WHERE item_id IN (?) ORDER BY sort_order, id', [itemIds]);
     const [slots] = await pool.query(
-      `SELECT sl.set_id, sl.member_name, sl.is_fixed AS isFixed, sl.raffle_status AS raffleStatus, sl.raffle_share AS raffleShare, j.instagram_handle AS handle, c.id AS claimId, c.status, c.price_tbc AS tbc, EXISTS (SELECT 1 FROM cancel_requests cr WHERE cr.claim_id = c.id AND cr.status = 'pending') AS asked
+      `SELECT sl.set_id, sl.member_name, sl.is_fixed AS isFixed, sl.raffle_status AS raffleStatus, sl.raffle_share AS raffleShare, j.instagram_handle AS handle, c.id AS claimId, c.status, c.pipeline, c.price_tbc AS tbc, EXISTS (SELECT 1 FROM cancel_requests cr WHERE cr.claim_id = c.id AND cr.status = 'pending') AS asked
          FROM set_slots sl LEFT JOIN joiners j ON j.id = sl.joiner_id LEFT JOIN claims c ON c.slot_id = sl.id WHERE sl.set_id IN (?)`, [sets.map((s) => s.id)]);
     res.json({
       sets: sets.map((s) => {
         const parts = members.filter((m) => m.item_id === s.itemId).map((m) => {
           const slot = slots.find((x) => x.set_id === s.id && x.member_name === m.name);
-          return { member: m.name, price: m.price ?? (s.itemTbc ? null : s.price), priceTbc: !!slot?.tbc, cancelAsked: !!slot?.asked, handle: slot?.handle ?? null, claimId: slot?.claimId ?? null, status: slot?.status ?? null, fixed: !!slot?.isFixed,
+          return { member: m.name, price: m.price ?? (s.itemTbc ? null : s.price), priceTbc: !!slot?.tbc, cancelAsked: !!slot?.asked, handle: slot?.handle ?? null, claimId: slot?.claimId ?? null, status: slot?.status ?? null, pipeline: slot?.pipeline ?? null, fixed: !!slot?.isFixed,
             raffle: slot && slot.raffleStatus !== 'none' ? { status: slot.raffleStatus, share: slot.raffleShare } : null };
         });
-        return { ...s, itemTbc: !!s.itemTbc, hasTbc: parts.some((p) => p.priceTbc), hasRequests: parts.some((p) => p.cancelAsked), requiresFullSet: !!s.requiresFullSet, parts, filled: parts.filter((p) => p.handle).length, total: parts.length };
+        return { ...s, itemTbc: !!s.itemTbc, hasTbc: parts.some((p) => p.priceTbc), hasRequests: parts.some((p) => p.cancelAsked), requiresFullSet: !!s.requiresFullSet, ordered: s.decision === 'secured' && parts.length > 0 && parts.every((p) => p.handle && p.claimId && p.status === 'confirmed' && STAGES.indexOf(p.pipeline) >= STAGES.indexOf('ordered via proxy / warehouse')), parts, filled: parts.filter((p) => p.handle).length, total: parts.length };
       }),
     });
   }));

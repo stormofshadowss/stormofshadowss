@@ -90,6 +90,7 @@
         <div class="full">${GOM.pictureControl('item', it.id, it.image, 'Item picture')}</div>
         ${dateInput('paymentDeadline', it.ownPaymentDeadline, "Pay by (blank = the GO's date)")}
         <div>${dateInput('closeDate', it.closeDate, "Closes (blank = when the group order closes)")}<div class="sub">Claims on this item stop after this day (UK time).${currentOrder().closeDate ? ` It can't be later than the group order's ${fmtDate(currentOrder().closeDate)}.` : ''}</div></div>
+        <div class="full" data-box-ticks><label class="chk" style="margin:4px 0"><input type="checkbox" name="noEms" ${it.noEms ? 'checked' : ''}> No EMS when boxed</label> <label class="chk" style="margin:4px 0 4px 14px"><input type="checkbox" name="noCustoms" ${it.noCustoms ? 'checked' : ''}> No customs when boxed</label><div class="sub">For things like free bonus cards: when this goes in a box it carries no share of the EMS or customs (the other items carry it). You can still change it for a particular box in the Warehouse.</div></div>
         <div class="full"><label class="chk" style="margin:4px 0"><input type="checkbox" name="hidden" ${it.hidden ? 'checked' : ''}> Hide from joiners</label><div class="sub">They can't see it or claim it — only you can add it for people (for example a free bonus photocard).</div></div>
         <div><label>Purchase limit (blank = none)</label><input name="purchaseLimit" type="number" min="1" max="9999" inputmode="numeric" placeholder="e.g. 5" value="${it.limit ? it.limit.n : ''}"><div class="sub">At most this many across everyone, first come first served. Lowering it never cancels claims people already have — it only stops new ones.</div></div>
         ${['set', 'independent', 'size'].includes(it.type) ? `<div><label>The limit counts</label><select name="limitScope"><option value="item" ${it.limit?.scope === 'option' ? '' : 'selected'}>The whole item together</option><option value="option" ${it.limit?.scope === 'option' ? 'selected' : ''}>Each member / size separately</option></select></div>` : ''}
@@ -99,7 +100,7 @@
       <p class="msg" data-msg hidden></p>
       <div class="btn-row"><button type="submit" class="sm">Save</button><button type="button" class="sm secondary" data-act="cancel-item-edit">Cancel</button></div></form></td></tr>`;
     }
-    return `<tr><td>${it.image ? `<img class="thumb sm" src="${esc(it.image.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}${esc(it.title)}${it.hidden ? ' <span class="pill warn" data-hidden-item title="Joiners can\'t see or claim this — only you can add it for people">Hidden from joiners</span>' : ''}${it.description ? `<div class="sub" style="white-space:pre-line">${esc(it.description.length > 140 ? it.description.slice(0, 140) + '…' : it.description)}</div>` : ''}</td><td>${esc(typeName[it.type])}</td><td class="nowrap">${it.priceTbc ? '<span class="pill warn">TBC</span>' : money(it.price)}</td>
+    return `<tr><td>${it.image ? `<img class="thumb sm" src="${esc(it.image.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}${esc(it.title)}${it.hidden ? ' <span class="pill warn" data-hidden-item title="Joiners can\'t see or claim this — only you can add it for people">Hidden from joiners</span>' : ''}${it.noEms ? ' <span class="pill" data-no-ems title="Carries no share of the EMS when it is boxed">no EMS</span>' : ''}${it.noCustoms ? ' <span class="pill" data-no-customs title="Carries no share of the customs when it is boxed">no customs</span>' : ''}${it.description ? `<div class="sub" style="white-space:pre-line">${esc(it.description.length > 140 ? it.description.slice(0, 140) + '…' : it.description)}</div>` : ''}</td><td>${esc(typeName[it.type])}</td><td class="nowrap">${it.priceTbc ? '<span class="pill warn">TBC</span>' : money(it.price)}</td>
       <td class="nowrap">${fmtDate(it.payBy)}${it.ownPaymentDeadline ? ' <span class="sub">(own)</span>' : ''}</td>
       <td class="nowrap" data-closes>${closesCell(it)}</td><td>${esc(it.proxy || '—')}</td>
       <td>${itemSummary(it)}</td><td>${it.claimed}${limitCell(it)}</td><td><button class="sm secondary" data-act="edit-item" data-id="${it.id}">Edit</button> <button class="sm secondary danger" data-act="delete-item" data-id="${it.id}">Delete</button>${it.cancelled ? ' <span class="pill warn" data-cancelled>Cancelled</span>' : ` <button class="sm secondary danger" data-act="cancel-item" data-id="${it.id}">Cancel…</button>`}${it.type === 'set' ? ` <button class="sm secondary" data-act="fixed" data-id="${it.id}">Fixed claimers</button>` : ''}</td></tr>`;
@@ -127,6 +128,7 @@
         <div data-only="size,normal,random,independent,set"><label>Size (for postage)</label><select name="sizeBucket"><option>XS</option><option>S</option><option selected>M</option><option>L</option><option>XL</option></select></div>
         ${dateInput('paymentDeadline', '', "Pay by (blank = the GO's date)")}
         <div>${dateInput('closeDate', '', "Closes (blank = when the group order closes)")}<div class="sub">Claims on this item stop after this day (UK time) — use it when an item closes before the rest of the order.</div></div>
+        <div class="full" data-box-ticks><label class="chk" style="margin:4px 0"><input type="checkbox" name="noEms"> No EMS when boxed</label> <label class="chk" style="margin:4px 0 4px 14px"><input type="checkbox" name="noCustoms"> No customs when boxed</label><div class="sub">For things like free bonus cards: when this goes in a box it carries no share of the EMS or customs (the other items carry it). You can still change it for a particular box in the Warehouse.</div></div>
         <div class="full"><label class="chk" style="margin:4px 0"><input type="checkbox" name="hidden" > Hide from joiners</label><div class="sub">They can't see it or claim it — only you can add it for people (for example a free bonus photocard).</div></div>
         <div><label>Purchase limit (blank = none)</label><input name="purchaseLimit" type="number" min="1" max="9999" inputmode="numeric" placeholder="e.g. 5"><div class="sub">At most this many across everyone, first come first served — for a store limit or a bulky item.</div></div>
         <div data-limit-scope hidden><label>The limit counts</label><select name="limitScope"><option value="item">The whole item together</option><option value="option">Each member / size separately</option></select></div>
@@ -352,7 +354,7 @@
       const body = {
         type, title: val(form, 'title'), description: val(form, 'description'), ...priceBody(form), sizeBucket: val(form, 'sizeBucket'),
         paymentDeadline: val(form, 'paymentDeadline') || null, closeDate: val(form, 'closeDate') || null, proxy: val(form, 'proxy') || null, ...extra,
-        hidden: form.elements.hidden.checked, purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), limitScope: ['set', 'independent', 'size'].includes(type) ? val(form, 'limitScope') : 'item',
+        noEms: form.elements.noEms.checked, noCustoms: form.elements.noCustoms.checked, hidden: form.elements.hidden.checked, purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), limitScope: ['set', 'independent', 'size'].includes(type) ? val(form, 'limitScope') : 'item',
       };
       if (type === 'set') body.requiresFullSet = form.elements.requiresFullSet.checked;
       const r = await api('POST', `/api/admin/orders/${form.dataset.id}/items`, body);
@@ -380,7 +382,7 @@
         ...(renames.length ? { renameMembers: renames } : {}), ...(prices.length ? { memberPrices: prices } : {}),
         title: val(form, 'title'), ...priceBody(form), description: val(form, 'description'),
         paymentDeadline: val(form, 'paymentDeadline') || null, closeDate: val(form, 'closeDate') || null, proxy: val(form, 'proxy') || null,
-        hidden: form.elements.hidden.checked, purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), ...(form.elements.limitScope ? { limitScope: val(form, 'limitScope') } : {}),
+        noEms: form.elements.noEms.checked, noCustoms: form.elements.noCustoms.checked, hidden: form.elements.hidden.checked, purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), ...(form.elements.limitScope ? { limitScope: val(form, 'limitScope') } : {}),
       });
       if (!r.ok) return showMsg(form, errText(r));
       editingItem = null; await reload(true);
@@ -415,7 +417,7 @@
         break;
       }
       case 'benefit-hide-bonus': {
-        const offer = benefitOffers.find((x) => x.id === id); const r = await api('PATCH', `/api/admin/items/${b.dataset.item}`, { hidden: true }); if (!r.ok) { GOM.toast(errText(r), true); break; }
+        const offer = benefitOffers.find((x) => x.id === id); const r = await api('PATCH', `/api/admin/items/${b.dataset.item}`, { hidden: true, noEms: true, noCustoms: true }); if (!r.ok) { GOM.toast(errText(r), true); break; }
         await render(root); await loadBenefits(); if (benefitOpen) await loadWho(); draw(); GOM.toast(`“${offer?.bonusTitle}” is now hidden from joiners.`); break;
       }
       case 'benefit-delete': {

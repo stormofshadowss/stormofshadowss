@@ -3,6 +3,10 @@
 (function () {
   const { esc, money, api, errText, $, $$ } = GOM;
   let root = null, candidates = [], boxes = [], search = '', selected = new Set(), preview = null, note = '';
+  // "No EMS" / "No customs" for THIS box: starts from the item's own standing ticks and can be changed here (kept when the list reloads)
+  const excl = new Map();
+  const flagsOf = (c) => ({ noEms: excl.get(c.claimId)?.noEms ?? c.noEms, noCustoms: excl.get(c.claimId)?.noCustoms ?? c.noCustoms });
+  const exclusionsBody = () => [...selected].map((id) => candidates.find((x) => x.claimId === id)).filter(Boolean).map((c) => ({ claimId: c.claimId, ...flagsOf(c) }));
   const val = (id) => ($(`#${id}`, root) || {}).value || '';
   const num = (id) => Number(val(id)) || 0;
 
@@ -29,12 +33,13 @@
         ${[...new Set(candidates.map((c) => c.orderTitle))].map((t) => `<button class="sm secondary" data-act="cand-order" data-order="${esc(t)}">Select all in “${esc(t)}” (${candidates.filter((c) => c.orderTitle === t).length})</button>`).join('')}
         <button class="sm secondary" data-act="cand-none">Clear</button></div>` : ''}
       ${candidates.length ? `<div style="margin:0 0 8px"><button type="button" class="ghost" id="candToggle" data-act="toggle-cands" aria-expanded="${candOpen}" aria-controls="candBody" style="font-weight:700">${esc(candSummary())}</button></div>` : ''}
-      <div class="scroll" id="candBody" data-cands-body ${candOpen || !candidates.length ? '' : 'hidden'}><table class="grid"><thead><tr><th></th><th>Person</th><th>Item</th><th>Size</th><th>Weight (g)</th><th>Price</th></tr></thead><tbody>
+      <div class="scroll" id="candBody" data-cands-body ${candOpen || !candidates.length ? '' : 'hidden'}><table class="grid"><thead><tr><th></th><th>Person</th><th>Item</th><th>Size</th><th>Weight (g)</th><th>Price</th><th>Not charged</th></tr></thead><tbody>
       ${candidates.length ? candidates.map((c) => `<tr data-cand="${c.claimId}"><td><input type="checkbox" data-act="pick" data-id="${c.claimId}" ${selected.has(c.claimId) ? 'checked' : ''}></td>
         <td>@${esc(c.handle)}</td><td>${esc(c.label)} <span class="sub">${esc(c.orderTitle)}</span></td>
         <td><select data-act="size" data-id="${c.claimId}" style="width:auto">${['XS', 'S', 'M', 'L', 'XL'].map((s) => `<option ${s === c.size ? 'selected' : ''}>${s}</option>`).join('')}</select></td>
-        <td><input type="number" min="1" step="1" data-act="weight" data-id="${c.claimId}" value="${c.weightG ?? ''}" placeholder="est." style="width:90px"></td><td>${money(c.price)}</td></tr>`).join('')
-        : '<tr><td colspan="6" class="muted">Nothing is waiting to be boxed. Items appear here once their pipeline stage is "arrived at proxy / warehouse".</td></tr>'}</tbody></table></div>
+        <td><input type="number" min="1" step="1" data-act="weight" data-id="${c.claimId}" value="${c.weightG ?? ''}" placeholder="est." style="width:90px"></td><td>${money(c.price)}</td>
+        <td style="white-space:nowrap"><label class="chk" style="display:inline-flex; margin:0 8px 0 0"><input type="checkbox" data-act="noems" data-id="${c.claimId}" ${flagsOf(c).noEms ? 'checked' : ''}> No EMS</label><label class="chk" style="display:inline-flex; margin:0"><input type="checkbox" data-act="nocustoms" data-id="${c.claimId}" ${flagsOf(c).noCustoms ? 'checked' : ''}> No customs</label></td></tr>`).join('')
+        : '<tr><td colspan="7" class="muted">Nothing is waiting to be boxed. Items appear here once their pipeline stage is "arrived at proxy / warehouse".</td></tr>'}</tbody></table></div>
       <div class="formgrid" style="margin-top:12px">
         <div><label for="boxEms">EMS total (£) — what you were charged</label><input id="boxEms" type="number" step="0.01" min="0"></div>
         <div><label for="boxDue">EMS &amp; customs due by</label><input id="boxDue" type="date" value="${GOM.inDays(14)}"></div>
@@ -50,14 +55,14 @@
     if (!preview) return '';
     if (preview.error) return `<p class="msg" style="margin-top:12px">${esc(preview.error)}</p>`;
     return `<div class="scroll"><table class="grid" style="margin-top:12px"><thead><tr><th>Person</th><th>Item</th><th>Weight used</th><th>EMS share</th><th>Customs share</th></tr></thead><tbody>
-      ${preview.rows.map((r) => { const c = candidates.find((x) => x.claimId === r.claimId); return `<tr><td>@${esc(c?.handle || '')}</td><td>${esc(r.label)}</td><td>${r.weightUsedG}g${r.estimated ? ' <span class="sub">(est.)</span>' : ''}</td><td>${money(r.emsShare)}</td><td>${money(r.customsShare)}</td></tr>`; }).join('')}</tbody></table></div>
+      ${preview.rows.map((r) => { const c = candidates.find((x) => x.claimId === r.claimId); return `<tr><td>@${esc(c?.handle || '')}</td><td>${esc(r.label)}</td><td>${r.weightUsedG}g${r.estimated ? ' <span class="sub">(est.)</span>' : ''}</td><td>${r.noEms ? '<span class="sub" data-not-charged>not charged</span>' : money(r.emsShare)}</td><td>${r.noCustoms ? '<span class="sub" data-not-charged>not charged</span>' : money(r.customsShare)}</td></tr>`; }).join('')}</tbody></table></div>
       ${preview.note ? `<p class="sub" style="margin-top:6px">${esc(preview.note)}</p>` : ''}`;
   }
 
   function boxCard(b) {
     const [cls, label] = STATUS[b.status];
     return `<div class="card" data-box="${b.id}" style="background:var(--paper)"><div class="row"><div><strong>Box #${b.id}</strong> <span class="pill ${cls}">${label}</span>
-        <div class="sub" style="margin-top:6px">${b.items.map((i) => `@${esc(i.handle)} — ${esc(i.label)}${i.itemStatus && ITEM[i.itemStatus] ? ` <span class="pill ${ITEM[i.itemStatus][0]}">${ITEM[i.itemStatus][1]}</span>` : ''}`).join(' · ')}</div>
+        <div class="sub" style="margin-top:6px">${b.items.map((i) => `@${esc(i.handle)} — ${esc(i.label)}${i.emsExcluded ? ' <span class="pill" data-no-ems>no EMS</span>' : ''}${i.customsExcluded ? ' <span class="pill" data-no-customs>no customs</span>' : ''}${i.itemStatus && ITEM[i.itemStatus] ? ` <span class="pill ${ITEM[i.itemStatus][0]}">${ITEM[i.itemStatus][1]}</span>` : ''}`).join(' · ')}</div>
         <div class="sub">EMS total: ${money(b.emsTotal)}${b.totalWeightG ? ` · Box weight: ${b.totalWeightG}g` : ''}${b.customsTotal > 0 ? ` · Customs total: ${money(b.customsTotal)}` : ' · Customs: not added yet'}</div></div>
       <div class="btn-row" style="margin:0">${b.status === 'shipping_requested' ? `<button class="sm" data-act="enroute" data-id="${b.id}">Mark en route</button>` : ''}${b.status === 'enroute' ? `<button class="sm" data-act="arrived" data-id="${b.id}">Mark arrived</button>` : ''}${b.status !== 'arrived' ? `<button class="sm secondary" data-act="undo" data-id="${b.id}">Undo box</button>` : ''}</div></div>
       ${b.status === 'arrived' ? `<div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--line)"><strong style="font-size:.85rem">Mark ready to pack</strong>
@@ -89,7 +94,7 @@
   async function refreshPreview() {
     syncCandSummary();
     if (!selected.size) { preview = null; const el = $('#boxPreview', root); if (el) el.innerHTML = previewHtml(); return; }
-    const r = await api('POST', '/api/admin/boxes/preview', { claimIds: [...selected], emsTotal: num('boxEms'), customsTotal: num('boxCustoms'), totalWeightG: Math.round(num('boxWeight')) });
+    const r = await api('POST', '/api/admin/boxes/preview', { claimIds: [...selected], emsTotal: num('boxEms'), customsTotal: num('boxCustoms'), totalWeightG: Math.round(num('boxWeight')), exclusions: exclusionsBody() });
     preview = r.ok ? r.json : { error: errText(r) };
     const el = $('#boxPreview', root); if (el) el.innerHTML = previewHtml();
   }
@@ -112,8 +117,9 @@
       if (!selected.size) return msg('Select at least one item first.');
       if (!(num('boxEms') > 0)) return msg("Enter an EMS total — that's what creates the box.");
       const hadCustoms = num('boxCustoms') > 0;                          // read before the form is cleared
-      const r = await api('POST', '/api/admin/boxes', { claimIds: [...selected], dueDate: val('boxDue') || GOM.inDays(14), emsTotal: num('boxEms'), customsTotal: num('boxCustoms'), totalWeightG: Math.round(num('boxWeight')), trackingId: val('boxTracking') });
+      const r = await api('POST', '/api/admin/boxes', { claimIds: [...selected], dueDate: val('boxDue') || GOM.inDays(14), emsTotal: num('boxEms'), customsTotal: num('boxCustoms'), totalWeightG: Math.round(num('boxWeight')), trackingId: val('boxTracking'), exclusions: exclusionsBody() });
       if (!r.ok) return msg(errText(r));
+      for (const id of selected) excl.delete(id);
       selected.clear(); preview = null;
       ['boxEms', 'boxCustoms', 'boxWeight', 'boxTracking'].forEach((i) => { $(`#${i}`, root).value = ''; });
       await render(root); GOM.refreshBadges();
@@ -135,7 +141,7 @@
     if (act === 'customs') {
       const total = Number($(`input[data-customs="${id}"]`, root).value) || 0;
       if (!(total > 0)) return GOM.alert('Enter a customs total first.');
-      const ok = await GOM.confirm(`Set the customs total for box #${id} to ${money(total)}?\n\nIt's shared across the items by their value. Each person's customs charge is recalculated; anyone who has already paid more than their new share gets the difference back as credit.`, { ok: 'Apply customs' });
+      const ok = await GOM.confirm(`Set the customs total for box #${id} to ${money(total)}?\n\nIt's shared across the items by their value (items marked \"no customs\" are left out). Each person's customs charge is recalculated; anyone who has already paid more than their new share gets the difference back as credit.`, { ok: 'Apply customs' });
       if (!ok) return;
       const r = await api('POST', `/api/admin/boxes/${id}/customs`, { customsTotal: total, dueDate: $(`[data-customs-due="${id}"]`, root)?.value || GOM.inDays(14) }); await render(root);
       return GOM.toast(r.ok ? 'Customs applied.' : errText(r), !r.ok);
@@ -145,6 +151,10 @@
   async function onChange(e) {
     const t = e.target, act = t.dataset.act;
     if (act === 'pick') { t.checked ? selected.add(Number(t.dataset.id)) : selected.delete(Number(t.dataset.id)); return refreshPreview(); }
+    if (act === 'noems' || act === 'nocustoms') {                                         // for THIS box only
+      const id = Number(t.dataset.id), c = candidates.find((x) => x.claimId === id); if (!c) return;
+      excl.set(id, { ...flagsOf(c), [act === 'noems' ? 'noEms' : 'noCustoms']: t.checked }); return refreshPreview();
+    }
     if (act === 'size' || act === 'weight') {
       const body = act === 'size' ? { sizeBucket: t.value } : { weightG: t.value ? Math.round(Number(t.value)) : null };
       const r = await api('PATCH', `/api/admin/claims/${t.dataset.id}`, body);

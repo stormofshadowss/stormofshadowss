@@ -1,3 +1,4 @@
+import { conflict } from '../errors.js';
 import { splitAmount } from './money.js';
 
 // Typical weights (grams) by size bucket, used when an item has no exact weight. Midpoints of each range (XL is a guess past 500g).
@@ -36,14 +37,22 @@ export function resolveBoxWeights(items, boxTotal = 0) {
 // The whole split for a box. EMS follows weight; customs follows item value (price). Every share is a whole number of pennies
 // and each set of shares adds back to exactly the total. `items` are used in the order given.
 //   items: [{ id, weight, size, price }]
+// CUSTOMS follows each item's VALUE. An item that carries no customs (noCustoms) gets nothing and the others take its share. If none of the items that CAN carry it has a value, it is shared equally among them rather than lost.
+// If NO item can carry it, there is nowhere for the money to go — refuse (splitAmount would quietly drop it).
+export function splitCustoms(items, customsTotal) {
+  const prices = items.map((i) => (i.noCustoms ? 0 : i.price));
+  let weights = prices;
+  if (customsTotal > 0 && prices.every((p) => !(p > 0))) {
+    weights = items.map((i) => (i.noCustoms ? 0 : 1));
+    if (weights.every((w) => w === 0)) throw conflict('Every item in this box is set to carry no customs — untick at least one, or the customs has nowhere to go.', 'no_customs_carrier');
+  }
+  return splitAmount(customsTotal, weights);
+}
+
+// EMS follows each item's WEIGHT; an item that carries no EMS (noEms) gets nothing and the others take its share.
 export function boxSplit(items, { emsTotal = 0, customsTotal = 0, boxTotal = 0 } = {}) {
   const { weights, note } = resolveBoxWeights(items, boxTotal);
-  const prices = items.map((i) => i.price);
-  // if nothing has a price (all £0), customs can't follow value — share it equally rather than lose it
-  const customsWeights = customsTotal > 0 && prices.every((p) => !(p > 0)) ? prices.map(() => 1) : prices;
-  return {
-    weights, note,
-    emsShares: splitAmount(emsTotal, items.map((i) => weights[i.id])),
-    customsShares: splitAmount(customsTotal, customsWeights),
-  };
+  const emsWeights = items.map((i) => (i.noEms ? 0 : weights[i.id]));
+  if (emsTotal > 0 && emsWeights.every((w) => !(w > 0))) throw conflict('Every item in this box is set to carry no EMS — untick at least one, or the EMS has nowhere to go.', 'no_ems_carrier');
+  return { weights, note, emsShares: splitAmount(emsTotal, emsWeights), customsShares: splitCustoms(items, customsTotal) };
 }

@@ -6,7 +6,7 @@ export const CONFIG_TABLES = ['artist_groups', 'gom_settings', 'group_members', 
 export const ADMIN_TABLES = ['accounts', 'sessions'];                                                                                           // only the GOM's own rows are kept (or everyone's, with "keep people")
 export const PEOPLE_TABLES = ['addresses', 'handle_link_requests', 'handle_proofs', 'joiner_defaults', 'joiners'];                              // people: removed unless "keep people"
 export const WIPE_TABLES = ['audit_log', 'benefit_offer_items', 'benefit_offers', 'box_items', 'boxes', 'cancel_requests', 'claim_costs', 'claims', 'credit_ledger', 'fixed_claims', 'fixed_requests', 'group_orders', 'handle_invites',
-  'import_batches', 'import_records', 'item_members', 'item_sets', 'item_variants', 'items', 'leftover_items', 'login_tokens', 'notification_log', 'parcel_companions', 'parcel_items', 'parcels',
+  'import_batches', 'import_records', 'item_members', 'item_sets', 'item_variants', 'items', 'leftover_items', 'leftover_options', 'login_tokens', 'notification_log', 'parcel_companions', 'parcel_items', 'parcels',
   'payment_allocations', 'payments', 'proxy_payment_items', 'proxy_payments', 'set_slots', 'store_order_lines', 'store_orders', 'store_shipments'];                                                      // orders, claims, money, parcels, logs: always removed
 
 export async function launchState(conn) {

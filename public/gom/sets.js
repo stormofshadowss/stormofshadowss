@@ -20,7 +20,8 @@
   const blockReason = (s) => (s.decision !== 'none' ? '' : s.hasRequests ? 'A joiner has asked to cancel one of these parts — answer that first (top of the Claims tab) before this set can be secured.' : s.hasTbc ? "The price is still TBC — set it (Group Orders → Items → Edit) before this set can be secured." : s.filled === 0 ? 'Nobody has claimed anything in this set yet.' : s.requiresFullSet && openCount(s) > 0 ? `Waiting for ${openCount(s)} more part${openCount(s) === 1 ? '' : 's'} — this set can't go ahead unless every part is claimed.` : '');
   const isReady = (s) => s.decision === 'none' && s.total > 0 && s.filled === s.total && !s.hasTbc && !s.hasRequests;
   const matches = (s) => { const q = filter.q.trim().toLowerCase().replace(/^@/, ''); return !q || [s.itemTitle, s.orderTitle, ...s.parts.flatMap((p) => [p.member, p.handle || ''])].some((t) => String(t).toLowerCase().includes(q)); };
-  const inChip = (s) => filter.decision === 'all' || (filter.decision === 'ready' ? isReady(s) : s.decision === filter.decision);
+  // "Secured" is secured AND still waiting to be ordered; once a set is full, secured and every claim in it has been ordered (or is further along) it moves to "Ordered" (it stays in All).
+  const inChip = (s) => filter.decision === 'all' || (filter.decision === 'ready' ? isReady(s) : filter.decision === 'ordered' ? !!s.ordered : filter.decision === 'secured' ? s.decision === 'secured' && !s.ordered : s.decision === filter.decision);
   const visible = () => sets.filter((s) => inChip(s) && matches(s));
   const isOpen = (s) => chosen.has(s.id) ? chosen.get(s.id) : (adding?.startsWith(`${s.id}::`) || !!filter.q.trim() || visible().length <= 3);
 
@@ -44,7 +45,7 @@
   // a little row of dots: one per part — held and confirmed, held and waiting, or open
   const dots = (s) => `<span class="dots" role="img" aria-label="${s.filled} of ${s.total} parts held">${s.parts.map((p) => `<i class="dot ${p.handle ? (p.status === 'confirmed' ? 'ok' : 'held') : ''}" title="${esc(p.member)}${p.handle ? ` — @${esc(p.handle)}` : ' — open'}"></i>`).join('')}</span>`;
   const statusPill = (s) => {
-    if (s.decision === 'secured') return `<span class="pill ok">secured</span>${openCount(s) ? `<span class="pill warn">${openCount(s)} open</span>` : ''}`;
+    if (s.decision === 'secured') return `<span class="pill ok">secured</span>${s.ordered ? '<span class="pill" data-ordered>ordered</span>' : ''}${openCount(s) ? `<span class="pill warn">${openCount(s)} open</span>` : ''}`;
     if (s.decision === 'cancelled') return '<span class="pill dim">cancelled</span>';
     if (isReady(s)) return '<span class="pill ok" data-ready>ready to secure</span>';
     return `<span class="pill warn">${s.filled === 0 ? 'empty' : `needs ${openCount(s)} more`}</span>`;
@@ -71,7 +72,7 @@
     const [first] = group.all, k = String(first.itemId ?? first.itemTitle), limit = filter.q.trim() ? group.list.length : (shown.get(k) || PAGE);
     const c = (f) => group.all.filter(f).length;
     return `<section class="itemsec" data-item="${esc(k)}"><div class="row" style="margin:14px 0 4px"><div><h2 style="margin:0">${esc(first.itemTitle)}</h2><div class="sub">${esc(first.orderTitle)}</div></div>
-      <div><span class="pill">${group.all.length} set${group.all.length === 1 ? '' : 's'}</span>${c(isReady) ? `<span class="pill ok">${c(isReady)} ready</span>` : ''}${c((s) => s.decision === 'none' && !isReady(s)) ? `<span class="pill warn">${c((s) => s.decision === 'none' && !isReady(s))} to fill</span>` : ''}${c((s) => s.decision === 'secured') ? `<span class="pill">${c((s) => s.decision === 'secured')} secured</span>` : ''}</div></div>
+      <div><span class="pill">${group.all.length} set${group.all.length === 1 ? '' : 's'}</span>${c(isReady) ? `<span class="pill ok">${c(isReady)} ready</span>` : ''}${c((s) => s.decision === 'none' && !isReady(s)) ? `<span class="pill warn">${c((s) => s.decision === 'none' && !isReady(s))} to fill</span>` : ''}${c((s) => s.decision === 'secured' && !s.ordered) ? `<span class="pill">${c((s) => s.decision === 'secured' && !s.ordered)} secured</span>` : ''}${c((s) => s.ordered) ? `<span class="pill">${c((s) => s.ordered)} ordered</span>` : ''}</div></div>
       <div class="card" style="padding:6px 10px">${group.list.slice(0, limit).map(setCard).join('')}${group.list.length > limit ? `<div style="padding:8px 4px"><button class="sm secondary" data-act="more" data-key="${esc(k)}">Show ${Math.min(PAGE, group.list.length - limit)} more sets (${group.list.length - limit} not shown)</button></div>` : ''}</div></section>`;
   }
 
@@ -81,7 +82,7 @@
       ${requests.map((q) => `<div class="itemrow" data-req="${q.id}"><div class="grow"><strong>@${esc(q.handle)}</strong> wants to ${q.action === 'ot8' ? 'swap to the full set' : 'give up this claim'}<div class="sub">${esc(q.orderTitle)} — ${esc(q.itemTitle)} · ${esc(q.member)} · Set ${q.setNumber}</div></div>
         <div class="btn-row" style="margin:0"><button class="sm" data-act="approve-req" data-id="${q.id}" data-handle="${esc(q.handle)}" data-action="${q.action}">Approve</button><button class="sm secondary" data-act="decline-req" data-id="${q.id}">Decline</button></div></div>`).join('')}</div>` : '';
     const inOrder = sets;                                                          // (already limited to the chosen group order by the server)
-    const count = { none: inOrder.filter((x) => x.decision === 'none').length, ready: inOrder.filter(isReady).length, secured: inOrder.filter((x) => x.decision === 'secured').length, cancelled: inOrder.filter((x) => x.decision === 'cancelled').length, all: inOrder.length };
+    const count = { none: inOrder.filter((x) => x.decision === 'none').length, ready: inOrder.filter(isReady).length, secured: inOrder.filter((x) => x.decision === 'secured' && !x.ordered).length, ordered: inOrder.filter((x) => x.ordered).length, cancelled: inOrder.filter((x) => x.decision === 'cancelled').length, all: inOrder.length };
     const groups = []; const by = new Map();
     for (const st of inOrder) { const key = st.itemId ?? st.itemTitle; if (!by.has(key)) by.set(key, { all: [], list: [] }); by.get(key).all.push(st); }
     for (const st of list) by.get(st.itemId ?? st.itemTitle).list.push(st);
@@ -90,7 +91,7 @@
     root.innerHTML = `<h1 style="margin:18px 0 10px">Sets</h1><div class="row" style="margin:0 0 10px"><button type="button" class="sm secondary" data-act="fill-gaps" title="Moves people up from later sets into open spots">Fill gaps…</button><span class="sub">Moves people up from later sets into spots that are open now.</span></div>${reqCard}
       <div class="card"><div class="formgrid"><div><label>Group order</label><select data-filter="order"><option value="">All</option>${orders.filter((o) => o.items.some((i) => i.type === 'set') && (!o.archivedAt || String(o.id) === String(filter.order))).map((o) => `<option value="${o.id}" ${String(o.id) === String(filter.order) ? 'selected' : ''}>${esc(o.title)}</option>`).join('')}</select></div>
         <div><label for="setSearch">Find a handle, member or item</label><input id="setSearch" data-filter="q" value="${esc(filter.q)}" placeholder="@handle, Felix, photocard…" autocomplete="off"></div></div>
-        <div class="chips" id="setChips" role="group" aria-label="Which sets" style="margin-top:10px">${[['none', 'To decide'], ['ready', 'Ready to secure'], ['secured', 'Secured'], ['cancelled', 'Cancelled'], ['all', 'All']].map(([v, l]) => `<button type="button" class="chip ${filter.decision === v ? 'on' : ''}" data-act="chip" data-v="${v}" aria-pressed="${filter.decision === v}">${l}<span class="n">${count[v]}</span></button>`).join('')}</div></div>
+        <div class="chips" id="setChips" role="group" aria-label="Which sets" style="margin-top:10px">${[['none', 'To decide'], ['ready', 'Ready to secure'], ['secured', 'Secured'], ['ordered', 'Ordered'], ['cancelled', 'Cancelled'], ['all', 'All']].map(([v, l]) => `<button type="button" class="chip ${filter.decision === v ? 'on' : ''}" data-act="chip" data-v="${v}" aria-pressed="${filter.decision === v}">${l}<span class="n">${count[v]}</span></button>`).join('')}</div></div>
       ${ready.length ? `<div class="card" id="bulkSecure" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap"><div><strong>${ready.length} ${ready.length === 1 ? 'set is' : 'sets are'} ready to secure</strong><div class="sub">Every part is held and nothing is in the way.</div></div><button data-act="secure-ready" style="margin:0">Secure all ${ready.length}…</button></div>` : ''}
       ${list.length ? `<div class="btn-row" style="margin:0 0 4px"><button class="sm secondary" data-act="expand-all">Open all</button><button class="sm secondary" data-act="collapse-all">Close all</button></div>${groups.map(itemSection).join('')}` : '<div class="card"><p class="muted">No sets here.</p></div>'}`;
   }

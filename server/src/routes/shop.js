@@ -4,11 +4,12 @@ import { requireAdmin, audit } from '../auth.js';
 import { withTx } from '../db.js';
 import { bad, conflict, notFound } from '../errors.js';
 import { imageOut } from '../lib/images.js';
+import { optionFields, insertOptions, reconcileOptions } from '../lib/shop-options.js';
 
 const price = z.number().min(0.01, 'A shop item needs a price').max(100000).refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, 'At most 2 decimal places');
 const SIZES = ['XS', 'S', 'M', 'L', 'XL'];
 const body = z.object({
-  title: z.string().trim().min(1, 'Give the item a name').max(160), price, qty: z.number().int().min(0).max(10000),
+  title: z.string().trim().min(1, 'Give the item a name').max(160), price, qty: z.number().int().min(0).max(10000).optional(), ...optionFields,
   notes: z.string().trim().max(255).optional(), payDays: z.number().int().min(1).max(60).optional(), size: z.enum(SIZES).optional(),
   groupId: z.number().int().positive().nullable().optional(),                      // the artist group it belongs to (null = none: shown under "Other")
 });
@@ -19,34 +20,48 @@ export function shopRoutes(app, { pool }) {
   const admin = [requireAdmin];
   const CLAIMED = "(SELECT COUNT(*) FROM claims c WHERE c.leftover_item_id = li.id AND c.status <> 'cancelled')";
 
+  // the options of some items: how many are claimed, so how many are left
+  const optionsOf = async (ids) => (ids.length ? (await pool.query(
+    "SELECT o.id, o.leftover_item_id AS itemId, o.name, o.qty, o.price, (SELECT COUNT(*) FROM claims c WHERE c.leftover_option_id = o.id AND c.status <> 'cancelled') AS claimed FROM leftover_options o WHERE o.leftover_item_id IN (?) ORDER BY o.sort_order, o.id", [ids]))[0] : []);
+
   const checkGroup = async (groupId) => { if (!groupId) return; const [[g]] = await pool.query('SELECT id FROM artist_groups WHERE id = ?', [groupId]); if (!g) throw bad('That artist or group does not exist', 'no_group'); };
 
   // what joiners see: no quantities in stock, only how many are left
   app.get('/api/shop', wrap(async (req, res) => {
     // an item in a group that is hidden from the home page is shown under "Other", like an item with no group
-    const [rows] = await pool.query(`SELECT li.id, li.title, li.price, li.notes, li.pay_days AS payDays, g.id AS groupId, li.qty - ${CLAIMED} AS remaining, im.filename AS file, im.width AS w, im.height AS h FROM leftover_items li LEFT JOIN images im ON im.id = li.image_id LEFT JOIN artist_groups g ON g.id = li.group_id AND g.is_hidden = 0 WHERE li.is_active = 1 ORDER BY li.id DESC`);
+    const [rows] = await pool.query(`SELECT li.id, li.title, li.price, li.notes, li.pay_days AS payDays, li.option_label AS optionLabel, g.id AS groupId, li.qty - ${CLAIMED} AS remaining, im.filename AS file, im.width AS w, im.height AS h FROM leftover_items li LEFT JOIN images im ON im.id = li.image_id LEFT JOIN artist_groups g ON g.id = li.group_id AND g.is_hidden = 0 WHERE li.is_active = 1 ORDER BY li.id DESC`);
+    const opts = await optionsOf(rows.filter((r) => r.optionLabel).map((r) => r.id));
     const [groups] = await pool.query(`SELECT g.id, g.name, gi.filename AS file, gi.width AS w, gi.height AS h FROM artist_groups g LEFT JOIN images gi ON gi.id = g.cover_image_id WHERE g.is_hidden = 0 AND EXISTS (SELECT 1 FROM leftover_items li WHERE li.group_id = g.id AND li.is_active = 1) ORDER BY g.sort_order, g.name`);
-    res.json({ items: rows.map((r) => ({ id: r.id, title: r.title, price: r.price, notes: r.notes || '', payDays: r.payDays, groupId: r.groupId || null, image: imageOut(r.file, r.w, r.h), left: Math.max(0, Number(r.remaining)) })),
+    res.json({ items: rows.map((r) => ({ id: r.id, title: r.title, price: r.price, notes: r.notes || '', payDays: r.payDays, groupId: r.groupId || null, image: imageOut(r.file, r.w, r.h), left: Math.max(0, Number(r.remaining)),
+      ...(r.optionLabel ? { optionLabel: r.optionLabel, options: opts.filter((o) => o.itemId === r.id).map((o) => ({ name: o.name, price: o.price ?? r.price, left: Math.max(0, o.qty - Number(o.claimed)) })) } : {}) })),
       groups: groups.map((g) => ({ id: g.id, name: g.name, cover: imageOut(g.file, g.w, g.h) })) });
   }));
 
   app.get('/api/admin/shop', admin, wrap(async (req, res) => {
     const [items] = await pool.query(
-      `SELECT li.id, li.title, li.price, li.qty, li.notes, li.is_active AS active, li.pay_days AS payDays, li.size_bucket AS size, li.group_id AS groupId, ${CLAIMED} AS claimed, im.filename AS file, im.width AS w, im.height AS h FROM leftover_items li LEFT JOIN images im ON im.id = li.image_id ORDER BY li.id DESC`);
+      `SELECT li.id, li.title, li.price, li.qty, li.notes, li.is_active AS active, li.pay_days AS payDays, li.option_label AS optionLabel, li.size_bucket AS size, li.group_id AS groupId, ${CLAIMED} AS claimed, im.filename AS file, im.width AS w, im.height AS h FROM leftover_items li LEFT JOIN images im ON im.id = li.image_id ORDER BY li.id DESC`);
     const [claims] = items.length ? await pool.query(
-      `SELECT c.leftover_item_id AS itemId, c.id AS claimId, j.instagram_handle AS handle, c.status, c.pipeline, c.pay_by AS payBy, c.created_at AS createdAt,
+      `SELECT c.leftover_item_id AS itemId, c.id AS claimId, c.member_name AS \`option\`, j.instagram_handle AS handle, c.status, c.pipeline, c.pay_by AS payBy, c.created_at AS createdAt,
               (SELECT cc.paid >= cc.cost FROM claim_costs cc WHERE cc.claim_id = c.id AND cc.category = 'initials') AS paid,
               (c.pay_by < CURDATE() AND NOT COALESCE((SELECT cc.paid >= cc.cost FROM claim_costs cc WHERE cc.claim_id = c.id AND cc.category = 'initials'), 0)) AS overdue
          FROM claims c JOIN joiners j ON j.id = c.joiner_id WHERE c.leftover_item_id IN (?) AND c.status <> 'cancelled' ORDER BY c.id`, [items.map((i) => i.id)]) : [[]];
-    res.json({ items: items.map(({ file, w, h, ...i }) => ({ ...i, image: imageOut(file, w, h), notes: i.notes || '', active: !!i.active, left: Math.max(0, i.qty - Number(i.claimed)), claimed: Number(i.claimed),
+    const opts = await optionsOf(items.filter((i) => i.optionLabel).map((i) => i.id));
+    res.json({ items: items.map(({ file, w, h, ...i }) => ({ ...i, image: imageOut(file, w, h), notes: i.notes || '', active: !!i.active,
+      ...(i.optionLabel ? { options: opts.filter((o) => o.itemId === i.id).map((o) => ({ id: o.id, name: o.name, qty: o.qty, claimed: Number(o.claimed), left: Math.max(0, o.qty - Number(o.claimed)), ownPrice: o.price === null ? null : Number(o.price), price: o.price === null ? Number(i.price) : Number(o.price) })) } : {}), left: Math.max(0, i.qty - Number(i.claimed)), claimed: Number(i.claimed),
       claims: claims.filter((c) => c.itemId === i.id).map(({ itemId, ...c }) => ({ ...c, paid: !!c.paid, overdue: !!c.overdue })) })) });
   }));
 
   app.post('/api/admin/shop', admin, wrap(async (req, res) => {
     const b = body.parse(req.body);
     await checkGroup(b.groupId);
-    const [r] = await pool.query('INSERT INTO leftover_items (title, price, qty, notes, pay_days, size_bucket, group_id) VALUES (?,?,?,?,?,?,?)', [b.title, b.price, b.qty, b.notes || null, b.payDays ?? 5, b.size ?? 'M', b.groupId || null]);
-    res.status(201).json({ ok: true, id: r.insertId });
+    if (!!b.optionLabel !== !!b.options) throw bad('Say what the buyers choose (Member, Size, Version or Option) and list the options', 'options_incomplete');
+    if (!b.options && b.qty === undefined) throw bad('How many do you have?', 'qty_required');
+    const id = await withTx(pool, async (conn) => {
+      const [r] = await conn.query('INSERT INTO leftover_items (title, price, qty, notes, pay_days, size_bucket, group_id, option_label) VALUES (?,?,?,?,?,?,?,?)', [b.title, b.price, b.options ? 0 : b.qty, b.notes || null, b.payDays ?? 5, b.size ?? 'M', b.groupId || null, b.optionLabel || null]);
+      if (b.options) await insertOptions(conn, r.insertId, b.options);
+      return r.insertId;
+    });
+    res.status(201).json({ ok: true, id });
   }));
 
   // Sort several items into an artist group at once (groupId null = take them out of any group)
@@ -66,8 +81,20 @@ export function shopRoutes(app, { pool }) {
     const b = body.partial().extend({ active: z.boolean().optional() }).parse(req.body);
     const id = Number(req.params.id);
     await withTx(pool, async (conn) => {
-      const [[it]] = await conn.query('SELECT id FROM leftover_items WHERE id = ? FOR UPDATE', [id]);   // the same lock a claim takes, so stock can't change under a claim
+      const [[it]] = await conn.query('SELECT id, title, option_label AS optionLabel FROM leftover_items WHERE id = ? FOR UPDATE', [id]);   // the same lock a claim takes, so stock can't change under a claim
       if (!it) throw notFound('No such shop item');
+      let optionChanges = null;
+      if (b.options) {                                                       // options: rename / re-count / re-price / add / remove (and make an ordinary item into one with options — only while nobody has claimed it)
+        if (it.optionLabel) optionChanges = await reconcileOptions(conn, id, it.title, b.options);
+        else {
+          if (!b.optionLabel) throw bad('Say what the buyers choose (Member, Size, Version or Option)', 'options_incomplete');
+          const [[n]] = await conn.query("SELECT COUNT(*) AS n FROM claims WHERE leftover_item_id = ? AND status <> 'cancelled'", [id]);
+          if (n.n) throw conflict(`${n.n} already claimed — options can only be added to an item nobody has claimed yet.`, 'has_claims');
+          await insertOptions(conn, id, b.options); optionChanges = { added: b.options.map((o) => o.name), removed: [], renamed: [] };
+        }
+      } else if (b.optionLabel && !it.optionLabel) throw bad('List the options as well', 'options_incomplete');
+      if (b.optionLabel) await conn.query('UPDATE leftover_items SET option_label = ? WHERE id = ?', [b.optionLabel, id]);
+      if (it.optionLabel || b.options) delete b.qty;                          // the total comes from the options
       if (b.qty !== undefined) {
         const [[n]] = await conn.query("SELECT COUNT(*) AS n FROM claims WHERE leftover_item_id = ? AND status <> 'cancelled'", [id]);
         if (b.qty < n.n) throw conflict(`${n.n} ${n.n === 1 ? 'is' : 'are'} already claimed — set the quantity to at least ${n.n}, or cancel some claims first.`, 'qty_below_claims');
@@ -80,6 +107,7 @@ export function shopRoutes(app, { pool }) {
       if (b.active !== undefined) { sets.push('is_active = ?'); vals.push(b.active ? 1 : 0); }
       if (sets.length) await conn.query(`UPDATE leftover_items SET ${sets.join(', ')} WHERE id = ?`, [...vals, id]);
       await audit(conn, req.account.id, 'shop.edit', 'leftover_item', id, Object.keys(b));
+      if (optionChanges && (optionChanges.added.length || optionChanges.removed.length || optionChanges.renamed.length)) await audit(conn, req.account.id, 'shop.options', 'leftover_item', id, optionChanges);
     });
     res.json({ ok: true });
   }));

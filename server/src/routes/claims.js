@@ -102,16 +102,23 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
       for (const line of b.lines) {
         if (line.leftoverId) {
           const qty = line.qty || 1;
-          const [[it]] = await conn.query('SELECT id, title, price, qty AS stock, pay_days, size_bucket, is_active FROM leftover_items WHERE id = ?', [line.leftoverId]);
+          const [[it]] = await conn.query('SELECT id, title, price, qty AS stock, pay_days, size_bucket, is_active, option_label FROM leftover_items WHERE id = ?', [line.leftoverId]);
           if (!it || !it.is_active) throw notFound("That shop item isn't available");
-          const [[taken]] = await conn.query("SELECT COUNT(*) AS n FROM claims WHERE leftover_item_id = ? AND status <> 'cancelled'", [it.id]);
-          const left = it.stock - taken.n;
-          if (qty > left) throw conflict(left <= 0 ? `"${it.title}" has sold out.` : `Only ${left} of "${it.title}" left.`, 'sold_out');
+          // An item with OPTIONS (a member, a size, a version): the person picks one, and that option's own count and price are what count. An ordinary item has one count for the lot.
+          let opt = null;
+          if (it.option_label) {
+            if (!line.member) throw bad(`Choose a ${it.option_label.toLowerCase()} for "${it.title}"`, 'option_required');
+            [[opt]] = await conn.query('SELECT id, name, qty, price FROM leftover_options WHERE leftover_item_id = ? AND name = ?', [it.id, line.member]);
+            if (!opt) throw notFound(`"${it.title}" has no ${it.option_label.toLowerCase()} called "${line.member}"`);
+          } else if (line.member) throw bad(`"${it.title}" has no options to choose from`, 'no_options');
+          const [[taken]] = opt ? await conn.query("SELECT COUNT(*) AS n FROM claims WHERE leftover_option_id = ? AND status <> 'cancelled'", [opt.id]) : await conn.query("SELECT COUNT(*) AS n FROM claims WHERE leftover_item_id = ? AND status <> 'cancelled'", [it.id]);
+          const left = (opt ? opt.qty : it.stock) - taken.n, what = opt ? `${it.title} — ${opt.name}` : it.title;
+          if (qty > left) throw conflict(left <= 0 ? `"${what}" has sold out.` : `Only ${left} of "${what}" left.`, 'sold_out');
           for (let k = 0; k < qty; k++) {
             const [r] = await conn.query(
-              "INSERT INTO claims (joiner_id, order_id, item_id, leftover_item_id, label, size_bucket, status, pay_by) VALUES (?, NULL, NULL, ?, ?, ?, 'confirmed', DATE_ADD(CURDATE(), INTERVAL ? DAY))",
-              [joinerId, it.id, it.title, it.size_bucket, it.pay_days]);
-            await addClaimCosts(conn, r.insertId, it.price);
+              "INSERT INTO claims (joiner_id, order_id, item_id, leftover_item_id, leftover_option_id, member_name, label, size_bucket, status, pay_by) VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, 'confirmed', DATE_ADD(CURDATE(), INTERVAL ? DAY))",
+              [joinerId, it.id, opt ? opt.id : null, opt ? opt.name : null, what, it.size_bucket, it.pay_days]);
+            await addClaimCosts(conn, r.insertId, opt && opt.price !== null ? Number(opt.price) : it.price);
             ids.push(r.insertId); shopIds.push(r.insertId);
           }
           continue;
