@@ -289,12 +289,17 @@ export function meRoutes(app, { pool }) {
     if (ids.some((id) => !handleIds.has(ownerOf.get(id)))) throw forbidden("One of those items isn't yours");
     const out = await withTx(pool, async (conn) => {
       const [[peek]] = await conn.query('SELECT joiner_id FROM parcels WHERE id = ?', [parcelId]);
-      if (!peek || !handleIds.has(peek.joiner_id)) throw notFound('No such parcel');                          // only the person it is posted to can add to it (not a friend sharing it)
-      await lockJoiner(conn, peek.joiner_id);                                                                // joiner first, then the parcel — the order everything else uses
+      if (!peek) throw notFound('No such parcel');
+      // The person the parcel is posted to can add to it, and so can a friend who has JOINED it (accepted) — each only their own items. Someone merely invited (not yet accepted) can't.
+      const ownerIsMine = handleIds.has(peek.joiner_id);
+      const [joined] = ownerIsMine ? [[]] : await conn.query("SELECT joiner_id FROM parcel_companions WHERE parcel_id = ? AND status = 'accepted' AND joiner_id IN (?) ORDER BY joiner_id", [parcelId, [...handleIds]]);
+      if (!ownerIsMine && !joined.length) throw notFound('No such parcel');
+      await lockJoiner(conn, ownerIsMine ? peek.joiner_id : joined[0].joiner_id);                           // joiner first, then the parcel — the order everything else uses
       const [[p]] = await conn.query('SELECT id, joiner_id, status, doms_total, packaging_total FROM parcels WHERE id = ? FOR UPDATE', [parcelId]);
       if (p.status !== 'requested') throw conflict("This request has already been packed, so it's too late to add items — ask for a new parcel for them instead.", 'parcel_not_open');
       if (handlesAll.find((h) => h.id === p.joiner_id)?.blocked) throw forbidden("A parcel can't be sent to a blocked handle.", 'blocked');
       const byHandle = new Map(); for (const id of ids) { const j = ownerOf.get(id); if (!byHandle.has(j)) byHandle.set(j, []); byHandle.get(j).push(id); }
+      if (handlesAll.some((h) => h.blocked && byHandle.has(h.id))) throw forbidden("A blocked handle's items can't be added to a parcel.", 'blocked');
       for (const [jid, claimIds] of [...byHandle].sort((x, y) => x[0] - y[0])) {
         if (jid !== p.joiner_id) await lockJoiner(conn, jid);
         await validateShippable(conn, jid, claimIds);                                                         // confirmed, ready to pack, not already in a parcel, no pending cancel
@@ -313,7 +318,7 @@ export function meRoutes(app, { pool }) {
         await applyFee(conn, parcelId, fee, Number(total), await feeDueOf(conn, parcelId, fee)); feesResplit = true;
       }
       if (feesResplit) await conn.query('UPDATE parcels SET fees_check_needed = 1 WHERE id = ?', [parcelId]);
-      await audit(conn, req.account.id, 'parcel.add_items', 'parcel', parcelId, { claimIds: ids, feesResplit });
+      await audit(conn, req.account.id, 'parcel.add_items', 'parcel', parcelId, { claimIds: ids, feesResplit, as: ownerIsMine ? 'owner' : 'friend' });
       const [[parcel]] = await conn.query('SELECT id, status, requested_at FROM parcels WHERE id = ?', [parcelId]);
       return { ok: true, added: ids.length, feesResplit, queuePosition: await queuePosition(conn, parcel) };
     });
@@ -336,7 +341,7 @@ export function meRoutes(app, { pool }) {
     for (const p of parcels) {
       const mine = mine_ids.has(p.ownerId), all = items.filter((i) => i.parcel_id === p.id), cs = comps.filter((c) => c.parcelId === p.id);
       p.queuePosition = await queuePosition(pool, p);
-      p.canAddItems = mine && p.status === 'requested';                          // more of your items can be added until it is packed
+      p.canAddItems = (mine || cs.some((c) => mine_ids.has(c.joinerId) && c.status === 'accepted')) && p.status === 'requested';      // more of your items can be added until it is packed — by the person it's posted to, or a friend who has joined it
       p.items = all.map((i) => ({ claimId: i.claimId, label: i.label, mine: mine_ids.has(i.ownerId), owner: i.owner }));
       p.myDoms = Math.round(all.filter((i) => mine_ids.has(i.ownerId)).reduce((s, i) => s + Number(i.doms), 0) * 100) / 100;
       p.myPackaging = Math.round(all.filter((i) => mine_ids.has(i.ownerId)).reduce((s, i) => s + Number(i.packaging), 0) * 100) / 100;

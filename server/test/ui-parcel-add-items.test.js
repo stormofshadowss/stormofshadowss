@@ -43,11 +43,11 @@ test('WHEN POSTAGE IS ALREADY SET the form says it will be shared out again; a s
   await ready(q); await api('POST', `/api/admin/parcels/${shared}/fees`, { doms: 6, dueDate: day(9) }); pg = await page(q); assert.match(pg.text(pg.q('[data-add-fees-note]', card(pg, shared))), /shared out again across all the items \(and everyone sharing it\), so what you owe/); pg.close();
 });
 
-test('IT IS NOT OFFERED when the parcel is already packed, when nothing else is ready, or to a friend who is only sharing it', async () => {
+test('IT IS NOT OFFERED when the parcel is already packed or when nothing else is ready; a friend who has joined a shared parcel IS offered it, like the owner', async () => {
   const p = await person(); const a = await ready(p); const parcel = await request(p, [a]); let pg = await page(p); assert.equal(addForm(pg, parcel), null, 'nothing else is ready: no form'); pg.close();
   const b = await ready(p); pg = await page(p); assert.ok(addForm(pg, parcel)); pg.close(); await app.q("UPDATE parcels SET status = 'packed' WHERE id = ?", [parcel]); pg = await page(p); assert.equal(addForm(pg, parcel), null, 'packed: no form'); pg.close(); void b;
   const q = await person(), friend = await person(); const qa = await ready(q); const shared = await request(q, [qa]); const fi = await ready(friend); assert.equal((await api('POST', `/api/my/parcels/${shared}/companion/invite`, { handles: friend.h }, q.cookie)).status, 201); assert.equal((await api('POST', `/api/my/parcels/${shared}/companion/accept`, { claimIds: [fi] }, friend.cookie)).status, 200);
-  await ready(friend); await ready(q); const fp = await page(friend); assert.equal(addForm(fp, shared), null, 'the friend cannot add to it'); fp.close(); const qp = await page(q); assert.ok(addForm(qp, shared), 'the person it is posted to can'); qp.close();
+  await ready(friend); await ready(q); const fp = await page(friend); assert.ok(addForm(fp, shared), 'the friend who has joined can add to it'); fp.close(); const qp = await page(q); assert.ok(addForm(qp, shared), 'the person it is posted to can'); qp.close();
 });
 
 test('ITEM NAMES WITH HTML ARE SHOWN AS TEXT in the form', async () => {
@@ -68,4 +68,12 @@ test('GOM — PACKING: a parcel with items added AFTER the postage was set is ma
 test('GOM — NO MARKER WHEN NO FEES WERE SET YET (nothing to check), but the added item is still tagged', async () => {
   const p = await person(); const a = await ready(p); const parcel = await request(p, [a]); const b = await ready(p, 'Added early'); await api('POST', `/api/my/parcels/${parcel}/items`, { claimIds: [b] }, p.cookie);
   const g = await gomPage(app, admin); await g.click(g.byText('#tabs button', 'Packing')); await sleep(350); await g.settle(); const c = g.q(`[data-parcel="${parcel}"]`); assert.equal(g.q('[data-fees-check]', c), null); assert.equal(g.qa('[data-added-later]', c).length, 1); g.close();
+});
+
+test('A FRIEND ON A SHARED PARCEL ADDS THEIR OWN READY ITEMS from their card; it lists only THEIR items, says postage is shared with everyone when set, and the parcel then shows them; the owner\'s card still has its own form', async () => {
+  const q = await person(), friend = await person(); const qa = await ready(q, 'Owner item'), fi = await ready(friend, 'Friend first'); const shared = await request(q, [qa]); assert.equal((await api('POST', `/api/my/parcels/${shared}/companion/invite`, { handles: friend.h }, q.cookie)).status, 201); assert.equal((await api('POST', `/api/my/parcels/${shared}/companion/accept`, { claimIds: [fi] }, friend.cookie)).status, 200);
+  await ready(friend, 'Friend arrived later'); await ready(q, 'Owner arrived later'); await api('POST', `/api/admin/parcels/${shared}/fees`, { doms: 6, dueDate: day(9) });
+  const fp = await page(friend); assert.deepEqual(labels(fp, shared).map((t) => t.replace(/\s+Add UI GO.*$/, '')), ['Friend arrived later'], "only the friend's own ready items, not the owner's"); assert.match(fp.text(fp.q('[data-add-fees-note]', card(fp, shared))), /shared out again across all the items \(and everyone sharing it\), so what you owe on each item may change/);
+  fp.qa('input[name="claim"]', addForm(fp, shared))[0].checked = true; await fp.submit(addForm(fp, shared)); await sleep(450); await fp.settle(); assert.equal(toast(fp), `Added 1 item to Parcel #${shared}.`); assert.match(fp.text(card(fp, shared)), /Friend first, Friend arrived later/, 'now in their list of items on the parcel'); assert.equal(addForm(fp, shared), null, 'nothing else is ready, so no form'); fp.close();
+  const op = await page(q); assert.deepEqual(labels(op, shared).map((t) => t.replace(/\s+Add UI GO.*$/, '')), ['Owner arrived later'], "the owner's form is unchanged"); op.close();
 });

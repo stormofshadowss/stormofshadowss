@@ -63,9 +63,37 @@ test('IT IS REFUSED, WITH NOTHING CHANGED, WHEN: the request is already packed, 
   const mine = (await api('GET', '/api/my/parcels', undefined, p.cookie)).json.parcels.find((x) => x.id === parcel); assert.equal(mine.canAddItems, false, 'once packed, the screen no longer offers it');
 });
 
-test('A FRIEND SHARING YOUR PARCEL CANNOT ADD TO IT (only the person it is posted to can)', async () => {
-  const p = await person(), friend = await person(); const a = await ready(p), f1 = await ready(friend); const parcel = await request(p, [a]); assert.equal((await api('POST', `/api/my/parcels/${parcel}/companion/invite`, { handles: friend.h }, p.cookie)).status, 201); assert.equal((await api('POST', `/api/my/parcels/${parcel}/companion/accept`, { claimIds: [f1] }, friend.cookie)).status, 200);
-  const f2 = await ready(friend); const r = await add(friend, parcel, [f2], friend.cookie); assert.equal(r.status, 404); assert.deepEqual((await inParcel(parcel)).map((i) => i.id), [a, f1]); const view = (await api('GET', '/api/my/parcels', undefined, friend.cookie)).json.parcels.find((x) => x.id === parcel); assert.equal(view.canAddItems, false);
+const shareWith = async (owner, friend, friendClaims) => { const parcel = await request(owner, [await ready(owner)]); assert.equal((await api('POST', `/api/my/parcels/${parcel}/companion/invite`, { handles: friend.h }, owner.cookie)).status, 201); assert.equal((await api('POST', `/api/my/parcels/${parcel}/companion/accept`, { claimIds: friendClaims }, friend.cookie)).status, 200); return parcel; };
+
+test('A FRIEND WHO HAS JOINED A SHARED PARCEL CAN ADD THEIR OWN ITEMS to it until it is packed (never the owner\'s); the form is offered to them; the request keeps its place', async () => {
+  const p = await person(), friend = await person(); const f1 = await ready(friend); const parcel = await shareWith(p, friend, [f1]); const before = (await api('GET', '/api/my/parcels', undefined, friend.cookie)).json.parcels.find((x) => x.id === parcel);
+  assert.deepEqual([before.canAddItems, before.queuePosition], [true, before.queuePosition], 'the friend is offered it'); const f2 = await ready(friend);
+  const r = await add(friend, parcel, [f2], friend.cookie); assert.equal(r.status, 201, r.text); assert.deepEqual([r.json.added, r.json.queuePosition], [1, before.queuePosition]); const items = await inParcel(parcel); assert.equal(items.length, 3); assert.deepEqual(items.filter((i) => i.addedAt !== null).map((i) => i.id), [f2], 'only the new one is "added later"');
+  const mine = (await api('GET', '/api/my/parcels', undefined, friend.cookie)).json.parcels.find((x) => x.id === parcel); assert.equal(mine.items.filter((i) => i.mine).length, 2, 'the friend now has two of their own items in it');
+  const ownerItem = await ready(p); const nope = await add(friend, parcel, [ownerItem], friend.cookie); assert.equal(nope.status, 403, "the owner's items aren't the friend's to add"); assert.equal((await inParcel(parcel)).length, 3);
+  const ownerView = (await api('GET', '/api/my/parcels', undefined, p.cookie)).json.parcels.find((x) => x.id === parcel); assert.equal(ownerView.canAddItems, true, 'and the owner still can');
+  assert.ok((await app.q("SELECT detail FROM audit_log WHERE entity = 'parcel' AND entity_id = ? AND action = 'parcel.add_items' ORDER BY id DESC LIMIT 1", [parcel])).map((r) => (typeof r.detail === 'string' ? JSON.parse(r.detail) : r.detail))[0].as === 'friend', 'recorded as done by a friend');
+});
+
+test('A FRIEND ADDING WHEN POSTAGE IS ALREADY SET: the same totals are shared out again across everyone (weights), the new item\'s fees get the same due date, and the parcel is flagged for you', async () => {
+  const p = await person(), friend = await person(); const f1 = await ready(friend); const parcel = await shareWith(p, friend, [f1]); await api('POST', `/api/admin/parcels/${parcel}/fees`, { doms: 8, packaging: 2, dueDate: day(9) }); assert.equal(!!(await packingRow(parcel)).feesCheckNeeded, false);
+  const f2 = await ready(friend); assert.equal((await add(friend, parcel, [f2], friend.cookie)).status, 201);
+  const all = (await inParcel(parcel)).map((i) => i.id); const total = async (cat) => Number((await Promise.all(all.map(async (id) => (await fee(id, cat)).cost))).reduce((a, b) => a + b, 0).toFixed(2)); assert.deepEqual([await total('doms'), await total('packaging')], [8, 2], 'the totals are still fully charged');
+  assert.equal((await fee(f2, 'doms')).due, day(9)); assert.equal(!!(await packingRow(parcel)).feesCheckNeeded, true, 'flagged for you to check the postage');
+});
+
+test('WHO CANNOT ADD: someone only invited (not yet accepted), someone who declined, a stranger — and nobody once it is packed', async () => {
+  const p = await person(), friend = await person(), pending = await person(), declined = await person(), stranger = await person(); const parcel = await shareWith(p, friend, [await ready(friend)]);
+  assert.equal((await api('POST', `/api/my/parcels/${parcel}/companion/invite`, { handles: pending.h }, p.cookie)).status, 201); assert.equal((await api('POST', `/api/my/parcels/${parcel}/companion/invite`, { handles: declined.h }, p.cookie)).status, 201); assert.equal((await api('POST', `/api/my/parcels/${parcel}/companion/decline`, {}, declined.cookie)).status, 200);
+  for (const x of [pending, declined, stranger]) { const r = await add(x, parcel, [await ready(x)], x.cookie); assert.equal(r.status, 404, `${x.h}: ${r.status}`); }
+  assert.equal((await inParcel(parcel)).length, 2, 'nothing was added'); await app.q("UPDATE parcels SET status = 'packed' WHERE id = ?", [parcel]); const late = await add(friend, parcel, [await ready(friend)], friend.cookie); assert.deepEqual([late.status, late.json.code], [409, 'parcel_not_open']);
+  assert.equal((await api('GET', '/api/my/parcels', undefined, friend.cookie)).json.parcels.find((x) => x.id === parcel).canAddItems, false, 'once packed, no form');
+});
+
+test('A FRIEND\'S OTHER HANDLE CAN ADD TOO: it joins the parcel automatically (no invitation) and is only added once', async () => {
+  const p = await person(), friend = await person(); const parcel = await shareWith(p, friend, [await ready(friend)]); const sib = u('sib'); assert.equal((await api('POST', '/api/me/handles', { handle: sib }, friend.cookie)).status, 200);
+  const s1 = await ready(friend, { handle: sib }); assert.equal((await add(friend, parcel, [s1], friend.cookie)).status, 201); const s2 = await ready(friend, { handle: sib }); assert.equal((await add(friend, parcel, [s2], friend.cookie)).status, 201);
+  const comps = await app.q("SELECT j.instagram_handle AS handle, pc.status, pc.how FROM parcel_companions pc JOIN joiners j ON j.id = pc.joiner_id WHERE pc.parcel_id = ? AND pc.status = 'accepted' ORDER BY pc.id", [parcel]); assert.deepEqual(comps.filter((c) => c.handle === sib).map((c) => [c.status, c.how]), [['accepted', 'own']], 'one row, not two');
 });
 
 test('ONE PERSON, SEVERAL HANDLES: items from their other handle can be added too — that handle joins the parcel automatically (no invitation) and is only added once', async () => {
@@ -77,4 +105,9 @@ test('ONE PERSON, SEVERAL HANDLES: items from their other handle can be added to
 test('TWO PRESSES AT ONCE for the same item add it exactly once', async () => {
   const p = await person(); const a = await ready(p); const parcel = await request(p, [a]); const b = await ready(p); const rs = await Promise.all([add(p, parcel, [b]), add(p, parcel, [b]), add(p, parcel, [b])]);
   assert.equal(rs.filter((r) => r.status === 201).length, 1); assert.ok(rs.filter((r) => r.status !== 201).every((r) => r.status === 409)); assert.deepEqual((await inParcel(parcel)).map((i) => i.id), [a, b]);
+});
+
+test('A BLOCKED HANDLE\'S ITEMS CANNOT BE ADDED TO A PARCEL (the owner\'s or a friend\'s); nothing is added', async () => {
+  const p = await person(), friend = await person(); const parcel = await shareWith(p, friend, [await ready(friend)]); const f2 = await ready(friend); assert.equal((await api('POST', '/api/admin/joiners/block', { handle: friend.h, reason: 'test' })).status, 200);
+  const r = await add(friend, parcel, [f2], friend.cookie); assert.ok([403, 409].includes(r.status), `${r.status} ${r.text}`); assert.equal((await inParcel(parcel)).filter((i) => i.id === f2).length, 0, 'nothing was added'); assert.equal(r.json.error, "A blocked handle's items can't be added to a parcel.");
 });
