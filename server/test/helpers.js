@@ -51,7 +51,7 @@ export async function startApp(overrides = {}) {
   await migrate(cfg, () => {});
   const pool = createPool(cfg);
   const mailer = createMailer(cfg);
-  const app = createApp({ cfg, pool, mailer, extraRoutes: [catalogRoutes, claimRoutes, meRoutes, adminRoutes, setRoutes, fixedRoutes, boxRoutes, proxyRoutes, shopRoutes, cardRoutes, imageRoutes, importRoutes, inviteRoutes, cancelRequestRoutes, settingsRoutes, launchRoutes, incomingRoutes, claimFixRoutes, peopleDueRoutes, benefitRoutes, archiveRoutes] });
+  const app = createApp({ cfg, pool, mailer, extraRoutes: [cardRoutes, catalogRoutes, claimRoutes, meRoutes, adminRoutes, setRoutes, fixedRoutes, boxRoutes, proxyRoutes, shopRoutes, imageRoutes, importRoutes, inviteRoutes, cancelRequestRoutes, settingsRoutes, launchRoutes, incomingRoutes, claimFixRoutes, peopleDueRoutes, benefitRoutes, archiveRoutes] });
   const server = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   const base = `http://127.0.0.1:${server.address().port}`;
   const cookies = {};

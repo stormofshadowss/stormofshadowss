@@ -46,6 +46,7 @@
     const b = bundleOf(view.id); if (!b) { view = { name: 'list' }; return drawList(); }
     root.innerHTML = `<div class="btn-row" style="margin:18px 0 6px"><button class="sm secondary" data-act="back-list">← All bundles</button></div>
       <h1 style="margin:6px 0 10px">${esc(b.title)} ${statusPill(b)}</h1>
+      ${b.orderId ? `<p class="sub" data-order-info style="margin:0 0 10px">Claims, payments and ordering for this bundle appear in the usual tabs under “${esc(b.title)}”. ${b.claims} claim${b.claims === 1 ? '' : 's'} so far. ${b.onHand ? 'On hand: claims are confirmed at once.' : 'Not on hand: claims wait for you to secure them.'}</p>` : ''}
       <div class="card"><form data-form="bundle" data-id="${b.id}">${bundleFields(b)}<div class="btn-row" style="margin-top:8px"><button type="submit">Save details</button>
         ${b.status === 'open' ? '<button type="button" class="secondary" data-act="status" data-to="closed">Close bundle</button>' : b.status === 'closed' ? '<button type="button" class="secondary" data-act="status" data-to="open">Re-open bundle</button>' : '<button type="button" data-act="status" data-to="open">Publish</button>'}
         <button type="button" class="secondary" data-act="delete-bundle">Delete bundle</button><span class="msg" data-msg hidden></span></div></form></div>

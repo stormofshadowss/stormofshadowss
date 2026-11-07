@@ -82,7 +82,7 @@ export async function setPaid(conn, claimId, category, newPaid, cost) {
   // A shop (on hand) item is ready to pack the moment it's paid for — there's nothing left to wait for.
   if (fully && category === 'initials') {
     await conn.query(
-      "UPDATE claims SET pipeline = 'ready to pack / on hand', ready_to_pack_date = COALESCE(ready_to_pack_date, CURDATE()) WHERE id = ? AND leftover_item_id IS NOT NULL AND status = 'confirmed' AND pipeline = 'awaiting fulfillment'", [claimId]);
+      "UPDATE claims SET pipeline = 'ready to pack / on hand', ready_to_pack_date = COALESCE(ready_to_pack_date, CURDATE()) WHERE id = ? AND (leftover_item_id IS NOT NULL OR item_id IN (SELECT i.id FROM items i JOIN card_bundles b ON b.order_id = i.order_id WHERE b.on_hand = 1)) AND status = 'confirmed' AND pipeline = 'awaiting fulfillment'", [claimId]);
   }
 }
 

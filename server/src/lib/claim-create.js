@@ -1,5 +1,5 @@
 import { bad, notFound } from '../errors.js';
-import { addClaimCosts } from './ledger.js';
+import { addClaimCosts, lockJoiner, sweepCredit } from './ledger.js';
 import { placeSetParts } from './sets.js';
 import { closedReason } from './closing.js';
 import { conflict } from '../errors.js';
@@ -64,8 +64,8 @@ export async function checkPurchaseLimit(conn, item, wanted, { asAdmin = false, 
 export async function placeItemLine(conn, { joinerId, line, asAdmin = false, overrideLimit = false }) {
   const ids = [], placements = [];
   const [[item]] = await conn.query(
-    `SELECT i.id, i.order_id, i.item_type, i.title, i.price, i.price_tbc, i.size_bucket, i.purchase_limit, i.limit_scope, i.cancelled_at, i.hidden_from_public, i.close_date AS item_close_date, i.closed_by_hand, go.status, go.close_date AS go_close_date, go.is_private
-       FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id = ?`, [line.itemId]);
+    `SELECT i.id, cbn.on_hand AS card_on_hand, cbn.pay_days AS card_pay_days, i.order_id, i.item_type, i.title, i.price, i.price_tbc, i.size_bucket, i.purchase_limit, i.limit_scope, i.cancelled_at, i.hidden_from_public, i.close_date AS item_close_date, i.closed_by_hand, go.status, go.close_date AS go_close_date, go.is_private
+       FROM items i JOIN group_orders go ON go.id = i.order_id LEFT JOIN card_bundles cbn ON cbn.order_id = go.id WHERE i.id = ?`, [line.itemId]);
   // Private orders look exactly like orders that don't exist.
   if (!item || ((item.is_private || item.hidden_from_public) && !asAdmin)) throw notFound('That item isn\'t available');                  // a hidden item looks like it doesn't exist to a joiner
   if (!asAdmin) {                                                                                  // closed by hand or by date — the order, or just this item
@@ -105,5 +105,10 @@ export async function placeItemLine(conn, { joinerId, line, asAdmin = false, ove
     await addClaimCosts(conn, r.insertId, memberPrice !== null ? memberPrice : item.price_tbc ? 0 : item.price);        // a TBC price costs nothing yet, and the claim can't be secured until it's set (a member with its own price is not TBC)
     ids.push(r.insertId);
   }
-  return { ids, placements };
+  // A card that is ON HAND is confirmed straight away (nothing to wait for), with days to pay counted from now — exactly like the Shop. Cards not on hand wait to be secured like any group order.
+  if (item.card_on_hand && ids.length) {
+    await conn.query("UPDATE claims SET status = 'confirmed', pay_by = DATE_ADD(CURDATE(), INTERVAL ? DAY) WHERE id IN (?)", [item.card_pay_days, ids]);
+    await lockJoiner(conn, joinerId); await sweepCredit(conn, joinerId);                                       // credit they already have meets what they now owe
+  }
+  return { ids, placements, secured: item.card_on_hand ? ids : [] };
 }

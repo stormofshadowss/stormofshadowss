@@ -73,10 +73,12 @@ export async function reversePayments(conn, paymentIds, { reason = null, adminId
 
 // An on-hand shop item becomes "ready to pack" the moment it is paid for; if that payment fails and it isn't in a parcel yet, it goes back to waiting.
 async function unreadyShopClaim(conn, a) {
-  if (!a.leftover_item_id) return;
+  const [[cl]] = await conn.query('SELECT leftover_item_id, item_id FROM claims WHERE id = ?', [a.claimId ?? a.claim_id]);
+  const onHandCard = !!cl?.item_id && (await conn.query('SELECT 1 FROM items i JOIN card_bundles b ON b.order_id = i.order_id WHERE i.id = ? AND b.on_hand = 1', [cl.item_id]))[0].length;
+  if (!cl?.leftover_item_id && !onHandCard) return;
   const [[inParcel]] = await conn.query('SELECT COUNT(*) AS n FROM parcel_items WHERE claim_id = ?', [a.claimId ?? a.claim_id]);
   if (inParcel.n) return;
-  await conn.query("UPDATE claims SET pipeline = 'awaiting fulfillment', ready_to_pack_date = NULL WHERE id = ? AND leftover_item_id IS NOT NULL AND pipeline = 'ready to pack / on hand'", [a.claimId ?? a.claim_id]);
+  await conn.query("UPDATE claims SET pipeline = 'awaiting fulfillment', ready_to_pack_date = NULL WHERE id = ? AND (leftover_item_id IS NOT NULL OR item_id IN (SELECT i.id FROM items i JOIN card_bundles b ON b.order_id = i.order_id WHERE b.on_hand = 1)) AND pipeline = 'ready to pack / on hand'", [a.claimId ?? a.claim_id]);
 }
 
 // RE-APPLY a verified payment: it paid the wrong items (before payments were ordered by due date, one could clear a NEW item while older ones stayed overdue). This undoes where its money went and puts

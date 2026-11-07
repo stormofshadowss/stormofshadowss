@@ -125,7 +125,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
           continue;
         }
         const r = await placeItemLine(conn, { joinerId, line });
-        ids.push(...r.ids); placements.push(...r.placements);
+        ids.push(...r.ids); placements.push(...r.placements); if (r.secured?.length) shopIds.push(...r.secured);          // on-hand cards are confirmed at once, so they're told what they owe like shop claims
       }
       return { ids, placements, shopIds };
     });

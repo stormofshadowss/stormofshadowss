@@ -44,5 +44,6 @@ export async function makeCrop(sourceBuf, srcWidth, srcHeight, { x, y, w, h }) {
   const width = Math.max(1, Math.min(srcWidth - left, Math.round(w * srcWidth))), height = Math.max(1, Math.min(srcHeight - top, Math.round(h * srcHeight)));
   const base = () => sharp(sourceBuf).extract({ left, top, width, height });
   const fit = (px) => ({ width: px, height: px, fit: 'inside', withoutEnlargement: true });
-  return { full: await base().resize(fit(CROP_PX)).webp({ quality: 82 }).toBuffer(), thumb: await base().resize(fit(CROP_THUMB_PX)).webp({ quality: 78 }).toBuffer() };
+  const full = await base().resize(fit(CROP_PX)).webp({ quality: 82 }).toBuffer({ resolveWithObject: true });
+  return { full: full.data, thumb: await base().resize(fit(CROP_THUMB_PX)).webp({ quality: 78 }).toBuffer(), width: full.info.width, height: full.info.height };
 }
