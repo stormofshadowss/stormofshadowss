@@ -639,3 +639,17 @@ Run migration **`040_cards_orders.sql`** (after 039). Nothing changes for a bund
 - **Card orders are changed only from the Cards tab.** They appear in the **Group Orders** and **Claims** tabs (so you can find claims by bundle), but editing or deleting the order or its items there is refused ("This is a card bundle — change it from the Cards tab"). They **don't appear on the public order pages** or in the artist groups' open-order counts.
 - **For a bundle you had already published** before this update: it has no order yet. **Save its details (or any card) once** and the order and items are created.
 - **A public Cards API** (`GET /api/cards`, `GET /api/cards/bundles/:id`) now exists for the buyer screens: only open, published bundles that haven't passed their closing date, with copies left per card; **nothing says who claimed what**, and a signed-in person sees only **their own** picks.
+
+### Cards — what buyers see (slice 2, second half)
+No migration. Once a bundle is **published**, it appears on the buyers' site:
+- **Home page:** a **Photocards** card ("2 open bundles · 14 cards left") appears when at least one bundle is open. Card bundles are **not** shown among the group orders.
+- **Cards page** (`#/cards`): a tile for each group that has an open bundle (tap one to show just that group's bundles; "show every group" clears it), and the open bundles with their group, how many cards and how many are left, **"In hand — claim now"** or **"Pre-order"**, and the closing date. Closed and draft bundles aren't listed.
+- **A bundle page:** its boards, each a photo with a **tag on every card** (its price).
+  - **Taken cards** (every copy claimed) are **dimmed with an X** and can't be tapped. **Nobody's name or picture is ever shown** — the board says nothing about who took what.
+  - A card with **several copies** shows a **circle that fills** as they go (2 of 4 taken = half full); the pop-up says "2 of 4 left".
+  - **Signed-in buyers see their own picks marked "✓ yours"** (only on their own screen). A card in your basket is outlined and says "in basket".
+  - **"Taken cards still visible"** slider (0–100%, default 25%, remembered for the tab) fades the taken ones; **− / +** zoom the boards (100 → 400%).
+- **Tapping a card** opens a **pop-up**: the card close up (its own crop), price, copies left, your note if any, and a **stepper** limited to what's left → **Add to basket** (or **Update basket** / **Remove from basket** if it's already there). Esc, the × or tapping outside closes it.
+- **The basket and claim are the shop's own:** "Review basket" → give an Instagram handle → submit. **On-hand** cards are **confirmed at once** (they owe straight away, within the bundle's days to pay); **pre-order** cards wait for you to secure them. If someone takes a card first, the claim is refused with the purchase-limit message.
+- The card order's own page (`#/order/…`) just points to the cards instead of listing every item.
+- **In the Group Orders tab** a card bundle shows with a note that it is managed from the Cards tab, and its add/edit/delete buttons are hidden (the server also refuses those changes).

@@ -90,8 +90,9 @@
   }
 
   async function load() {
-    const [r, s] = await Promise.all([api('GET', '/api/orders'), api('GET', '/api/shop')]);
+    const [r, s, cd] = await Promise.all([api('GET', '/api/orders'), api('GET', '/api/shop'), api('GET', '/api/cards')]);
     orders = r.json?.orders || []; shopItems = s.json?.items || []; shopGroups = s.json?.groups || []; loaded = true;
+    SITE.cardsData = cd.json || { groups: [], bundles: [] };                       // the open photocard bundles (the Cards pages, site/cards.js)
     // forget basket lines for things that no longer exist or whose order has closed; shop lines are trimmed to what's still in stock
     const live = new Map(orders.filter((o) => o.status === 'open').flatMap((o) => o.items.filter((i) => !i.closed).map((i) => [i.id, i])));
     const closedNow = new Set(orders.flatMap((o) => o.items.filter((i) => i.closed || o.status !== 'open').map((i) => i.id)));
@@ -194,7 +195,7 @@
 
   // ── pages ──
   function home() {
-    const open = orders.filter((o) => o.status === 'open'), closed = orders.filter((o) => o.status !== 'open');
+    const open = orders.filter((o) => !o.isCards && o.status === 'open'), closed = orders.filter((o) => !o.isCards && o.status !== 'open');
     const byGroup = new Map();
     open.forEach((o) => { if (!byGroup.has(o.group)) byGroup.set(o.group, []); byGroup.get(o.group).push(o); });
     const card = (o) => `<a class="gocard" href="#/order/${o.id}">${o.cover ? `<img class="thumb sm" src="${esc(o.cover.thumb)}" alt="">` : ''}<strong>${esc(o.title)}</strong><span class="sub">${o.items.length} item${o.items.length === 1 ? '' : 's'}${o.closeDate ? ` · closes ${fmtDate(o.closeDate)}` : ''}${o.paymentDeadline ? ` · pay by ${fmtDate(o.paymentDeadline)}` : ''}</span></a>`;
@@ -253,6 +254,7 @@
 
   function orderPage(id) {
     const o = orders.find((x) => x.id === id);
+    if (o && o.isCards) { view.innerHTML = `<div class="card"><p>“${esc(o.title)}” is a photocard bundle.</p><a href="#/cards/bundle/${o.cardBundleId}">See the cards →</a></div>`; return; }
     if (!o) { view.innerHTML = '<div class="card"><p>That group order isn\'t available.</p><a href="#/">← All group orders</a></div>'; return; }
     view.innerHTML = `<div class="crumb"><a href="${SITE.groupPages && o.groupId ? SITE.groupPages.href({ id: o.groupId, name: o.group }) : '#/'}">← ${SITE.groupPages && o.groupId ? esc(o.group) : 'All group orders'}</a></div>
       ${o.cover ? `<img class="banner" src="${esc(o.cover.url)}" alt="${esc(o.title)}">` : ''}
@@ -313,7 +315,8 @@
     if (h === '#/basket') return basketPage();
     if (h === '#/done' && !done) { const r = store.sget('sos_done', null); if (r && r.done && Date.now() - r.at < RECENT_MS) done = r.done; }          // after a refresh
     if (h === '#/done' && done) return donePage();
-    if (SITE.groupPages) return SITE.groupPages.show({ view, orders, shopItems }, h);       // the home page and the group pages (site/shop-groups.js)
+    if (h.startsWith('#/cards') && SITE.cardPages) return SITE.cardPages.show(h);
+    if (SITE.groupPages) return SITE.groupPages.show({ view, orders: orders.filter((o) => !o.isCards), shopItems }, h);       // the home page and the group pages (site/shop-groups.js)
     home();
   }
 
@@ -386,6 +389,8 @@
     }
   });
 
+  // What the Cards pages (site/cards.js) use of the basket: a card is just an item with a purchase limit, so adding it works exactly like adding any item.
+  SITE.shopApi = { qtyOf: (itemId) => qtyOf(itemId, null, null), setQty(itemId, n) { const cur = qtyOf(itemId, null, null); if (n !== cur) bump(itemId, null, null, n - cur); }, count: () => count(), totalText: () => totalText() };
   window.addEventListener('hashchange', route);
   drawHeader();
   route();

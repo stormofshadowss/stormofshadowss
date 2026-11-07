@@ -258,3 +258,26 @@ button.avatar-link:hover .avatar-ring { filter:brightness(1.08); }
 .carea { position:absolute; box-sizing:border-box; border:2px dashed #fff; background:rgba(255,255,255,.12); pointer-events:none; }
 .cgrid-preview { position:absolute; box-sizing:border-box; border:1px dashed #fff; background:rgba(255,255,255,.1); pointer-events:none; }
 #boxList tr.sel td { background:rgba(255,255,255,.12); }
+
+/* Photocards: the buyer's board */
+.pcbar { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin:8px 0; }
+.pcbar input[type=range] { max-width:160px; }
+.pcscroll { overflow:auto; max-height:80vh; border:1px solid var(--line); border-radius:8px; background:#000; -webkit-overflow-scrolling:touch; }
+.pccanvas { position:relative; user-select:none; }
+.pccanvas img { display:block; width:100%; height:auto; pointer-events:none; }
+.hot { position:absolute; box-sizing:border-box; padding:0; margin:0; border:2px solid rgba(255,255,255,.55); border-radius:3px; background:transparent; cursor:pointer; overflow:hidden; font:inherit; color:#fff; }
+.hot:hover, .hot:focus-visible { border-color:#fff; box-shadow:0 0 0 2px var(--accent); outline:none; }
+.hot .ptag { position:absolute; left:0; bottom:0; right:0; font:700 11px/1.5 system-ui, sans-serif; background:rgba(0,0,0,.72); color:#fff; padding:0 4px; text-align:left; pointer-events:none; }
+.hot.gone { cursor:default; border-color:transparent; }
+.hot.gone::before { content:""; position:absolute; inset:0; background:rgba(0,0,0,var(--gone-dim, .75)); }
+.hot .xmark { position:absolute; inset:0; pointer-events:none; background:linear-gradient(to top right, transparent calc(50% - 1.5px), #fff calc(50% - 1.5px), #fff calc(50% + 1.5px), transparent calc(50% + 1.5px)), linear-gradient(to bottom right, transparent calc(50% - 1.5px), #fff calc(50% - 1.5px), #fff calc(50% + 1.5px), transparent calc(50% + 1.5px)); filter:drop-shadow(0 0 2px #000); }
+.hot .fill { position:absolute; right:3px; top:3px; width:20px; height:20px; border-radius:50%; border:2px solid #fff; background:conic-gradient(var(--accent) calc(var(--p) * 1%), rgba(255,255,255,.35) 0); box-shadow:0 0 3px #000; pointer-events:none; }
+.hot.mine { border-color:#59d36b; box-shadow:0 0 0 2px #59d36b; }
+.hot.inb { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent); }
+.hot .yours, .hot .inb { position:absolute; left:2px; top:2px; font:700 10px/1.4 system-ui, sans-serif; padding:0 4px; border-radius:3px; background:#1f7a33; color:#fff; pointer-events:none; }
+.hot .inb { background:var(--accent); color:#fff; top:auto; bottom:18px; }
+.pcpop { position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.72); display:flex; align-items:center; justify-content:center; padding:12px; }
+.pcpop-box { position:relative; width:min(420px, 100%); max-height:94vh; overflow:auto; background:var(--card, #1e1e1e); color:inherit; border-radius:12px; padding:14px; box-shadow:0 8px 32px rgba(0,0,0,.6); }
+.pcpop-box img { display:block; max-width:100%; max-height:52vh; margin:0 auto; border-radius:6px; }
+.pcpop-x { position:absolute; right:8px; top:6px; background:transparent; border:0; color:inherit; font-size:1.6rem; line-height:1; cursor:pointer; }
+.pcprice { font-size:1.4rem; font-weight:700; margin:0; }

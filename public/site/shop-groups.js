@@ -40,6 +40,7 @@
     view.innerHTML = `<section class="hero"><h1>Group orders</h1>
         <p class="muted">Pick what you want and claim it with just your Instagram handle — no password, no sign-up. Storm will confirm claims, then you pay.</p></section>
       ${shopCard}
+      ${SITE.homeExtra ? SITE.homeExtra() : ''}
       ${active.length ? `<h2 class="kicker" style="margin-top:6px">Artists</h2>
         ${kinds.length ? `<div class="chips" id="kindChips" role="group" aria-label="Filter artists"><button type="button" class="chip ${kind ? '' : 'on'}" data-kind="" aria-pressed="${!kind}">All</button>${kinds.map(([k, l]) => `<button type="button" class="chip ${kind === k ? 'on' : ''}" data-kind="${k}" aria-pressed="${kind === k}">${l}</button>`).join('')}</div>` : ''}
         <div class="avatars" id="groupCards">${shown.map(avatar).join('')}</div>

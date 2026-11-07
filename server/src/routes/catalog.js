@@ -29,7 +29,7 @@ function checkItemCloseDate(itemDate, orderDate) {
 async function loadOrders(pool, whereSql, params, { admin }) {
   const today = todayUK();
   const [orders] = await pool.query(
-    `SELECT go.id, go.title, go.status, go.is_private, go.is_cards, go.is_test, go.cancelled_at, go.archived_at, go.created_at, go.close_date, go.payment_deadline, go.expected_ship_date,
+    `SELECT go.id, go.title, go.status, go.is_private, go.is_cards, (SELECT b.id FROM card_bundles b WHERE b.order_id = go.id) AS card_bundle_id, go.is_test, go.cancelled_at, go.archived_at, go.created_at, go.close_date, go.payment_deadline, go.expected_ship_date,
             go.group_id, ag.name AS group_name, p.name AS proxy_name, oi.filename AS cover_file, oi.width AS cover_w, oi.height AS cover_h, gi.filename AS gcover_file, gi.width AS gcover_w, gi.height AS gcover_h
        FROM group_orders go JOIN artist_groups ag ON ag.id = go.group_id LEFT JOIN proxies p ON p.id = go.proxy_id
        LEFT JOIN images oi ON oi.id = go.cover_image_id LEFT JOIN images gi ON gi.id = ag.cover_image_id
@@ -61,7 +61,7 @@ async function loadOrders(pool, whereSql, params, { admin }) {
   const [outRows] = admin ? await pool.query("SELECT order_id, COUNT(*) AS n FROM claims WHERE order_id IN (?) AND status <> 'cancelled' AND NOT (status = 'confirmed' AND pipeline = 'completed') GROUP BY order_id", [orders.map((o) => o.id)]) : [[]];
   const outstandingOf = Object.fromEntries(outRows.map((r) => [r.order_id, Number(r.n)]));
   return orders.map((o) => ({
-    id: o.id, title: o.title, groupId: o.group_id, group: o.group_name, cover: imageOut(o.cover_file, o.cover_w, o.cover_h), groupCover: imageOut(o.gcover_file, o.gcover_w, o.gcover_h), status: !admin && o.status === 'open' && datePassed(o.close_date, today) ? 'closed' : o.status, closedByDate: o.status === 'open' && datePassed(o.close_date, today), isPrivate: !!o.is_private, isCards: !!o.is_cards, cancelled: !!o.cancelled_at, ...(admin ? { archivedAt: o.archived_at ? new Date(o.archived_at).toISOString() : null, outstanding: outstandingOf[o.id] || 0 } : {}), createdAt: o.created_at ? new Date(o.created_at).toISOString() : null,
+    id: o.id, title: o.title, groupId: o.group_id, group: o.group_name, cover: imageOut(o.cover_file, o.cover_w, o.cover_h), groupCover: imageOut(o.gcover_file, o.gcover_w, o.gcover_h), status: !admin && o.status === 'open' && datePassed(o.close_date, today) ? 'closed' : o.status, closedByDate: o.status === 'open' && datePassed(o.close_date, today), isPrivate: !!o.is_private, isCards: !!o.is_cards, cardBundleId: o.card_bundle_id || null, cancelled: !!o.cancelled_at, ...(admin ? { archivedAt: o.archived_at ? new Date(o.archived_at).toISOString() : null, outstanding: outstandingOf[o.id] || 0 } : {}), createdAt: o.created_at ? new Date(o.created_at).toISOString() : null,
     closeDate: o.close_date, paymentDeadline: o.payment_deadline, expectedShipDate: o.expected_ship_date,
     ...(admin ? { proxy: o.proxy_name, isTest: !!o.is_test } : {}),
     items: items.filter((i) => i.order_id === o.id).map((i) => {
@@ -149,7 +149,7 @@ export function catalogRoutes(app, { pool, cfg }) {
   }));
 
   app.get('/api/orders', wrap(async (req, res) => {
-    res.json({ orders: await loadOrders(pool, 'WHERE go.is_private = 0 AND go.is_cards = 0 AND ag.is_hidden = 0 AND go.cancelled_at IS NULL', [], { admin: false }) });
+    res.json({ orders: await loadOrders(pool, 'WHERE go.is_private = 0 AND ag.is_hidden = 0 AND go.cancelled_at IS NULL', [], { admin: false }) });
   }));
 
   app.get('/api/payment-methods', requireLogin, wrap(async (req, res) => {
