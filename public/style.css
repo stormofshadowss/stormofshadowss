@@ -265,12 +265,16 @@ button.avatar-link:hover .avatar-ring { filter:brightness(1.08); }
 .pcscroll { overflow:auto; max-height:80vh; border:1px solid var(--line); border-radius:8px; background:#000; -webkit-overflow-scrolling:touch; }
 .pccanvas { position:relative; user-select:none; }
 .pccanvas img { display:block; width:100%; height:auto; pointer-events:none; }
-.hot { position:absolute; box-sizing:border-box; padding:0; margin:0; border:2px solid rgba(255,255,255,.55); border-radius:3px; background:transparent; cursor:pointer; overflow:hidden; font:inherit; color:#fff; }
+.hot { position:absolute; box-sizing:border-box; padding:0; margin:0; border:2px solid rgba(255,255,255,.55); border-radius:3px; background:transparent; cursor:pointer; overflow:hidden; font:inherit; color:#fff; container-type:inline-size; }
 .hot:hover, .hot:focus-visible { border-color:#fff; box-shadow:0 0 0 2px var(--accent); outline:none; }
-.hot .ptag { position:absolute; left:0; bottom:0; right:0; font:700 11px/1.5 system-ui, sans-serif; background:rgba(0,0,0,.72); color:#fff; padding:0 4px; text-align:left; pointer-events:none; }
+.hot .ptag { position:absolute; left:0; bottom:0; max-width:100%; box-sizing:border-box; font-family:system-ui, sans-serif; font-weight:700; font-size:10px; line-height:1.35; background:rgba(0,0,0,.62); color:#fff; padding:0 3px; border-top-right-radius:4px; white-space:nowrap; overflow:hidden; pointer-events:none; }
+@supports (font-size: 1cqw) { .hot .ptag { font-size:clamp(9px, 15cqw, 13px); } }   /* the tag grows with the card when you zoom, and stays small when the cards are small */
 .hot.gone { cursor:default; border-color:transparent; }
 .hot.gone::before { content:""; position:absolute; inset:0; background:rgba(0,0,0,var(--gone-dim, .75)); }
-.hot .xmark { position:absolute; inset:0; pointer-events:none; background:linear-gradient(to top right, transparent calc(50% - 1.5px), #fff calc(50% - 1.5px), #fff calc(50% + 1.5px), transparent calc(50% + 1.5px)), linear-gradient(to bottom right, transparent calc(50% - 1.5px), #fff calc(50% - 1.5px), #fff calc(50% + 1.5px), transparent calc(50% + 1.5px)); filter:drop-shadow(0 0 2px #000); }
+.hot .xmark { position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none; }
+.hot .xmark path { fill:none; stroke-linecap:round; vector-effect:non-scaling-stroke; }
+.hot .xmark .xo { stroke:rgba(0,0,0,.7); stroke-width:4px; }
+.hot .xmark .xi { stroke:#fff; stroke-width:2px; }
 .hot .fill { position:absolute; right:3px; top:3px; width:20px; height:20px; border-radius:50%; border:2px solid #fff; background:conic-gradient(var(--accent) calc(var(--p) * 1%), rgba(255,255,255,.35) 0); box-shadow:0 0 3px #000; pointer-events:none; }
 .hot.mine { border-color:#59d36b; box-shadow:0 0 0 2px #59d36b; }
 .hot.inb { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent); }
@@ -294,3 +298,7 @@ a.gocard.hasicon { display:flex; align-items:center; gap:14px; }
 .gicon { flex:none; display:flex; align-items:center; justify-content:center; width:48px; height:48px; border-radius:14px; background:var(--surface-2); border:1px solid var(--line); color:var(--accent); }
 .gicon svg { width:26px; height:26px; }
 .gtext { min-width:0; }
+.pcpop-img { position:relative; }
+.pcnav { position:absolute; top:50%; transform:translateY(-50%); width:38px; height:64px; padding:0; border:0; border-radius:8px; background:rgba(0,0,0,.55); color:#fff; font-size:1.7rem; line-height:1; cursor:pointer; }
+.pcnav.prev { left:4px; } .pcnav.next { right:4px; }
+.pcnav:hover, .pcnav:focus-visible { background:rgba(0,0,0,.8); outline:2px solid var(--accent); }

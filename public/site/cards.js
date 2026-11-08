@@ -5,6 +5,9 @@
   const view = $('#view');
   let paint = 0, bundle = null, boards = [], zoom = 100, popup = null;
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const priceText = (n) => (Number.isInteger(n) ? `£${n}` : money(n));                 // £5, or £2.50 — short, so the tag stays small on the card
+  // The X on a taken card is a little drawing, not a CSS gradient with a filter: a phone can drop big filtered layers when you zoom, a plain SVG it keeps. It carries its own size and line colours, so it draws even with an old stylesheet.
+  const X_MARK = '<svg class="xmark" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" focusable="false" style="position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none"><path class="xo" d="M0 0L100 100M100 0L0 100" fill="none" stroke="rgba(0,0,0,.7)" stroke-width="4" stroke-linecap="round" vector-effect="non-scaling-stroke"/><path class="xi" d="M0 0L100 100M100 0L0 100" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>';
   const data = () => SITE.cardsData || { groups: [], bundles: [] };
   const fadeNow = () => { const v = Number(SITE.store.sget('sos_cards_fade', 25)); return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 25; };   // how visible TAKEN cards stay (0–100%)
   const room = () => SITE.shopApi;
@@ -37,7 +40,7 @@
     const inB = room().qtyOf(b.itemId), gone = b.left <= 0, part = b.qty > 1 && b.left > 0 && b.left < b.qty, claimed = b.qty - b.left;
     const label = `Card ${b.number} on ${bd.title}, ${money(b.price)}, ${gone ? 'taken' : b.qty > 1 ? `${b.left} of ${b.qty} left` : 'available'}${b.mine ? ', yours' : ''}${inB ? `, ${inB} in your basket` : ''}`;
     return `<button type="button" class="hot${gone ? ' gone' : ''}${part ? ' part' : ''}${b.mine ? ' mine' : ''}${inB ? ' inb' : ''}" data-box="${b.id}" ${gone ? 'disabled' : ''} style="left:${b.x * 100}%; top:${b.y * 100}%; width:${b.w * 100}%; height:${b.h * 100}%" aria-label="${esc(label)}">`
-      + `<span class="ptag">${money(b.price)}</span>${part ? `<span class="fill" style="--p:${Math.round(claimed / b.qty * 100)}" title="${claimed} of ${b.qty} taken"></span>` : ''}${gone ? '<span class="xmark" aria-hidden="true"></span>' : ''}${b.mine ? '<span class="yours">✓ yours</span>' : ''}${inB ? `<span class="inb">${inB > 1 ? `×${inB} ` : ''}in basket</span>` : ''}</button>`;
+      + `<span class="ptag">${priceText(b.price)}</span>${part ? `<span class="fill" style="--p:${Math.round(claimed / b.qty * 100)}" title="${claimed} of ${b.qty} taken"></span>` : ''}${gone ? X_MARK : ''}${b.mine ? '<span class="yours">✓ yours</span>' : ''}${inB ? `<span class="inb">${inB > 1 ? `×${inB} ` : ''}in basket</span>` : ''}</button>`;
   }
   const boardHtml = (bd) => `<section class="pcboard" data-board="${bd.id}"><h2 style="margin:18px 0 6px">${esc(bd.title)}</h2><div class="pcscroll"><div class="pccanvas" style="width:${zoom}%; aspect-ratio:${bd.aspect}"><img src="${esc(bd.image.url)}" alt="${esc(bd.title)}" draggable="false">${bd.boxes.map((b) => hotHtml(b, bd)).join('')}</div></div></section>`;
   function paintBoards() {
@@ -65,23 +68,37 @@
 
   // ── the pop-up: the card close up, its price and copies left, and how many to take ──
   function closePopup() { if (!popup) return; document.removeEventListener('keydown', popup.onKey); popup.el.remove(); popup = null; }
-  function openPopup(box, bd) {
-    closePopup();
-    const inB = room().qtyOf(box.itemId), max = Math.min(box.left, 20), el = document.createElement('div');
-    el.className = 'pcpop'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', `Card ${box.number}`);
-    el.innerHTML = `<div class="pcpop-box"><button type="button" class="pcpop-x" data-cact="pop-close" aria-label="Close">×</button>${box.crop ? `<img src="${esc(box.crop.url)}" alt="Card ${box.number}">` : ''}
-      <h2 style="margin:8px 0 2px">Card ${box.number} <span class="sub">· ${esc(bd.title)}</span></h2><p class="pcprice" data-pop-price>${money(box.price)}</p>
+  // The cards a buyer can still take, in reading order (board by board) — what the pop-up's arrows move through. Taken cards are skipped; it wraps round at either end.
+  const availableCards = () => boards.flatMap((bd) => bd.boxes.filter((b) => b.left > 0).map((box) => ({ box, bd })));
+  function popupHtml(box, bd) {
+    const inB = room().qtyOf(box.itemId), max = Math.min(box.left, 20), list = availableCards(), at = list.findIndex((x) => x.box.id === box.id), many = list.length > 1;
+    return `<div class="pcpop-box"><button type="button" class="pcpop-x" data-cact="pop-close" aria-label="Close">×</button>
+      <div class="pcpop-img">${box.crop ? `<img src="${esc(box.crop.url)}" alt="Card ${box.number}">` : ''}${many ? '<button type="button" class="pcnav prev" data-cact="pop-prev" aria-label="Previous available card">‹</button><button type="button" class="pcnav next" data-cact="pop-next" aria-label="Next available card">›</button>' : ''}</div>
+      <h2 style="margin:8px 0 2px">Card ${box.number} <span class="sub">· ${esc(bd.title)}</span></h2>${many && at >= 0 ? `<p class="sub" data-pop-pos style="margin:0 0 4px">${at + 1} of ${list.length} still available</p>` : ''}<p class="pcprice" data-pop-price>${money(box.price)}</p>
       <p class="sub" data-pop-left>${box.qty > 1 ? `${box.left} of ${box.qty} left` : 'Only 1 — first come, first served'}</p>${box.note ? `<p data-pop-note>${esc(box.note)}</p>` : ''}
       ${max > 1 ? `<div class="stepper" style="margin:8px 0"><button type="button" class="secondary" data-cact="pop-dec" aria-label="One fewer">−</button><span data-pop-qty>${inB || 1}</span><button type="button" class="secondary" data-cact="pop-inc" aria-label="One more">+</button></div>` : ''}
       <div class="btn-row"><button type="button" data-cact="pop-save">${inB ? 'Update basket' : 'Add to basket'}</button>${inB ? '<button type="button" class="secondary" data-cact="pop-remove">Remove from basket</button>' : ''}<button type="button" class="secondary" data-cact="pop-close">Close</button></div></div>`;
-    popup = { el, box, max, want: inB || 1, onKey: (e) => { if (e.key === 'Escape') closePopup(); } };
-    document.addEventListener('keydown', popup.onKey); document.body.appendChild(el); el.querySelector('[data-cact="pop-save"]')?.focus();
+  }
+  function showInPopup(box, bd) {
+    popup.box = box; popup.bd = bd; popup.max = Math.min(box.left, 20); popup.want = room().qtyOf(box.itemId) || 1;
+    popup.el.innerHTML = popupHtml(box, bd); popup.el.setAttribute('aria-label', `Card ${box.number}`); popup.el.querySelector('[data-cact="pop-save"]')?.focus();
+  }
+  function stepPopup(dir) {                                                          // dir: +1 next available card, −1 previous; wraps round
+    const list = availableCards(); if (list.length < 2) return; const at = list.findIndex((x) => x.box.id === popup.box.id);
+    const n = list[((at < 0 ? 0 : at) + dir + list.length) % list.length]; showInPopup(n.box, n.bd);
+  }
+  function openPopup(box, bd) {
+    closePopup();
+    const el = document.createElement('div'); el.className = 'pcpop'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true');
+    popup = { el, box, bd, max: 1, want: 1, onKey: (e) => { if (e.key === 'Escape') closePopup(); else if (e.key === 'ArrowRight') stepPopup(1); else if (e.key === 'ArrowLeft') stepPopup(-1); } };
+    document.addEventListener('keydown', popup.onKey); document.body.appendChild(el); showInPopup(box, bd);
     el.addEventListener('click', (e) => {
       if (e.target === el) return closePopup();
       const a = e.target.closest('[data-cact]'); if (!a) return; const t = a.dataset.cact;
       if (t === 'pop-close') return closePopup();
+      if (t === 'pop-prev' || t === 'pop-next') return stepPopup(t === 'pop-next' ? 1 : -1);
       if (t === 'pop-inc' || t === 'pop-dec') { popup.want = Math.max(1, Math.min(popup.max, popup.want + (t === 'pop-inc' ? 1 : -1))); const q = el.querySelector('[data-pop-qty]'); if (q) q.textContent = popup.want; return; }
-      if (t === 'pop-save' || t === 'pop-remove') { room().setQty(box.itemId, t === 'pop-remove' ? 0 : popup.want); closePopup(); paintBoards(); paintBar(); }
+      if (t === 'pop-save' || t === 'pop-remove') { room().setQty(popup.box.itemId, t === 'pop-remove' ? 0 : popup.want); closePopup(); paintBoards(); paintBar(); }
     });
   }
 

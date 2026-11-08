@@ -29,3 +29,9 @@ test('THE DARK THEME REDEFINES THE TOKENS THAT CARRY TEXT AND SURFACES, and the 
 test('THE HOME PAGE ICON TILE TAKES ITS COLOURS FROM THE THEME (no fixed colour), so it reads in light and dark', () => {
   const rule = css.match(/\.gicon \{(.*?)\}/s)[1]; for (const token of ['--surface-2', '--line', '--accent']) assert.ok(rule.includes(`var(${token})`), `.gicon uses ${token}`); assert.doesNotMatch(rule, /#[0-9a-f]{3,6}\b|rgb\(/i, 'no fixed colour');
 });
+
+test('THE X ON A TAKEN CARD IS NOT A CSS GRADIENT WITH A FILTER (a phone can drop those when you zoom), and the price tag is a compact corner label that scales with the card', () => {
+  const x = [...css.matchAll(/\.hot \.xmark[^{]*\{(.*?)\}/gs)].map((m) => m[1]).join(' '); assert.ok(x.length > 20, 'the X rules exist'); assert.doesNotMatch(x, /gradient|filter/i);
+  const tag = css.match(/\.hot \.ptag \{(.*?)\}/s)[1]; assert.doesNotMatch(tag, /right:\s*0/, 'not a bar across the whole card'); assert.match(tag, /max-width:\s*100%/); assert.match(css, /@supports \(font-size: 1cqw\) \{ \.hot \.ptag \{ font-size:clamp\(/); assert.match(css.match(/\n\.hot \{(.*?)\}/s)[1], /container-type:\s*inline-size/);
+});
+
