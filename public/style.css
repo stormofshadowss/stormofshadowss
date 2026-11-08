@@ -257,7 +257,7 @@ button.avatar-link:hover .avatar-ring { filter:brightness(1.08); }
 .cbox .handle { position:absolute; right:-7px; bottom:-7px; width:13px; height:13px; background:#fff; border:2px solid var(--accent); border-radius:2px; cursor:nwse-resize; }
 .carea { position:absolute; box-sizing:border-box; border:2px dashed #fff; background:rgba(255,255,255,.12); pointer-events:none; }
 .cgrid-preview { position:absolute; box-sizing:border-box; border:1px dashed #fff; background:rgba(255,255,255,.1); pointer-events:none; }
-#boxList tr.sel td { background:rgba(255,255,255,.12); }
+#boxList tr.sel td { background:var(--surface-2); font-weight:600; }
 
 /* Photocards: the buyer's board */
 .pcbar { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin:8px 0; }
@@ -277,7 +277,7 @@ button.avatar-link:hover .avatar-ring { filter:brightness(1.08); }
 .hot .yours, .hot .inb { position:absolute; left:2px; top:2px; font:700 10px/1.4 system-ui, sans-serif; padding:0 4px; border-radius:3px; background:#1f7a33; color:#fff; pointer-events:none; }
 .hot .inb { background:var(--accent); color:#fff; top:auto; bottom:18px; }
 .pcpop { position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.72); display:flex; align-items:center; justify-content:center; padding:12px; }
-.pcpop-box { position:relative; width:min(420px, 100%); max-height:94vh; overflow:auto; background:var(--card, #1e1e1e); color:inherit; border-radius:12px; padding:14px; box-shadow:0 8px 32px rgba(0,0,0,.6); }
+.pcpop-box { position:relative; width:min(420px, 100%); max-height:94vh; overflow:auto; background:var(--surface); color:var(--ink); border:1px solid var(--line); border-radius:12px; padding:14px; box-shadow:0 8px 32px rgba(0,0,0,.6); }
 .pcpop-box img { display:block; max-width:100%; max-height:52vh; margin:0 auto; border-radius:6px; }
 .pcpop-x { position:absolute; right:8px; top:6px; background:transparent; border:0; color:inherit; font-size:1.6rem; line-height:1; cursor:pointer; }
 .pcprice { font-size:1.4rem; font-weight:700; margin:0; }
