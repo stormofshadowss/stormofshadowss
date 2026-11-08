@@ -9,6 +9,7 @@ import { addClaimCosts, lockJoiner, setCost, sweepCredit } from '../lib/ledger.j
 import { cancelClaim } from '../lib/cancel.js';
 import { ensureDevice, deviceHasProof, grantProof } from '../lib/device.js';
 import { placeSetParts } from '../lib/sets.js';
+import { urls } from '../lib/images.js';
 import { placeItemLine, lockLineItems, alreadyHas } from '../lib/claim-create.js';
 import { moveClaims } from '../lib/move-claims.js';
 import { changeClaimPrices } from '../lib/reprice-claims.js';
@@ -134,7 +135,8 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
     const [[who]] = await pool.query('SELECT account_id FROM joiners WHERE id = ?', [joinerId]);
     const hasAccount = !!who.account_id;
     const canLinkEmail = !hasAccount && await deviceHasProof(pool, deviceToken, joinerId);
-    res.status(201).json({ ok: true, claimIds: created.ids, placements: created.placements.map(({ claimId, member, setNumber, label, price }) => ({ claimId, member, setNumber, label, price })), status: 'requested', handle: { name: handle, isNew, hasAccount, canLinkEmail } });
+    const [[pb]] = created.ids.length ? await pool.query("SELECT DATE_FORMAT(MIN(pay_by), '%Y-%m-%d') AS d FROM claims WHERE id IN (?) AND status = 'confirmed' AND pay_by IS NOT NULL", [created.ids]) : [[null]];      // when what was held for them straight away is due
+    res.status(201).json({ ok: true, claimIds: created.ids, payBy: pb?.d || null, placements: created.placements.map(({ claimId, member, setNumber, label, price }) => ({ claimId, member, setNumber, label, price })), status: 'requested', handle: { name: handle, isNew, hasAccount, canLinkEmail } });
   }));
 
   // ── GOM side ──
@@ -144,7 +146,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
     if (req.query.status) { where.push('c.status = ?'); params.push(String(req.query.status)); }
     if (req.query.handle) { where.push('j.instagram_handle = ?'); params.push(normalizeHandle(req.query.handle)); }
     const [rows] = await pool.query(
-      `SELECT c.id, c.joiner_id AS joinerId, c.price_tbc AS priceTbc, c.label, c.status, c.pipeline, c.order_id, go.title AS orderTitle, c.set_id AS setId, (SELECT admin_decision FROM item_sets WHERE id = c.set_id) AS setDecision, c.is_direct, c.is_fixed, c.ready_to_pack_date, c.received_date, j.instagram_handle AS handle
+      `SELECT c.id, c.joiner_id AS joinerId, c.price_tbc AS priceTbc, c.label, (SELECT im.filename FROM items it JOIN group_orders g ON g.id = it.order_id AND g.is_cards = 1 JOIN images im ON im.id = it.image_id WHERE it.id = c.item_id) AS cardFile, c.status, c.pipeline, c.order_id, go.title AS orderTitle, c.set_id AS setId, (SELECT admin_decision FROM item_sets WHERE id = c.set_id) AS setDecision, c.is_direct, c.is_fixed, c.ready_to_pack_date, c.received_date, j.instagram_handle AS handle
          FROM claims c JOIN joiners j ON j.id = c.joiner_id LEFT JOIN group_orders go ON go.id = c.order_id WHERE ${where.join(' AND ')} ORDER BY j.instagram_handle, c.id LIMIT ${maxList() + 1}`, params);
     const truncated = rows.length > maxList(); if (truncated) rows.length = maxList();          // the screen says so, so nothing is ever cut off silently
     // THE GROUP ORDER'S TOTAL (item cost only — what you pay the store or proxy), for cross-checking against what you actually paid. Worked out in the database over EVERY claim in the order, so it doesn't depend on
@@ -178,7 +180,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
     for (const c of costs) { if (!costsOf.has(c.claim_id)) costsOf.set(c.claim_id, {}); costsOf.get(c.claim_id)[c.category] = { cost: c.cost, paid: c.paid, paidDate: c.paid_date, due: c.due_date || null }; }
     res.json({
       people, truncated, orderTotals, itemCostByOrder,
-      claims: rows.map((r) => ({ ...r, priceTbc: !!r.priceTbc, is_direct: !!r.is_direct, is_fixed: !!r.is_fixed, costs: costsOf.get(r.id) || {} })),
+      claims: rows.map(({ cardFile, ...r }) => ({ ...r, cardThumb: cardFile ? urls(cardFile).thumb : null, priceTbc: !!r.priceTbc, is_direct: !!r.is_direct, is_fixed: !!r.is_fixed, costs: costsOf.get(r.id) || {} })),
     });
   }));
 

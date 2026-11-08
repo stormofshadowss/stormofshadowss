@@ -1,7 +1,7 @@
 (() => {
   const { esc, money, api, errText, $ } = GOM;
   const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
-  let root = null, data = { types: [], groups: [], bundles: [] }, view = { name: 'list' }, E = null, keyN = 0;
+  let root = null, data = { types: [], groups: [], bundles: [] }, view = { name: 'list' }, E = null, keyN = 0, claimData = null;
   const bundleOf = (id) => data.bundles.find((b) => b.id === id), typeOf = (id) => data.types.find((t) => t.id === id);
   const clamp = (n, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, n));
   const r6 = (n) => Math.round(n * 1e6) / 1e6;
@@ -53,7 +53,26 @@
       <div class="card" data-boards><h2 style="margin:0 0 6px">Boards</h2><p class="sub" style="margin:0 0 8px">A board is one photo of a spread of cards (a binder page, or a whole collection laid out). Upload it, then draw a box on each card.</p>
         ${b.boards.length ? b.boards.map((x) => `<div class="itemrow" data-board="${x.id}"><img class="thumb" src="${esc(x.image?.thumb || '')}" alt="" style="width:64px"><div class="grow"><strong>${esc(x.title)}</strong><div class="sub">${x.cards} card${x.cards === 1 ? '' : 's'} (${x.copies} cop${x.copies === 1 ? 'y' : 'ies'})</div></div><button class="sm" data-act="edit-board" data-id="${x.id}">Draw boxes</button><button class="sm secondary" data-act="delete-board" data-id="${x.id}">Delete</button></div>`).join('') : '<p class="muted">No boards yet.</p>'}
         <div class="btn-row" style="margin-top:10px; align-items:end"><div><label>Board name (optional)</label><input data-board-title maxlength="120" placeholder="e.g. Binder 1"></div><div><label>Photo</label><input type="file" data-board-file accept="image/jpeg,image/png,image/webp,image/gif" aria-label="Choose a board photo"></div></div>
-        <div class="sub">JPEG, PNG, WebP or GIF, up to 25 MB. Straight-on, even light and a flat page give the sharpest card pictures. The full-size photo is kept for cutting out each card; location data is removed.</div><span class="msg" data-board-msg hidden></span></div>`;
+        <div class="sub">JPEG, PNG, WebP or GIF, up to 25 MB. Straight-on, even light and a flat page give the sharpest card pictures. The full-size photo is kept for cutting out each card; location data is removed.</div><span class="msg" data-board-msg hidden></span></div>
+      ${b.orderId ? '<div class="card" data-claims-card><h2 style="margin:0 0 6px">Claims</h2><div id="cardClaims" class="muted">Loading…</div></div>' : ''}`;
+    if (b.orderId) loadClaims();
+  }
+  // WHO HAS WHAT: each person with their cards (the card's picture, number and price, ticked once paid), and what they still owe
+  async function loadClaims() {
+    const holder = $('#cardClaims', root); if (!holder) return;
+    const r = await api('GET', `/api/admin/card-bundles/${view.id}/claims`); if (!r.ok) { holder.textContent = errText(r); return; }
+    claimData = r.json; renderClaims();
+  }
+  function renderClaims() {
+    const holder = $('#cardClaims', root); if (!holder || !claimData) return; const b = bundleOf(view.id), want = view.claimBoard ? Number(view.claimBoard) : 0, s = claimData.summary;
+    const people = claimData.people.map((p) => ({ ...p, cards: p.cards.filter((c) => !want || c.boardId === want) })).filter((p) => p.cards.length);
+    holder.className = '';
+    holder.innerHTML = !claimData.people.length ? '<p class="muted" data-no-claims>No claims yet.</p>'
+      : `<p class="sub" data-claims-summary>${s.cards} card${s.cards === 1 ? '' : 's'} claimed by ${s.people} ${s.people === 1 ? 'person' : 'people'} · ${money(s.paid)} paid · ${money(s.owed)} owed${s.waiting ? ` · ${s.waiting} waiting for you to secure` : ''}</p>
+        ${b && b.boards.length > 1 ? `<div style="margin:6px 0"><label for="claimBoard">Show</label><select id="claimBoard" style="max-width:260px"><option value="">All boards</option>${b.boards.map((x) => `<option value="${x.id}" ${want === x.id ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select></div>` : ''}
+        ${people.map((p) => `<div class="itemrow" data-claimer="${esc(p.handle)}"><div class="grow"><strong>@${esc(p.handle)}</strong> <span class="sub">${p.cards.length} card${p.cards.length === 1 ? '' : 's'}</span>
+          <div class="cthumbs">${p.cards.map((c) => `<span class="cthumb" data-claim="${c.claimId}" title="${esc(c.boardTitle)} · #${c.number} · ${money(c.price)}${c.status === 'requested' ? ' · waiting for you to secure it' : c.paidUp ? ' · paid' : ''}">${c.thumb ? `<img src="${esc(c.thumb)}" alt="">` : ''}<b>#${c.number} ${money(c.price)}</b>${c.paidUp ? '<i>✓</i>' : ''}</span>`).join('')}</div></div>
+          <div class="btn-row" style="margin:0">${p.waiting ? '<span class="pill warn" data-waiting>waiting to be secured</span>' : ''}${p.owed > 0 ? `<span class="pill warn" data-owed>${money(p.owed)} owed</span>` : p.waiting ? '' : '<span class="pill ok" data-paid>✓ Paid</span>'}</div></div>`).join('') || '<p class="muted">Nobody has claimed anything on this board yet.</p>'}`;
   }
   async function uploadBoard(file) {
     const msg = $('[data-board-msg]', root), say = (t) => { msg.textContent = t; msg.className = 'msg'; msg.hidden = !t; };
@@ -235,6 +254,7 @@
   const onChange = (e) => {
     const t = e.target;
     if (t.matches('[data-board-file]') && t.files?.[0]) return uploadBoard(t.files[0]);
+    if (t.id === 'claimBoard') { view.claimBoard = t.value; return renderClaims(); }
     if (!E) return;
     if (t.id === 'zoomSel') { E.zoom = Number(t.value); $('#boardCanvas', root).style.width = `${E.zoom}%`; }
     if (t.id === 'brushType') E.brush.typeId = t.value ? Number(t.value) : null;

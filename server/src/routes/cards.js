@@ -236,6 +236,25 @@ export function cardRoutes(app, { pool, cfg }) {
     res.json({ ok: true, boxes: boxes.map(boxOut), cropped: todo.length });
   }));
 
+  // WHO HAS CLAIMED WHAT in a bundle: one row per person with their cards (picture, board, number, price) and whether they have paid — for finding a card, chasing payment and packing. GOM only.
+  // A claim still waiting to be secured owes nothing yet (as in the Claims tab); a confirmed one owes what it costs minus what's paid. Cancelled claims aren't shown.
+  app.get('/api/admin/card-bundles/:id/claims', admin, wrap(async (req, res) => {
+    const id = Number(req.params.id); const [[b]] = await pool.query('SELECT id FROM card_bundles WHERE id = ?', [id]); if (!b) throw notFound('No such bundle');
+    const [rows] = await pool.query(`SELECT c.id AS claimId, c.status, j.id AS joinerId, j.instagram_handle AS handle, x.id AS boxId, x.number, cb.id AS boardId, cb.title AS boardTitle, x.price, x.crop_file AS crop,
+        (SELECT COALESCE(SUM(cc.cost), 0) FROM claim_costs cc WHERE cc.claim_id = c.id) AS cost, (SELECT COALESCE(SUM(cc.paid), 0) FROM claim_costs cc WHERE cc.claim_id = c.id) AS paid
+      FROM claims c JOIN joiners j ON j.id = c.joiner_id JOIN card_boxes x ON x.item_id = c.item_id JOIN card_boards cb ON cb.id = x.board_id
+      WHERE cb.bundle_id = ? AND c.status <> 'cancelled' ORDER BY j.instagram_handle, cb.sort_order, cb.id, x.number, c.id`, [id]);
+    const people = new Map(); let paidTotal = 0, owedTotal = 0, waiting = 0;
+    for (const r of rows) {
+      const cost = Number(r.cost), paid = Number(r.paid), confirmed = r.status === 'confirmed', owed = confirmed ? Math.max(0, Math.round((cost - paid) * 100) / 100) : 0;
+      if (!people.has(r.joinerId)) people.set(r.joinerId, { joinerId: r.joinerId, handle: r.handle, cards: [], owed: 0, waiting: 0 });
+      const p = people.get(r.joinerId); p.owed = Math.round((p.owed + owed) * 100) / 100; if (!confirmed) p.waiting += 1;
+      p.cards.push({ claimId: r.claimId, boxId: r.boxId, number: r.number, boardId: r.boardId, boardTitle: r.boardTitle, price: Number(r.price), status: r.status, thumb: r.crop ? urls(r.crop).thumb : null, paidUp: confirmed && cost > 0 && paid >= cost });
+      paidTotal += paid; owedTotal += owed; if (!confirmed) waiting += 1;
+    }
+    res.json({ people: [...people.values()], summary: { cards: rows.length, people: people.size, paid: Math.round(paidTotal * 100) / 100, owed: Math.round(owedTotal * 100) / 100, waiting } });
+  }));
+
   // ── the buyer's side (no login needed to look) ──
   const LIVE = "b.status = 'open' AND b.order_id IS NOT NULL AND go.cancelled_at IS NULL AND (b.closes_on IS NULL OR b.closes_on >= ?)";
   const BUNDLE_COLS = "b.id, b.group_id AS groupId, g.name AS groupName, b.title, b.description, b.on_hand AS onHand, DATE_FORMAT(b.closes_on, '%Y-%m-%d') AS closesOn, b.pay_days AS payDays, b.order_id AS orderId";

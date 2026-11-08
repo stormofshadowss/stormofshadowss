@@ -653,3 +653,11 @@ No migration. Once a bundle is **published**, it appears on the buyers' site:
 - **The basket and claim are the shop's own:** "Review basket" → give an Instagram handle → submit. **On-hand** cards are **confirmed at once** (they owe straight away, within the bundle's days to pay); **pre-order** cards wait for you to secure them. If someone takes a card first, the claim is refused with the purchase-limit message.
 - The card order's own page (`#/order/…`) just points to the cards instead of listing every item.
 - **In the Group Orders tab** a card bundle shows with a note that it is managed from the Cards tab, and its add/edit/delete buttons are hidden (the server also refuses those changes).
+
+### Cards — pictures, pay-by dates and who-has-what (polish)
+No migration.
+- **The buyer's basket shows each card's picture** next to its line (ordinary items are unchanged).
+- **The "Claims submitted" page says when to pay** for what was held for them right away — cards that are in hand (and shop items): **"Pay by 14 Nov for what is held for you right away…"**. A pre-order (waiting for you to secure it) shows no date yet.
+- **Your Claims tab shows a card's picture** on its row (also on the merged "×2" line); claims on ordinary orders look as before.
+- **The Packing list already showed each item's picture** — card claims now show the card itself there too (this is now covered by a test).
+- **A bundle's page has a Claims section** (once it is published): **who has which cards** — each person's cards with the card's picture, number and price, a **✓ on the ones they've paid for**, and what they still owe (**"£5.00 owed"**, or **"✓ Paid"** when they're square). A summary line says how many cards are claimed by how many people, how much is paid and owed, and how many are **waiting for you to secure** (pre-orders show a "waiting to be secured" chip and owe nothing yet). With more than one board, a **"Show" menu** narrows it to one board. It is the place to find a card in a binder, chase payment and pack.

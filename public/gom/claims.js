@@ -110,7 +110,7 @@
         <div class="btn-row"><button type="submit" class="sm">Save</button><button type="button" class="sm secondary" data-act="cancel-edit">Cancel</button></div></form></td></tr>`;
     }
     const owed = owedOf(c);
-    return `<tr data-claim="${c.id}"><td>${c.status === 'confirmed' ? `<input type="checkbox" data-act="pick" data-id="${c.id}" ${picked.has(c.id) ? 'checked' : ''} aria-label="Select ${esc(c.label)}">` : ''}</td><td>${esc(c.label)} ${c.setId ? '<span class="pill">set part</span>' : ''}${c.is_fixed ? '<span class="pill">fixed</span>' : ''}${c.is_direct ? '<span class="pill">assigned</span>' : ''}</td>
+    return `<tr data-claim="${c.id}"><td>${c.status === 'confirmed' ? `<input type="checkbox" data-act="pick" data-id="${c.id}" ${picked.has(c.id) ? 'checked' : ''} aria-label="Select ${esc(c.label)}">` : ''}</td><td>${c.cardThumb ? `<img class="thumb sm" src="${esc(c.cardThumb)}" alt="" data-card-thumb loading="lazy" style="float:left; margin-right:8px; width:40px; border-radius:4px">` : ''}${esc(c.label)} ${c.setId ? '<span class="pill">set part</span>' : ''}${c.is_fixed ? '<span class="pill">fixed</span>' : ''}${c.is_direct ? '<span class="pill">assigned</span>' : ''}</td>
       <td>${statusPill(c.status)}</td>
       <td>${c.status === 'cancelled' ? '<span class="sub">—</span>' : `<select data-act-change="pipeline" data-id="${c.id}">${PIPELINE.map((p) => `<option ${p === c.pipeline ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>`}</td>
       <td class="nowrap">${c.priceTbc ? '<span class="pill warn">Price TBC</span>' : ''}${CATS.map(([k, name]) => (c.costs[k]?.cost || c.costs[k]?.paid) ? `<div class="sub">${name} ${money(c.costs[k].cost)} <span class="${c.costs[k].paid >= c.costs[k].cost ? '' : 'pill warn'}">paid ${money(c.costs[k].paid)}</span></div>` : '').join('')}</td>
@@ -127,7 +127,7 @@
     const first = g[0], ids = g.map((c) => c.id), key = `g${ids[0]}x${ids.length}`, isOpen = openGroups.has(key);
     const owed = g.reduce((s, c) => s + owedOf(c), 0);
     return `<tr data-group="${key}"><td><input type="checkbox" data-act="pick-person" data-ids="${ids.join(',')}" ${ids.every((i) => picked.has(i)) ? 'checked' : ''} aria-label="Select all ${ids.length} of ${esc(first.label)}"></td>
-      <td>${esc(first.label)} <span class="pill" data-times>×${ids.length}</span> <button class="ghost sm" data-act="group-toggle" data-key="${key}" style="border:0">${isOpen ? 'Hide the' : 'Show the'} ${ids.length}</button></td>
+      <td>${first.cardThumb ? `<img class="thumb sm" src="${esc(first.cardThumb)}" alt="" data-card-thumb loading="lazy" style="float:left; margin-right:8px; width:40px; border-radius:4px">` : ''}${esc(first.label)} <span class="pill" data-times>×${ids.length}</span> <button class="ghost sm" data-act="group-toggle" data-key="${key}" style="border:0">${isOpen ? 'Hide the' : 'Show the'} ${ids.length}</button></td>
       <td>${statusPill('confirmed')}</td>
       <td><select data-act-change="pipeline-group" data-ids="${ids.join(',')}" aria-label="Stage for all ${ids.length}">${PIPELINE.map((p) => `<option ${p === first.pipeline ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select></td>
       ${costsCell(first).replace('</td>', '<div class="sub">each</div></td>')}

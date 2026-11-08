@@ -138,7 +138,7 @@
     if (!line) {
       if (delta < 0) return;
       const price = member ? (f.item.members.find((m) => m.name === member)?.price ?? f.item.price) : f.item.price;
-      line = { key, itemId, orderTitle: f.order.title, title: f.item.title, price, qty: 0, member: member || null, variant: variant || null, isSet: f.item.type === 'set',
+      line = { key, itemId, orderTitle: f.order.title, title: f.item.title, price, qty: 0, member: member || null, variant: variant || null, isSet: f.item.type === 'set', thumb: f.order.isCards ? (f.item.image?.thumb || null) : null,
         label: `${f.item.title}${member ? ` — ${member}` : ''}${variant ? ` (${variant})` : ''}` };
       basket.push(line);
     }
@@ -269,7 +269,7 @@
   function basketPage(message) {
     const handle = typedHandle || store.get('sos_handle', '');
     view.innerHTML = `<div class="crumb"><a href="#/">← Keep browsing</a></div>${basket.length ? stepsHtml(2) : ''}<h1 style="margin:4px 0 10px">Your selections</h1>
-      ${basket.length ? `<div class="card">${basket.map((l) => `<div class="itemrow"><div class="grow">${esc(l.label)}<div class="sub">${esc(l.orderTitle)} · ${eachText(l.price)}</div></div>
+      ${basket.length ? `<div class="card">${basket.map((l) => `<div class="itemrow">${l.thumb ? `<img class="thumb sm" src="${esc(l.thumb)}" alt="" width="40" data-card-thumb style="margin-right:10px; border-radius:4px">` : ''}<div class="grow">${esc(l.label)}<div class="sub">${esc(l.orderTitle)} · ${eachText(l.price)}</div></div>
         <span class="stepper">${l.shopId ? `<button class="secondary" data-act="shopdec" data-shop="${l.shopId}" ${l.option ? `data-option="${esc(l.option)}"` : ''} aria-label="One fewer">−</button><span>${l.qty}</span><button data-act="shopinc" data-shop="${l.shopId}" ${l.option ? `data-option="${esc(l.option)}"` : ''} ${l.qty >= shopLeft(l) ? 'disabled' : ''} aria-label="One more">+</button>` : `<button class="secondary" data-act="dec" data-item="${l.itemId}" ${l.member ? `data-member="${esc(l.member)}"` : ''} ${l.variant ? `data-variant="${esc(l.variant)}"` : ''} aria-label="One fewer">−</button><span>${l.qty}</span><button data-act="inc" data-item="${l.itemId}" ${l.member ? `data-member="${esc(l.member)}"` : ''} ${l.variant ? `data-variant="${esc(l.variant)}"` : ''} ${l.qty >= MAX_QTY ? 'disabled' : ''} aria-label="One more">+</button>`}</span>
         <strong class="nowrap" style="min-width:70px; text-align:right">${l.price == null ? 'TBC' : money(l.qty * l.price)}</strong></div>`).join('')}
         <div class="itemrow" style="font-weight:700"><div class="grow">Total</div><div>${totalText()}</div></div>
@@ -297,6 +297,7 @@
     view.innerHTML = `${stepsHtml(4)}<h1 style="margin:8px 0 6px">Claims submitted</h1>
       <div class="card"><p>Thanks, <strong>@${esc(h.name)}</strong>! Your claims are in:</p><ul style="margin:0; padding-left:20px">${d.lines.map((l) => `<li>${l.qty} × ${esc(l.label)} <span class="sub">${l.price == null ? 'Price TBC' : money(l.qty * l.price)}</span></li>`).join('')}</ul>
       ${d.placements.length ? `<p class="sub" style="margin:10px 0 0"><strong>Where your set parts went:</strong> ${d.placements.map((x) => `${esc(x.member)} — Set ${x.setNumber}`).join(' · ')}</p>` : ''}
+      ${d.payBy ? `<p class="sub" data-pay-by style="margin:10px 0 0"><strong>Pay by ${fmtDate(d.payBy)}</strong> for what is held for you right away (cards in hand and shop items) — My orders shows how to pay.</p>` : ''}
       <p class="sub" style="margin-bottom:0">Total ${totalText(d.lines)}.${tbcN(d.lines) ? ' Items marked Price TBC cost nothing until their price is confirmed — you\'ll see it in My orders once it is.' : ''} ${d.lines.some((l) => l.shopId) ? `Your shop items are held for you — pay within ${Math.min(...d.lines.filter((l) => l.shopId).map((l) => l.payDays))} day${Math.min(...d.lines.filter((l) => l.shopId).map((l) => l.payDays)) === 1 ? '' : 's'} (you'll find how in My orders).${d.lines.some((l) => !l.shopId) ? ' The rest are requests for now — the GOM will confirm them, then you can pay.' : ''}` : "They're requests for now — the GOM will confirm them, then you'll be able to pay."}</p></div>
       <div id="follow">${follow}</div><p><a href="#/">← Back to group orders</a></p>`;
   }
@@ -365,7 +366,7 @@
         return basketPage(errText(r));
       }
       store.set('sos_handle', handle); typedHandle = '';
-      done = { handle: r.json.handle, lines: basket.slice(), total: total(), placements: r.json.placements || [] };
+      done = { handle: r.json.handle, lines: basket.slice(), total: total(), placements: r.json.placements || [], payBy: r.json.payBy || null };
       store.sset('sos_done', { at: Date.now(), done });
       basket = []; together = {}; saveBasket();
       location.hash = '#/done';
