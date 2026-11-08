@@ -2,8 +2,8 @@
 (function () {
   const SITE = (window.SITE = {});
 
-  // Small line icons (they take the text colour of whatever holds them, so they follow light and dark mode). SITE.icon('shop') is the rounded tile used on the home page cards.
-  const svg = (inner) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${inner}</svg>`;
+  // Small line icons (they take the text colour of whatever holds them, so they follow light and dark mode). Each drawing has a SIZE OF ITS OWN (width/height 26) — an inline SVG with none fills the whole width of its container, which is what happens if the browser still has an old stylesheet. SITE.icon('shop') is the rounded tile used on the home page cards.
+  const svg = (inner) => `<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${inner}</svg>`;
   SITE.icons = {
     shop: svg('<path d="M5.5 8h13l-1 12h-11z"/><path d="M9 8V6.5a3 3 0 0 1 6 0V8"/>'),
     cards: svg('<rect x="3.5" y="5" width="11" height="15" rx="2" transform="rotate(-8 9 12.5)"/><rect x="9.5" y="4" width="11" height="15" rx="2" transform="rotate(8 15 11.5)"/><path d="M15 8.4l.8 1.6 1.8.3-1.3 1.2.3 1.8-1.6-.9-1.6.9.3-1.8-1.3-1.2 1.8-.3z"/>'),

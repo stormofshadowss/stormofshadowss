@@ -664,3 +664,5 @@ No migration.
 
 ### The home page icons
 No migration. The **Shop** card and the **Photocards** card on the buyers' home page each now have a small **icon tile** on the left — a **shopping bag** for the Shop and **two overlapping cards** for Photocards — so they're easy to pick out. The words and links are unchanged. The icons are drawn in the theme's own colours, so they read in **light and dark** mode, and a screen reader skips them (it just reads the words). (To add an icon for something else later, put a drawing in `SITE.icons` in `public/site/core.js` and use `SITE.icon('name')`.)
+
+**If a page looks half-updated after an upload** (for example, the new icons appear but huge and unstyled), your browser — or Cloudflare — is still using the **old stylesheet** while it has the new scripts. Purge `style.css` in Cloudflare and hard-refresh (Ctrl+Shift+R). Static files are cached for 5 minutes by the server and longer by Cloudflare. (The icons now carry a fixed size of their own, so even then they stay small.)

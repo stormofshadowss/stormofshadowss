@@ -38,3 +38,8 @@ test('THE PHOTOCARDS CARD HAS ITS OWN, DIFFERENT ICON (two cards); the words, th
 test('THE ICONS TAKE THEIR COLOUR FROM THE THEME: drawn with the text colour, no fixed colours in the drawing', async () => {
   const p = await home(); for (const tile of p.qa('.gicon')) { const svg = tile.querySelector('svg'); assert.equal(svg.getAttribute('stroke'), 'currentColor'); assert.equal(svg.getAttribute('fill'), 'none'); assert.doesNotMatch(tile.innerHTML, /#[0-9a-f]{3,6}\b|rgb\(/i, 'no fixed colour'); } assert.equal(p.qa('.gicon').length, 2); p.close();
 });
+
+test('EACH ICON HAS A SIZE OF ITS OWN, so even with an old stylesheet in the browser (no tile styling at all) it stays small instead of filling the card', async () => {
+  const p = await home(); for (const tile of p.qa('.gicon')) { const svg = tile.querySelector('svg'); const w = Number(svg.getAttribute('width')), h = Number(svg.getAttribute('height')); assert.ok(w >= 16 && w <= 40 && h >= 16 && h <= 40, `a modest fixed size (${w} × ${h})`); assert.equal(svg.getAttribute('viewBox'), '0 0 24 24'); } p.close();
+});
+
