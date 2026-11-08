@@ -13,7 +13,7 @@
   SITE.homeExtra = () => {
     const d = data(); if (!d.bundles.length) return '';
     const left = d.bundles.reduce((n, b) => n + b.left, 0);
-    return `<h2 class="kicker" style="margin-top:6px">Photocards</h2><div class="cards" style="margin-bottom:18px"><a class="gocard" href="#/cards" data-cards-home><strong>Single photocards</strong><span class="sub">${plural(d.bundles.length, 'open bundle', 'open bundles')} · ${plural(left, 'card', 'cards')} left</span></a></div>`;
+    return `<h2 class="kicker" style="margin-top:6px">Photocards</h2><div class="cards" style="margin-bottom:18px"><a class="gocard hasicon" href="#/cards" data-cards-home>${SITE.icon('cards')}<span class="gtext"><strong>Single photocards</strong><span class="sub">${plural(d.bundles.length, 'open bundle', 'open bundles')} · ${plural(left, 'card', 'cards')} left</span></span></a></div>`;
   };
 
   // ── Cards: the groups with something open, and the open bundles (a group narrows it) ──

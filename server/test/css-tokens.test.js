@@ -25,3 +25,7 @@ test('THE DARK THEME REDEFINES THE TOKENS THAT CARRY TEXT AND SURFACES, and the 
   const d = names(dark); for (const n of ['--ink', '--soft', '--paper', '--surface', '--surface-2', '--line', '--accent']) assert.ok(d.has(n), `${n} has a dark value`);
   const pop = css.match(/\.pcpop-box \{(.*?)\}/s)[1]; assert.match(pop, /background:var\(--surface\)/); assert.match(pop, /color:var\(--ink\)/); assert.doesNotMatch(pop, /#[0-9a-f]{3,6}/i, 'no fixed colour that would ignore the theme');
 });
+
+test('THE HOME PAGE ICON TILE TAKES ITS COLOURS FROM THE THEME (no fixed colour), so it reads in light and dark', () => {
+  const rule = css.match(/\.gicon \{(.*?)\}/s)[1]; for (const token of ['--surface-2', '--line', '--accent']) assert.ok(rule.includes(`var(${token})`), `.gicon uses ${token}`); assert.doesNotMatch(rule, /#[0-9a-f]{3,6}\b|rgb\(/i, 'no fixed colour');
+});

@@ -36,7 +36,7 @@
     const tabs = [['open', 'Open now'], ['soon', 'Closing soon'], ['new', 'New']].filter(([k]) => k === 'open' || sections[k].length);
     if (!tabs.some(([k]) => k === tabNow)) tabNow = 'open';
     const left = shopItems.filter((i) => i.left > 0).length;
-    const shopCard = shopItems.length ? `<h2 class="kicker" style="margin-top:6px">Shop</h2><div class="cards" style="margin-bottom:18px"><a class="gocard" href="#/shop"><strong>Shop — on hand now</strong><span class="sub">${plural(left, 'item', 'items')} available · held for you as soon as you claim</span></a></div>` : '';
+    const shopCard = shopItems.length ? `<h2 class="kicker" style="margin-top:6px">Shop</h2><div class="cards" style="margin-bottom:18px"><a class="gocard hasicon" href="#/shop">${SITE.icon('shop')}<span class="gtext"><strong>Shop — on hand now</strong><span class="sub">${plural(left, 'item', 'items')} available · held for you as soon as you claim</span></span></a></div>` : '';
     view.innerHTML = `<section class="hero"><h1>Group orders</h1>
         <p class="muted">Pick what you want and claim it with just your Instagram handle — no password, no sign-up. Storm will confirm claims, then you pay.</p></section>
       ${shopCard}

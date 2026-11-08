@@ -1,6 +1,14 @@
 // Shared bits for the joiner pages: API calls, dialogs, toasts. No build step.
 (function () {
   const SITE = (window.SITE = {});
+
+  // Small line icons (they take the text colour of whatever holds them, so they follow light and dark mode). SITE.icon('shop') is the rounded tile used on the home page cards.
+  const svg = (inner) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${inner}</svg>`;
+  SITE.icons = {
+    shop: svg('<path d="M5.5 8h13l-1 12h-11z"/><path d="M9 8V6.5a3 3 0 0 1 6 0V8"/>'),
+    cards: svg('<rect x="3.5" y="5" width="11" height="15" rx="2" transform="rotate(-8 9 12.5)"/><rect x="9.5" y="4" width="11" height="15" rx="2" transform="rotate(8 15 11.5)"/><path d="M15 8.4l.8 1.6 1.8.3-1.3 1.2.3 1.8-1.6-.9-1.6.9.3-1.8-1.3-1.2 1.8-.3z"/>'),
+  };
+  SITE.icon = (name) => `<span class="gicon" data-icon="${name}" aria-hidden="true">${SITE.icons[name] || ''}</span>`;
   SITE.esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   SITE.money = (n) => '£' + Number(n || 0).toFixed(2);
   SITE.fmtDate = (iso) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : ''); // stored ISO, shown UK style

@@ -288,3 +288,9 @@ button.avatar-link:hover .avatar-ring { filter:brightness(1.08); }
 .cthumb img { width:54px; height:76px; object-fit:cover; border-radius:4px; border:1px solid var(--line); background:var(--surface-2); }
 .cthumb b { font-weight:700; margin-top:2px; white-space:nowrap; }
 .cthumb i { position:absolute; right:2px; top:2px; width:16px; height:16px; line-height:16px; border-radius:50%; text-align:center; font-style:normal; font-weight:700; background:#1f7a33; color:#fff; }
+
+/* Home page: an icon tile on the Shop and Photocards cards (colours from the theme, so it works in light and dark) */
+a.gocard.hasicon { display:flex; align-items:center; gap:14px; }
+.gicon { flex:none; display:flex; align-items:center; justify-content:center; width:48px; height:48px; border-radius:14px; background:var(--surface-2); border:1px solid var(--line); color:var(--accent); }
+.gicon svg { width:26px; height:26px; }
+.gtext { min-width:0; }
