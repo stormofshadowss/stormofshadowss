@@ -2,7 +2,8 @@ import { stampFeeDue } from '../lib/due.js';
 import { z } from 'zod';
 import { wrap } from '../lib/http.js';
 import { requireAdmin, audit } from '../auth.js';
-import { withTx } from '../db.js';
+import { withTx, withRollback } from '../db.js';
+import { removeFromBox } from '../lib/removals.js';
 import { bad, conflict, notFound } from '../errors.js';
 import { lockJoiner, sweepCredit, reduceCost } from '../lib/ledger.js';
 import { boxSplit, splitCustoms } from '../lib/box.js';
@@ -200,5 +201,14 @@ export function boxRoutes(app, { pool }) {
       await audit(conn, req.account.id, 'box.undo', 'box', id, { items: items.length });
     });
     res.json({ ok: true });
+  }));
+
+  // Take one item out of a box it was marked as being in by mistake (works before or after the box arrives). The box's EMS and customs totals are shared out again among what's left; the item goes back to the stage you pick.
+  // `preview: true` shows what would happen and changes nothing.
+  app.post('/api/admin/boxes/:id/remove-item', admin, wrap(async (req, res) => {
+    const b = z.object({ claimId: z.number().int().positive(), stage: z.string().max(60).optional(), preview: z.boolean().optional() }).parse(req.body);
+    const run = (conn) => removeFromBox(conn, { boxId: Number(req.params.id), claimId: b.claimId, stage: b.stage, adminId: req.account.id });
+    if (b.preview) return res.json({ preview: true, ...(await withRollback(pool, run)) });
+    res.json({ ok: true, ...(await withTx(pool, run)) });
   }));
 }

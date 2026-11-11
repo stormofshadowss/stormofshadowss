@@ -3,7 +3,8 @@ import { imageOut } from '../lib/images.js';
 import { z } from 'zod';
 import { wrap } from '../lib/http.js';
 import { requireAdmin, audit } from '../auth.js';
-import { withTx } from '../db.js';
+import { withTx, withRollback } from '../db.js';
+import { removeFromParcel } from '../lib/removals.js';
 import { bad, conflict, notFound } from '../errors.js';
 import { distribute, lockJoiner, recordOverpayment, sweepCredit, creditBalance, addLedger } from '../lib/ledger.js';
 import { applyFee, removeFees, markParcelReceived, queuePosition, personWeights, resplitFees, feeModeOf } from '../lib/parcels.js';
@@ -420,6 +421,15 @@ export function adminRoutes(app, { pool, notifier }) {
   }));
 
   // Tick (or untick) items as they go in the box. No claimIds = every item in the parcel. Saved straight away.
+  // Take one item out of a shipping request that hasn't been packed (say it was marked "on hand" by mistake): it goes back to the stage you pick, its postage and packaging come off and the parcel's totals are shared out again.
+  // `preview: true` runs exactly the same thing and rolls it back, so you see who it changes before anything does.
+  app.post('/api/admin/parcels/:id/remove-item', admin, wrap(async (req, res) => {
+    const b = z.object({ claimId: z.number().int().positive(), stage: z.string().max(60).optional(), preview: z.boolean().optional() }).parse(req.body);
+    const run = (conn) => removeFromParcel(conn, { parcelId: Number(req.params.id), claimId: b.claimId, stage: b.stage, adminId: req.account.id });
+    if (b.preview) return res.json({ preview: true, ...(await withRollback(pool, run)) });
+    res.json({ ok: true, ...(await withTx(pool, run)) });
+  }));
+
   app.post('/api/admin/parcels/:id/items-packed', admin, wrap(async (req, res) => {
     const b = z.object({ packed: z.boolean(), claimIds: z.array(z.number().int().positive()).max(200).optional() }).parse(req.body);
     const id = Number(req.params.id);

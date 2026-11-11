@@ -62,7 +62,7 @@
   function boxCard(b) {
     const [cls, label] = STATUS[b.status];
     return `<div class="card" data-box="${b.id}" style="background:var(--paper)"><div class="row"><div><strong>Box #${b.id}</strong> <span class="pill ${cls}">${label}</span>
-        <div class="sub" style="margin-top:6px">${b.items.map((i) => `@${esc(i.handle)} — ${esc(i.label)}${i.emsExcluded ? ' <span class="pill" data-no-ems>no EMS</span>' : ''}${i.customsExcluded ? ' <span class="pill" data-no-customs>no customs</span>' : ''}${i.itemStatus && ITEM[i.itemStatus] ? ` <span class="pill ${ITEM[i.itemStatus][0]}">${ITEM[i.itemStatus][1]}</span>` : ''}`).join(' · ')}</div>
+        <div class="sub" style="margin-top:6px">${b.items.map((i) => `@${esc(i.handle)} — ${esc(i.label)}${i.emsExcluded ? ' <span class="pill" data-no-ems>no EMS</span>' : ''}${i.customsExcluded ? ' <span class="pill" data-no-customs>no customs</span>' : ''}${i.itemStatus && ITEM[i.itemStatus] ? ` <span class="pill ${ITEM[i.itemStatus][0]}">${ITEM[i.itemStatus][1]}</span>` : ''} <button type="button" class="ghost sm" data-act="box-remove" data-id="${b.id}" data-claim="${i.claimId}" data-handle="${esc(i.handle)}" data-label="${esc(i.label)}" title="It wasn't in this box — take it out">remove</button>`).join(' · ')}</div>
         <div class="sub">EMS total: ${money(b.emsTotal)}${b.totalWeightG ? ` · Box weight: ${b.totalWeightG}g` : ''}${b.customsTotal > 0 ? ` · Customs total: ${money(b.customsTotal)}` : ' · Customs: not added yet'}</div></div>
       <div class="btn-row" style="margin:0">${b.status === 'shipping_requested' ? `<button class="sm" data-act="enroute" data-id="${b.id}">Mark en route</button>` : ''}${b.status === 'enroute' ? `<button class="sm" data-act="arrived" data-id="${b.id}">Mark arrived</button>` : ''}${b.status !== 'arrived' ? `<button class="sm secondary" data-act="undo" data-id="${b.id}">Undo box</button>` : ''}</div></div>
       ${b.status === 'arrived' ? `<div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--line)"><strong style="font-size:.85rem">Mark ready to pack</strong>
@@ -103,6 +103,7 @@
   async function onClick(e) {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const act = b.dataset.act, id = Number(b.dataset.id);
+    if (act === 'box-remove') { if (await GOM.removeItem({ kind: 'box', id, claimId: Number(b.dataset.claim), label: b.dataset.label, handle: b.dataset.handle })) await render(root); return; }
     if (act === 'wh-view') { GOM.whView = b.dataset.view; return GOM.showTab('warehouse'); }
     if (act === 'toggle-cands') { candOpen = !candOpen; try { localStorage.setItem(OPEN_KEY, candOpen ? '1' : '0'); } catch { /* ignore */ } const body = $('#candBody', root); if (body) body.hidden = !candOpen; return syncCandSummary(); }
     if (act === 'cand-all' || act === 'cand-order' || act === 'cand-none') {       // tick every item, every item in one group order, or none

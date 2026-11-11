@@ -53,10 +53,18 @@
     if (!p.canAddItems) return '';
     const ready = S.readyItems(); if (!ready.length) return '';
     const feesSet = p.domsTotal != null || p.packagingTotal != null;
-    return `<form data-form="add-items" data-id="${p.id}" style="margin-top:10px"><label>More items ready? Add them to this request — until the GOM packs it:</label>
+    return `<form data-form="add-items" data-id="${p.id}" style="margin-top:10px"><label>Tick what to add:</label>
       ${ready.map((c) => `<label class="chk" style="margin:4px 0"><input type="checkbox" name="claim" value="${c.id}"> ${esc(c.label)} <span class="sub">${esc(c.orderTitle)}${c.storageDeadline ? ` · ${S.storageHtml(c)}` : ''}</span></label>`).join('')}
       ${feesSet ? `<p class="sub" data-add-fees-note>Postage and packaging are already set for this parcel. They'll be shared out again across all the items${p.shared?.active ? ' (and everyone sharing it)' : ''}, so what you owe on each item may change.</p>` : ''}
       <p class="msg err" data-msg hidden></p><button type="submit" class="sm" data-add-submit>Add to this request</button></form>`;
+  };
+  // AT THE TOP of the page, so nobody scrolls past it and requests a second parcel: add your newly-ready items to a request that is still waiting to be packed.
+  const addToExistingHtml = (S) => {
+    const ready = S.readyItems(); if (!ready.length) return '';
+    const open = S.parcels.filter((p) => p.canAddItems); if (!open.length) return '';
+    return `<div class="card" data-add-existing style="border:2px solid var(--accent)"><h2>Add to your existing request</h2>
+      <p class="sub" style="margin:0 0 6px">You've already asked for ${open.length === 1 ? 'a parcel' : 'parcels'} to be packed. Got more ready? Add ${ready.length === 1 ? 'it' : 'them'} here <strong>instead of requesting a new package</strong> — it saves postage, and you can add right up until it's packed.</p>
+      ${open.map((p) => `<div data-add-parcel="${p.id}" style="margin-top:12px"><strong>Parcel #${p.id}</strong> <span class="pill">${STATUS[p.status](p)}</span>${addMoreHtml(S, p)}</div>`).join('')}</div>`;
   };
   const parcelsHtml = (S) => S.parcels.length ? `<div class="card"><h2>Your parcels</h2>${S.parcels.map((p) => {
     const active = p.shared?.active, mineItems = p.items.filter((i) => i.mine);
@@ -66,7 +74,7 @@
       <strong>Parcel #${p.id}</strong> <span class="pill ${p.status === 'received' ? 'ok' : ''}">${STATUS[p.status](p)}</span>
       <div class="sub">${active ? `Your items: ${mineItems.map((i) => esc(i.label)).join(', ')}${owners.map((o) => ` · @${esc(o)}'s items: ${p.items.filter((i) => i.owner === o).map((i) => esc(i.label)).join(', ')}`).join('')}` : p.items.map((i) => esc(i.label)).join(', ')} · ${esc(p.method)}</div>
       ${feeBits.length ? `<div class="sub" data-fees>${active ? 'Your share — ' : ''}${feeBits.join(' · ')}${active ? ` <span class="muted">(${splitWords(p)})</span>` : ''}</div>` : ''}
-      ${p.lomoName ? `<div class="sub">Personalised Lomo: ${esc(p.lomoName)}</div>` : ''}${shareHtml(p)}${addMoreHtml(S, p)}</div>
+      ${p.lomoName ? `<div class="sub">Personalised Lomo: ${esc(p.lomoName)}</div>` : ''}${shareHtml(p)}</div>
       ${p.status === 'shipped' && p.canConfirm ? `<button data-act="received" data-id="${p.id}">It's arrived${active ? ' — confirms it for everyone' : ' — mark as received'}</button>` : ''}</div>`;
   }).join('')}</div>` : '';
 
@@ -98,6 +106,7 @@
     } else {
       const name = a.fullName.trim();
       body = `<form class="card" data-form="ship"><h2>Request shipping</h2>
+        ${S.parcels.some((p) => p.canAddItems) ? '<p class="sub" data-new-request-note style="margin:0 0 8px">This starts a <strong>new, separate parcel</strong> (its own postage). To put these in the request you already have, use “Add to your existing request” above.</p>' : ''}
         <label>Which items would you like sent?</label>${pickAll(ready.length)}${ready.map((c) => `<label class="chk" style="margin:6px 0"><input type="checkbox" name="claim" value="${c.id}"> ${esc(c.label)} <span class="sub">${esc(c.orderTitle)}${c.storageDeadline ? ` · ${S.storageHtml(c)}` : ''}</span></label>`).join('')}
         <div class="formgrid" style="margin-top:12px"><div><label>Shipping method (for a price quote)</label><select name="method"><option value="">Choose a method…</option>${METHODS.map((x) => `<option>${esc(x)}</option>`).join('')}</select></div></div>
         <div data-declared hidden style="margin-top:10px"><label>Declared value for customs</label>
@@ -114,7 +123,7 @@
           <label class="chk" style="margin-top:8px"><input type="checkbox" name="addressConfirmed"> This is still the correct address, email and phone number</label><a href="#/address">Change delivery details</a></div>
         <p class="msg" data-msg hidden></p><button type="submit">Request shipping for selected</button></form>`;
     }
-    view.innerHTML = `${S.crumb}<h1 style="margin:4px 0 10px">Request shipping</h1>${invitesHtml(S, ready, a)}${body}${parcelsHtml(S)}`;
+    view.innerHTML = `${S.crumb}<h1 style="margin:4px 0 10px">Request shipping</h1>${addToExistingHtml(S)}${invitesHtml(S, ready, a)}${body}${parcelsHtml(S)}`;
 
     view.onchange = (e) => {
       if (e.target.name === 'method') $('[data-declared]', view).hidden = !/^ww\b/i.test(e.target.value);

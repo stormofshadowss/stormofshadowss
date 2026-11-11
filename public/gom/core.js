@@ -26,18 +26,20 @@
   };
 
   // In-page dialogs (never the browser's own alert/confirm).
-  function dialog(message, buttons) {
+  function dialog(message, buttons, select) {
     return new Promise((resolve) => {
       const back = document.createElement('div');
       back.className = 'ui-backdrop';
-      back.innerHTML = '<div class="ui-modal" role="dialog" aria-modal="true"><p class="ui-text"></p><div class="ui-actions"></div></div>';
+      back.innerHTML = '<div class="ui-modal" role="dialog" aria-modal="true"><p class="ui-text"></p><div class="ui-pick"></div><div class="ui-actions"></div></div>';
       back.querySelector('.ui-text').textContent = message;
+      let sel = null;                                                                   // an optional drop-down: the primary button then answers with the chosen value
+      if (select) { sel = document.createElement('select'); sel.setAttribute('aria-label', 'Choose one'); for (const o of select.options) { const opt = document.createElement('option'); opt.value = o.value; opt.textContent = o.label; if (o.value === select.value) opt.selected = true; sel.appendChild(opt); } back.querySelector('.ui-pick').appendChild(sel); }
       const done = (v) => { document.removeEventListener('keydown', onKey); back.remove(); resolve(v); };
       const onKey = (e) => { if (e.key === 'Escape') done(false); };
       buttons.forEach((b) => {
         const el = document.createElement('button');
         el.textContent = b.label; if (!b.primary) el.className = 'secondary';
-        el.addEventListener('click', () => done(b.value));
+        el.addEventListener('click', () => done(sel && b.primary ? sel.value : b.value));
         back.querySelector('.ui-actions').appendChild(el);
       });
       document.addEventListener('keydown', onKey);
@@ -48,6 +50,33 @@
   GOM.inDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);          // a suggested date: today + n days
   GOM.alert = (message) => dialog(message, [{ label: 'OK', value: true, primary: true }]);
   GOM.confirm = (message, o = {}) => dialog(message, [{ label: o.cancel || 'Cancel', value: false }, { label: o.ok || 'Yes, continue', value: true, primary: true }]);
+  // Ask for one choice from a list: resolves to the chosen value, or null if cancelled.
+  GOM.choose = async (message, o) => { const v = await dialog(message, [{ label: o.cancel || 'Cancel', value: false }, { label: o.ok || 'OK', value: true, primary: true }], { options: o.options, value: o.value }); return v === false ? null : v; };
+
+  // TAKING ONE ITEM OUT of an incoming box ("it wasn't in the box") or a requested shipping list ("it wasn't on hand"): choose where it goes back to, see exactly what would change (a preview that changes nothing), then confirm.
+  // Returns true if something was removed. No email is sent — the GOM tells the person herself.
+  const STAGE_NAMES = { 'arrived at proxy / warehouse': 'Arrived at the proxy / warehouse', 'ordered via proxy / warehouse': 'Ordered via proxy / warehouse', 'awaiting fulfillment': 'Awaiting fulfillment', 'arrived at GOM': 'Arrived at the GOM', 'checking parcel': 'Checking parcel', 'ready to pack / on hand': 'Ready to pack / on hand' };
+  GOM.removeItem = async ({ kind, id, claimId, label, handle }) => {
+    const box = kind === 'box', url = `/api/admin/${box ? 'boxes' : 'parcels'}/${id}/remove-item`;
+    const stages = box ? ['arrived at proxy / warehouse', 'ordered via proxy / warehouse', 'awaiting fulfillment'] : ['arrived at proxy / warehouse', 'ordered via proxy / warehouse', 'awaiting fulfillment', 'arrived at GOM', 'checking parcel', 'ready to pack / on hand'];
+    const options = stages.map((s) => ({ value: s, label: s === 'ready to pack / on hand' ? 'Keep as ready to pack (it IS on hand)' : STAGE_NAMES[s] }));
+    const stage = await GOM.choose(`Take “${label}” (@${handle}) out of ${box ? `box #${id}` : 'this shipping request'}?\n\nWhere should it go back to?`, { options, value: stages[0], ok: 'Review…', cancel: 'Cancel' });
+    if (!stage) return false;
+    const pv = await GOM.api('POST', url, { claimId, stage, preview: true }); if (!pv.ok) { GOM.toast(GOM.errText(pv), true); return false; }
+    const p = pv.json, n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+    const lines = [`“${label}” (@${handle}) goes back to “${STAGE_NAMES[stage]}”.`];
+    if (box) lines.push(p.boxRemoved ? 'It is the last item, so the box is removed as well.' : `The box's EMS and customs are shared out again across the ${n(p.left, 'item', 'items')} still in it — the box totals stay the same.`);
+    else {
+      if (p.parcelRemoved) lines.push('It is the only item, so the whole request is removed (its postage and packaging come off).');
+      else lines.push(`Postage and packaging (if set) are shared out again across the ${n(p.left, 'item', 'items')} left — the totals stay the same.`);
+      if (p.companionRemoved) lines.push(`@${p.companionRemoved} has no items left, so they leave the parcel.`);
+    }
+    if (p.changes.length) lines.push('What changes:\n' + p.changes.map((c) => `• @${c.handle}: ${c.feeChange === 0 ? 'no change' : `${c.feeChange > 0 ? '+' : '−'}${GOM.money(Math.abs(c.feeChange))}`}${c.creditBack > 0 ? ` — the ${GOM.money(c.creditBack)} they had paid goes back to them as credit` : ''}`).join('\n'));
+    lines.push('No email is sent — you will need to tell them yourself.');
+    if (!(await GOM.confirm(lines.join('\n\n'), { ok: 'Take it out', cancel: 'Not yet' }))) return false;
+    const r = await GOM.api('POST', url, { claimId, stage }); if (!r.ok) { GOM.toast(GOM.errText(r), true); return false; }
+    GOM.toast(`Took “${label}” out${r.json.boxRemoved ? ' — and the box, as it was the last item' : r.json.parcelRemoved ? ' — and the request, as it was the only item' : ''}.`); return true;
+  };
 
   let toastTimer;
   GOM.toast = (text, isError) => {

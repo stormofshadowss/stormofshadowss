@@ -302,3 +302,5 @@ a.gocard.hasicon { display:flex; align-items:center; gap:14px; }
 .pcnav { position:absolute; top:50%; transform:translateY(-50%); width:38px; height:64px; padding:0; border:0; border-radius:8px; background:rgba(0,0,0,.55); color:#fff; font-size:1.7rem; line-height:1; cursor:pointer; }
 .pcnav.prev { left:4px; } .pcnav.next { right:4px; }
 .pcnav:hover, .pcnav:focus-visible { background:rgba(0,0,0,.8); outline:2px solid var(--accent); }
+.ui-pick { margin:10px 0 2px; }
+.ui-pick select { width:100%; }
