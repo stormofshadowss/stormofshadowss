@@ -32,8 +32,8 @@ export async function removeFromBox(conn, { boxId, claimId, stage = BOX_STAGES[0
   for (const { joiner_id } of who) await lockJoiner(conn, joiner_id);                                       // the people first, lowest id first
   const [[bx]] = await conn.query('SELECT id, status, ems_total, customs_total, total_weight_g FROM boxes WHERE id = ? FOR UPDATE', [boxId]);
   const [items] = await conn.query(
-    `SELECT bi.claim_id AS id, bi.ems_share AS ems, bi.customs_share AS customs, bi.ems_excluded AS emsExcluded, bi.customs_excluded AS customsExcluded, c.joiner_id AS joinerId, c.weight_g AS weight, c.size_bucket AS size, c.label, j.instagram_handle AS handle, (SELECT cost FROM claim_costs WHERE claim_id = c.id AND category = 'initials') AS price
-       FROM box_items bi JOIN claims c ON c.id = bi.claim_id JOIN joiners j ON j.id = c.joiner_id WHERE bi.box_id = ? ORDER BY bi.claim_id`, [boxId]);
+    `SELECT bi.claim_id AS id, bi.ems_share AS ems, bi.customs_share AS customs, bi.ems_excluded AS emsExcluded, bi.customs_excluded AS customsExcluded, c.joiner_id AS joinerId, COALESCE(c.weight_g, it.weight_g) AS weight, c.size_bucket AS size, c.label, j.instagram_handle AS handle, (SELECT cost FROM claim_costs WHERE claim_id = c.id AND category = 'initials') AS price
+       FROM box_items bi JOIN claims c ON c.id = bi.claim_id LEFT JOIN items it ON it.id = c.item_id JOIN joiners j ON j.id = c.joiner_id WHERE bi.box_id = ? ORDER BY bi.claim_id`, [boxId]);
   const gone = items.find((i) => i.id === claimId); if (!gone) throw notFound("That item isn't in this box");
   const [[par]] = await conn.query("SELECT p.id FROM parcel_items pi JOIN parcels p ON p.id = pi.parcel_id WHERE pi.claim_id = ? AND p.status IN ('requested', 'packed', 'shipped') LIMIT 1", [claimId]);
   if (par) throw conflict(`“${gone.label}” (@${gone.handle}) is already in shipping request #${par.id} — take it out of the request first (Packing tab), then out of the box.`, 'in_parcel');

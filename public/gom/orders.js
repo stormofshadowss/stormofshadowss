@@ -58,7 +58,8 @@
     </form>`;
   }
 
-  function itemSummary(it) {
+  const itemSummary = (it) => itemSummaryCore(it) + (it.weightG ? `<div class="sub" data-item-weight>${it.weightG} g each</div>` : '');
+  function itemSummaryCore(it) {
     if (it.type === 'set') {
       const mixed = it.members.some((m) => m.price !== it.price);
       return `${it.members.length} parts${mixed && it.wholeSetPrice != null ? ' · ' + money(it.wholeSetPrice) + ' whole set' : ''}${it.requiresFullSet ? ' · <span class="pill warn">every part required</span>' : ''}
@@ -88,6 +89,7 @@
           <div class="sub">Fix a spelling, or give a size its own price (blank = the item's price) — the new name is carried through to any claims already made, and unsecured claims on a changed price switch to it (secured ones keep theirs). To add or remove members, make a new item.</div>
           ${it.members.some((m) => SPLIT.test(m.name)) ? '<div class="btn-row" style="margin-top:6px"><button type="button" class="sm secondary" data-act="split-prices">Move “name=price” into the name and price boxes</button></div>' : ''}</div>` : ''}
         <div class="full">${GOM.pictureControl('item', it.id, it.image, 'Item picture')}</div>
+        <div><label>Weight of one (g), optional</label><input name="weightG" type="number" min="1" max="100000" step="1" value="${it.weightG ?? ''}" placeholder="e.g. 120" style="max-width:130px"><div class="sub">Carries over to the Warehouse. Changing it reaches every claim that isn't in a box yet (one you typed a weight on keeps its own).</div></div>
         ${dateInput('paymentDeadline', it.ownPaymentDeadline, "Pay by (blank = the GO's date)")}
         <div>${dateInput('closeDate', it.closeDate, "Closes (blank = when the group order closes)")}<div class="sub">Claims on this item stop after this day (UK time).${currentOrder().closeDate ? ` It can't be later than the group order's ${fmtDate(currentOrder().closeDate)}.` : ''}</div></div>
         <div class="full" data-box-ticks><label class="chk" style="margin:4px 0"><input type="checkbox" name="noEms" ${it.noEms ? 'checked' : ''}> No EMS when boxed</label> <label class="chk" style="margin:4px 0 4px 14px"><input type="checkbox" name="noCustoms" ${it.noCustoms ? 'checked' : ''}> No customs when boxed</label><div class="sub">For things like free bonus cards: when this goes in a box it carries no share of the EMS or customs (the other items carry it). You can still change it for a particular box in the Warehouse.</div></div>
@@ -126,6 +128,7 @@
         <div><label>Price (£)</label><input name="price" type="number" step="0.01" min="0" required><label class="chk" style="display:flex; margin-top:6px"><input type="checkbox" name="priceTbc" > Price to be confirmed (TBC)</label><div class="sub">Tick TBC if you're hosting before the price is final — people can claim, and you set the price later.</div></div>
         <div class="full"><label>Description (optional — shown to joiners on the item)</label><textarea name="description" rows="3" maxlength="2000" style="width:100%; padding:10px 12px; border:1.5px solid var(--line); border-radius:8px; font:inherit" placeholder="Contents, size, edition, release notes, anything joiners should know…"></textarea></div>
         <div data-only="size,normal,random,independent,set"><label>Size (for postage)</label><select name="sizeBucket"><option>XS</option><option>S</option><option selected>M</option><option>L</option><option>XL</option></select></div>
+        <div data-only="size,normal,random,independent,set"><label>Weight of one (g), optional</label><input name="weightG" type="number" min="1" max="100000" step="1" placeholder="e.g. 120" style="max-width:130px"><div class="sub">If you know it. It carries over to the Warehouse (the box's EMS split) so you don't type it again — you can still change it for one claim there.</div></div>
         ${dateInput('paymentDeadline', '', "Pay by (blank = the GO's date)")}
         <div>${dateInput('closeDate', '', "Closes (blank = when the group order closes)")}<div class="sub">Claims on this item stop after this day (UK time) — use it when an item closes before the rest of the order.</div></div>
         <div class="full" data-box-ticks><label class="chk" style="margin:4px 0"><input type="checkbox" name="noEms"> No EMS when boxed</label> <label class="chk" style="margin:4px 0 4px 14px"><input type="checkbox" name="noCustoms"> No customs when boxed</label><div class="sub">For things like free bonus cards: when this goes in a box it carries no share of the EMS or customs (the other items carry it). You can still change it for a particular box in the Warehouse.</div></div>
@@ -352,7 +355,7 @@
       let extra;
       try { extra = parseExtra(type, val(form, 'extra')); } catch (err) { return showMsg(form, err.message); }
       const body = {
-        type, title: val(form, 'title'), description: val(form, 'description'), ...priceBody(form), sizeBucket: val(form, 'sizeBucket'),
+        type, title: val(form, 'title'), description: val(form, 'description'), ...priceBody(form), sizeBucket: val(form, 'sizeBucket'), weightG: val(form, 'weightG') === '' ? null : Number(val(form, 'weightG')),
         paymentDeadline: val(form, 'paymentDeadline') || null, closeDate: val(form, 'closeDate') || null, proxy: val(form, 'proxy') || null, ...extra,
         noEms: form.elements.noEms.checked, noCustoms: form.elements.noCustoms.checked, hidden: form.elements.hidden.checked, purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), limitScope: ['set', 'independent', 'size'].includes(type) ? val(form, 'limitScope') : 'item',
       };
@@ -380,7 +383,7 @@
       }
       const r = await api('PATCH', `/api/admin/items/${form.dataset.id}`, {
         ...(renames.length ? { renameMembers: renames } : {}), ...(prices.length ? { memberPrices: prices } : {}),
-        title: val(form, 'title'), ...priceBody(form), description: val(form, 'description'),
+        title: val(form, 'title'), ...priceBody(form), description: val(form, 'description'), weightG: val(form, 'weightG') === '' ? null : Number(val(form, 'weightG')),
         paymentDeadline: val(form, 'paymentDeadline') || null, closeDate: val(form, 'closeDate') || null, proxy: val(form, 'proxy') || null,
         noEms: form.elements.noEms.checked, noCustoms: form.elements.noCustoms.checked, hidden: form.elements.hidden.checked, purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), ...(form.elements.limitScope ? { limitScope: val(form, 'limitScope') } : {}),
       });

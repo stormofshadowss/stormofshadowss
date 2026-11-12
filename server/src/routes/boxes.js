@@ -21,7 +21,7 @@ export function boxRoutes(app, { pool }) {
   app.get('/api/admin/boxes/candidates', admin, wrap(async (req, res) => {
     const [rows] = await pool.query(
       `SELECT c.id AS claimId, j.instagram_handle AS handle, c.label, COALESCE(go.title, 'Shop (on hand)') AS orderTitle,
-              c.weight_g AS weightG, c.size_bucket AS size, ${PRICE} AS price, COALESCE(it.no_ems, 0) AS noEms, COALESCE(it.no_customs, 0) AS noCustoms
+              COALESCE(c.weight_g, it.weight_g) AS weightG, c.weight_g AS ownWeightG, it.weight_g AS itemWeightG, c.size_bucket AS size, ${PRICE} AS price, COALESCE(it.no_ems, 0) AS noEms, COALESCE(it.no_customs, 0) AS noCustoms
          FROM claims c JOIN joiners j ON j.id = c.joiner_id LEFT JOIN group_orders go ON go.id = c.order_id LEFT JOIN items it ON it.id = c.item_id
         WHERE c.status = 'confirmed' AND c.pipeline = ? AND c.box_id IS NULL ORDER BY go.id, j.instagram_handle, c.id`, [ARRIVED]);
     res.json({ candidates: rows.map((c) => ({ ...c, noEms: !!c.noEms, noCustoms: !!c.noCustoms })) });
@@ -35,7 +35,7 @@ export function boxRoutes(app, { pool }) {
       for (const { joiner_id } of who) await lockJoiner(conn, joiner_id);
     }
     const [rows] = await conn.query(
-      `SELECT c.id, c.joiner_id AS joinerId, c.status, c.pipeline, c.box_id AS boxId, c.weight_g AS weight, c.size_bucket AS size, c.label, ${PRICE} AS price, COALESCE(it.no_ems, 0) AS noEms, COALESCE(it.no_customs, 0) AS noCustoms
+      `SELECT c.id, c.joiner_id AS joinerId, c.status, c.pipeline, c.box_id AS boxId, COALESCE(c.weight_g, it.weight_g) AS weight, c.size_bucket AS size, c.label, ${PRICE} AS price, COALESCE(it.no_ems, 0) AS noEms, COALESCE(it.no_customs, 0) AS noCustoms
          FROM claims c LEFT JOIN items it ON it.id = c.item_id WHERE c.id IN (?) ORDER BY c.id ${lock ? 'FOR UPDATE' : ''}`, [sorted]);
     if (rows.length !== sorted.length) throw notFound('One of those items doesn\'t exist');
     const notOk = rows.filter((r) => r.status !== 'confirmed' || r.pipeline !== ARRIVED || r.boxId);

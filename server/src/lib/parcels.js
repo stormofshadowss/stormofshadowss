@@ -39,7 +39,7 @@ export async function personWeights(conn, parcelId) {
   const [[parcel]] = await conn.query('SELECT joiner_id, weight_g FROM parcels WHERE id = ?', [parcelId]);
   const [comps] = await conn.query('SELECT joiner_id, weight_g FROM parcel_companions WHERE parcel_id = ?', [parcelId]);
   const explicit = new Map([[parcel.joiner_id, parcel.weight_g], ...comps.map((c) => [c.joiner_id, c.weight_g])]);
-  const [items] = await conn.query('SELECT c.joiner_id AS joinerId, c.weight_g AS weight, c.size_bucket AS size FROM parcel_items pi JOIN claims c ON c.id = pi.claim_id WHERE pi.parcel_id = ?', [parcelId]);
+  const [items] = await conn.query('SELECT c.joiner_id AS joinerId, COALESCE(c.weight_g, it.weight_g) AS weight, c.size_bucket AS size FROM parcel_items pi JOIN claims c ON c.id = pi.claim_id LEFT JOIN items it ON it.id = c.item_id WHERE pi.parcel_id = ?', [parcelId]);
   const estimate = new Map();
   for (const it of items) estimate.set(it.joinerId, (estimate.get(it.joinerId) || 0) + (it.weight ?? SIZE_WEIGHTS[it.size] ?? SIZE_WEIGHTS.M));
   const out = new Map();

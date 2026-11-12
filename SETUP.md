@@ -691,3 +691,11 @@ No migration. On the joiner's **Request shipping** page, the option to **add new
 - It **only appears when it can be used**: when they have ready items not yet in a request **and** a request that can still take items. Once there's nothing left to add (or the request is packed) it disappears. Someone who has only been *invited* to a parcel doesn't see it.
 - The **new-request form** now starts with a short note whenever there's an open request: *"This starts a new, separate parcel (its own postage). To put these in the request you already have, use 'Add to your existing request' above."*
 - The form is **no longer** inside the parcel's card (it appears once, at the top). Everything else about adding is as before (postage re-shared, flagged for you, etc.).
+
+### Item weights that carry over to the Warehouse
+Run migration **`041_item_weight.sql`** (adds the weight to items). For things you order regularly and know the weight of:
+- **Group Orders → add or edit an item → "Weight of one (g), optional".** Type what **one** of it weighs in grams (for a set, one part). It shows in the items list as **"120 g each"**. Leave it blank if you don't know — nothing changes for those.
+- **It carries over to the Warehouse.** When a claim on that item has arrived, the **Weight (g)** box in the Warehouse table is **already filled in** (in *italics*, with a hint "From the item's weight"). The box's **EMS split uses it as an exact weight** (not a size estimate), and so does the **weight-based postage sharing** for shared worldwide parcels, and the re-share when you take an item out of a box.
+- **You can still correct one claim:** type a different number in the Warehouse and **just that claim** uses it (it stops being italic). **Clear the box** and it goes back to the item's weight.
+- **If you later change or clear the item's weight**, it reaches **every claim that isn't in a box yet** (a claim with its own typed weight keeps it). **A box that has already been made keeps the shares it was made with.**
+- Joiners never see the weight. Photocard bundles aren't affected (their cards have no weight unless you add one).
