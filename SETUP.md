@@ -699,3 +699,8 @@ Run migration **`041_item_weight.sql`** (adds the weight to items). For things y
 - **You can still correct one claim:** type a different number in the Warehouse and **just that claim** uses it (it stops being italic). **Clear the box** and it goes back to the item's weight.
 - **If you later change or clear the item's weight**, it reaches **every claim that isn't in a box yet** (a claim with its own typed weight keeps it). **A box that has already been made keeps the shares it was made with.**
 - Joiners never see the weight. Photocard bundles aren't affected (their cards have no weight unless you add one).
+
+### Big boxes — up to 1000 items
+No migration. A box (Warehouse → Select items → Create box) used to stop at **200 items** with *"claimIds: Array must contain at most 200 element(s)"*, which is awkward when it's a bag of small things. A box can now hold **up to 1000 items**, and **marking a big box's items "ready to pack" / "checking" when it arrives** and **ticking items packed in a big parcel** accept up to 1000 at a time too. Past 1000 the message is plain: *"A box can hold at most 1000 items — split it into two boxes."*
+
+**One thing to know:** a **joiner's own shipping request is still limited to 50 items** (and so is adding items to a request, or a friend joining one) — that limit is separate and unchanged. If joiners with lots of small things hit it, tell me and I can raise it.

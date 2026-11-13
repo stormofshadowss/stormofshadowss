@@ -431,7 +431,7 @@ export function adminRoutes(app, { pool, notifier }) {
   }));
 
   app.post('/api/admin/parcels/:id/items-packed', admin, wrap(async (req, res) => {
-    const b = z.object({ packed: z.boolean(), claimIds: z.array(z.number().int().positive()).max(200).optional() }).parse(req.body);
+    const b = z.object({ packed: z.boolean(), claimIds: z.array(z.number().int().positive()).max(1000, 'At most 1000 items at a time').optional() }).parse(req.body);
     const id = Number(req.params.id);
     const out = await withTx(pool, async (conn) => {
       const [[p]] = await conn.query('SELECT status FROM parcels WHERE id = ? FOR UPDATE', [id]);

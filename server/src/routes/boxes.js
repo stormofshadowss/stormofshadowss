@@ -11,7 +11,10 @@ import { round2, splitAmount } from '../lib/money.js';
 
 const ARRIVED = 'arrived at proxy / warehouse';
 const money = z.number().min(0).max(100000).refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, 'At most 2 decimal places');
-const ids = z.array(z.number().int().positive()).min(1).max(200);
+// A box can hold a lot of small things (a bag of photocards is dozens of items): up to 1000 at once. Past that, split it into two boxes.
+export const MAX_BOX_ITEMS = 1000;
+const TOO_MANY = `A box can hold at most ${MAX_BOX_ITEMS} items — split it into two boxes.`;
+const ids = z.array(z.number().int().positive()).min(1).max(MAX_BOX_ITEMS, TOO_MANY);
 const PRICE = "(SELECT cost FROM claim_costs WHERE claim_id = c.id AND category = 'initials')";
 
 export function boxRoutes(app, { pool }) {
@@ -128,7 +131,7 @@ export function boxRoutes(app, { pool }) {
   // After it arrives: tick what's actually fine (it becomes ready to pack, which starts its storage clock); anything you leave
   // unticked stays at "checking parcel". Can be run again later as problems get sorted.
   app.post('/api/admin/boxes/:id/ready', admin, wrap(async (req, res) => {
-    const b = z.object({ ready: z.array(z.number().int().positive()).max(200), checking: z.array(z.number().int().positive()).max(200) }).parse(req.body);
+    const b = z.object({ ready: z.array(z.number().int().positive()).max(MAX_BOX_ITEMS, TOO_MANY), checking: z.array(z.number().int().positive()).max(MAX_BOX_ITEMS, TOO_MANY) }).parse(req.body);
     const id = Number(req.params.id);
     await withTx(pool, async (conn) => {
       const [[bx]] = await conn.query('SELECT status FROM boxes WHERE id = ? FOR UPDATE', [id]);
