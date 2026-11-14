@@ -74,8 +74,8 @@
     const inB = room().qtyOf(box.itemId), max = Math.min(box.left, 20), list = availableCards(), at = list.findIndex((x) => x.box.id === box.id), many = list.length > 1;
     return `<div class="pcpop-box"><button type="button" class="pcpop-x" data-cact="pop-close" aria-label="Close">×</button>
       <div class="pcpop-img">${box.crop ? `<img src="${esc(box.crop.url)}" alt="Card ${box.number}">` : ''}${many ? '<button type="button" class="pcnav prev" data-cact="pop-prev" aria-label="Previous available card">‹</button><button type="button" class="pcnav next" data-cact="pop-next" aria-label="Next available card">›</button>' : ''}</div>
-      <h2 style="margin:8px 0 2px">Card ${box.number} <span class="sub">· ${esc(bd.title)}</span></h2>${many && at >= 0 ? `<p class="sub" data-pop-pos style="margin:0 0 4px">${at + 1} of ${list.length} still available</p>` : ''}<p class="pcprice" data-pop-price>${money(box.price)}</p>
-      <p class="sub" data-pop-left>${box.qty > 1 ? `${box.left} of ${box.qty} left` : 'Only 1 — first come, first served'}</p>${box.note ? `<p data-pop-note>${esc(box.note)}</p>` : ''}
+      <h2 style="margin:8px 0 2px">Card ${box.number} <span class="sub">· ${esc(bd.title)}</span></h2><p class="pcprice" data-pop-price>${money(box.price)}</p>
+      <p class="pcleft" data-pop-left>${box.qty > 1 ? `${box.left} left` : 'Only 1 — first come, first served'}</p>${box.note ? `<p data-pop-note>${esc(box.note)}</p>` : ''}
       ${max > 1 ? `<div class="stepper" style="margin:8px 0"><button type="button" class="secondary" data-cact="pop-dec" aria-label="One fewer">−</button><span data-pop-qty>${inB || 1}</span><button type="button" class="secondary" data-cact="pop-inc" aria-label="One more">+</button></div>` : ''}
       <div class="btn-row"><button type="button" data-cact="pop-save">${inB ? 'Update basket' : 'Add to basket'}</button>${inB ? '<button type="button" class="secondary" data-cact="pop-remove">Remove from basket</button>' : ''}<button type="button" class="secondary" data-cact="pop-close">Close</button></div></div>`;
   }

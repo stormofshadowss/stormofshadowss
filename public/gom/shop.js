@@ -72,7 +72,7 @@
         <div class="sub">${money(it.price)} · ${it.claimed} of ${it.qty} claimed · <strong>${it.left} left</strong> · ${it.payDays} day${it.payDays === 1 ? '' : 's'} to pay · size ${esc(it.size)} · <span data-artist>${groupName(it.groupId) ? esc(groupName(it.groupId)) : '<em>no artist yet</em>'}</span></div>
         ${it.options ? `<div class="sub" data-options>${esc(it.optionLabel)}s: ${it.options.map((o) => `${esc(o.name)} ${o.left ? `${o.left} left` : 'sold out'} (of ${o.qty})${o.ownPrice != null ? ` · ${money(o.ownPrice)}` : ''}`).join(' · ')}</div>` : ''}
         ${it.notes ? `<div class="sub">${esc(it.notes)}</div>` : ''}</div>
-      <div class="btn-row" style="margin:0"><button class="sm secondary" data-act="edit" data-id="${it.id}">Edit</button><button class="sm secondary" data-act="${it.active ? 'hide' : 'show'}" data-id="${it.id}">${it.active ? 'Hide' : 'Show'}</button></div></div>
+      <div class="btn-row" style="margin:0"><button class="sm secondary" data-act="edit" data-id="${it.id}">Edit</button><button class="sm secondary" data-act="${it.active ? 'hide' : 'show'}" data-id="${it.id}">${it.active ? 'Hide' : 'Show'}</button><button class="sm secondary danger" data-act="delete" data-id="${it.id}">Delete</button></div></div>
       ${it.claims.length ? `<div style="margin-top:8px">${it.claims.map(claimRow).join('')}</div>` : ''}</div>`;
   }
 
@@ -104,6 +104,18 @@
     }
     if (act === 'edit') { editing = id; return draw(); }
     if (act === 'cancel-edit') { editing = null; return draw(); }
+    if (act === 'delete') {                                                   // gone for good if nobody ever claimed it; otherwise off every list but kept behind the scenes for its claims
+      const it = items.find((x) => x.id === id); if (!it) return;
+      const n = it.claimRows || 0, plural = n === 1 ? '' : 's';
+      const ok = await GOM.confirm(n
+        ? `Remove “${it.title}” from your lists?\n\n${n} claim${plural} (including any that were cancelled) point${n === 1 ? 's' : ''} at it, so it can't be erased completely. It disappears from the shop and from your Stock list — even with “Show hidden items” — but is kept behind the scenes so ${n === 1 ? 'that claim' : 'those claims'}, payments and packing carry on as normal.\n\nThis can't be undone.`
+        : `Delete “${it.title}” for good?\n\nNobody has claimed it, so it is removed completely — with its options and its picture.\n\nThis can't be undone.`, { ok: n ? 'Remove it' : 'Delete it', cancel: 'Keep it' });
+      if (!ok) return;
+      const r = await api('DELETE', `/api/admin/shop/${id}`);
+      if (r.ok) { picked.delete(id); if (editing === id) editing = null; }
+      await render(root); GOM.refreshBadges();
+      return GOM.toast(r.ok ? (r.json.archived ? `Removed “${it.title}” from your lists — kept behind the scenes for its ${r.json.claims} claim${r.json.claims === 1 ? '' : 's'}.` : `Deleted “${it.title}”.`) : errText(r), !r.ok);
+    }
     if (act === 'hide' || act === 'show') {
       const r = await api('PATCH', `/api/admin/shop/${id}`, { active: act === 'show' });
       await render(root); GOM.refreshBadges();

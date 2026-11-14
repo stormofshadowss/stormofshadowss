@@ -58,7 +58,7 @@ test('A BUNDLE\'S BOARD: a tag on every card, an X (and not clickable) on taken 
 
 test('THE POP-UP: the card close up with price and copies left; a stepper limited by what is left; Add / Update / Remove basket; Esc, the × and the backdrop close it', async () => {
   const L = await live({ boxes: [box(0, { qty: 3, price: 4 }), box(1, { price: 2.5 })], note: 'corner ding' }); const p = await site(); await go(p, `#/cards/bundle/${L.b}`);
-  const h1 = hot(p, L.boxOf(1).id); await p.click(h1); const pop = p.q('.pcpop'); assert.ok(pop); assert.equal(pop.querySelector('img').getAttribute('src'), L.boxOf(1).crop.url); assert.equal(p.text(p.q('[data-pop-price]')), '£4.00'); assert.equal(p.text(p.q('[data-pop-left]')), '3 of 3 left'); assert.equal(p.text(p.q('[data-pop-note]')), 'corner ding');
+  const h1 = hot(p, L.boxOf(1).id); await p.click(h1); const pop = p.q('.pcpop'); assert.ok(pop); assert.equal(pop.querySelector('img').getAttribute('src'), L.boxOf(1).crop.url); assert.equal(p.text(p.q('[data-pop-price]')), '£4.00'); assert.equal(p.text(p.q('[data-pop-left]')), '3 left'); assert.equal(p.text(p.q('[data-pop-note]')), 'corner ding');
   assert.equal(p.text(p.q('[data-pop-qty]')), '1'); for (let i = 0; i < 4; i++) await p.click(p.q('[data-cact="pop-inc"]')); assert.equal(p.text(p.q('[data-pop-qty]')), '3', 'can\'t take more than are left'); await p.click(p.q('[data-cact="pop-dec"]')); await p.click(p.q('[data-cact="pop-inc"]'));
   await p.click(p.q('[data-cact="pop-save"]')); assert.equal(p.q('.pcpop'), null, 'closed after adding'); assert.equal(p.text(p.q('#basketPill')), 'Basket (3) · £12.00'); assert.equal(p.text(p.q('#pcBar')), 'Review basket (3) · £12.00'); assert.equal(p.text(hot(p, L.boxOf(1).id).querySelector('.inb')), '×3 in basket'); assert.match(hot(p, L.boxOf(1).id).getAttribute('aria-label'), /, 3 in your basket$/);
   await p.click(hot(p, L.boxOf(1).id)); assert.equal(p.text(p.q('[data-cact="pop-save"]')), 'Update basket'); assert.ok(p.q('[data-cact="pop-remove"]')); await p.click(p.q('[data-cact="pop-dec"]')); await p.click(p.q('[data-cact="pop-save"]')); assert.equal(p.text(p.q('#basketPill')), 'Basket (2) · £8.00');
@@ -93,4 +93,14 @@ test('TITLES AND NOTES WITH HTML ARE SHOWN AS TEXT everywhere on the Cards pages
   const evil = '<img src=x onerror="window.pwned=1"><b>bold</b>'; const L = await live({ title: evil, boardTitle: evil, note: evil }); const p = await site();
   for (const hash of ['#/cards', `#/cards/bundle/${L.b}`]) { await go(p, hash); assert.equal(p.q('#view img[src="x"]'), null, hash); assert.equal(p.q('#view b'), null, hash); }
   assert.ok(view(p).includes(evil), 'shown as text'); await p.click(p.q('.hot')); assert.equal(p.q('.pcpop img[src="x"]'), null); assert.ok(p.text(p.q('[data-pop-note]')).includes(evil)); assert.equal(p.window.pwned, undefined); p.close();
+});
+
+test('THE POP-UP SHOWS ONE NUMBER — how many of THIS card are left — clearly, directly under the price; there is no "N of M still available" line; each card shows its own', async () => {
+  const L = await live({ boxes: [box(0, { qty: 4, price: 3 }), box(1, { price: 2 }), box(2, { qty: 3 })] }); const a = await person();
+  assert.equal((await claim(a, L.boxOf(1).itemId)).status, 201);                                            // one of card 1's four copies is taken
+  const p = await site(); await go(p, `#/cards/bundle/${L.b}`); await p.click(hot(p, L.boxOf(1).id)); const left = () => p.q('[data-pop-left]'), price = () => p.q('[data-pop-price]');
+  assert.equal(p.text(left()), '3 left', 'not "3 of 4 left"'); assert.equal(price().nextElementSibling, left(), 'directly under the price'); assert.ok(left().classList.contains('pcleft'), 'in the clear, larger style');
+  assert.equal(p.q('[data-pop-pos]'), null, 'no position counter'); assert.doesNotMatch(p.text(p.q('.pcpop')), /still available|\d+ of \d+/);
+  await p.click(p.q('.pcnav.next')); await sleep(40); assert.equal(p.text(p.q('.pcpop h2')).startsWith('Card 2'), true); assert.equal(p.text(left()), 'Only 1 — first come, first served', 'a single copy says so');
+  await p.click(p.q('.pcnav.next')); await sleep(40); assert.equal(p.text(left()), '3 left', 'card 3: its own three'); assert.equal(p.q('[data-pop-pos]'), null); assert.deepEqual(p.errors, []); p.close();
 });

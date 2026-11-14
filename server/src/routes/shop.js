@@ -3,7 +3,7 @@ import { wrap } from '../lib/http.js';
 import { requireAdmin, audit } from '../auth.js';
 import { withTx } from '../db.js';
 import { bad, conflict, notFound } from '../errors.js';
-import { imageOut } from '../lib/images.js';
+import { imageOut, removeFiles } from '../lib/images.js';
 import { optionFields, insertOptions, reconcileOptions } from '../lib/shop-options.js';
 
 const price = z.number().min(0.01, 'A shop item needs a price').max(100000).refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, 'At most 2 decimal places');
@@ -16,7 +16,7 @@ const body = z.object({
 
 // Shop (on hand) stock: things you already have, claimed straight away and paid like anything else. A claim holds a unit at once; it
 // becomes "ready to pack" when it's paid, and shows in Overdue if it isn't paid within the item's pay-by days (you cancel it yourself to free the unit).
-export function shopRoutes(app, { pool }) {
+export function shopRoutes(app, { pool, cfg }) {
   const admin = [requireAdmin];
   const CLAIMED = "(SELECT COUNT(*) FROM claims c WHERE c.leftover_item_id = li.id AND c.status <> 'cancelled')";
 
@@ -29,9 +29,9 @@ export function shopRoutes(app, { pool }) {
   // what joiners see: no quantities in stock, only how many are left
   app.get('/api/shop', wrap(async (req, res) => {
     // an item in a group that is hidden from the home page is shown under "Other", like an item with no group
-    const [rows] = await pool.query(`SELECT li.id, li.title, li.price, li.notes, li.pay_days AS payDays, li.option_label AS optionLabel, g.id AS groupId, li.qty - ${CLAIMED} AS remaining, im.filename AS file, im.width AS w, im.height AS h FROM leftover_items li LEFT JOIN images im ON im.id = li.image_id LEFT JOIN artist_groups g ON g.id = li.group_id AND g.is_hidden = 0 WHERE li.is_active = 1 ORDER BY li.id DESC`);
+    const [rows] = await pool.query(`SELECT li.id, li.title, li.price, li.notes, li.pay_days AS payDays, li.option_label AS optionLabel, g.id AS groupId, li.qty - ${CLAIMED} AS remaining, im.filename AS file, im.width AS w, im.height AS h FROM leftover_items li LEFT JOIN images im ON im.id = li.image_id LEFT JOIN artist_groups g ON g.id = li.group_id AND g.is_hidden = 0 WHERE li.is_active = 1 AND li.deleted_at IS NULL ORDER BY li.id DESC`);
     const opts = await optionsOf(rows.filter((r) => r.optionLabel).map((r) => r.id));
-    const [groups] = await pool.query(`SELECT g.id, g.name, gi.filename AS file, gi.width AS w, gi.height AS h FROM artist_groups g LEFT JOIN images gi ON gi.id = g.cover_image_id WHERE g.is_hidden = 0 AND EXISTS (SELECT 1 FROM leftover_items li WHERE li.group_id = g.id AND li.is_active = 1) ORDER BY g.sort_order, g.name`);
+    const [groups] = await pool.query(`SELECT g.id, g.name, gi.filename AS file, gi.width AS w, gi.height AS h FROM artist_groups g LEFT JOIN images gi ON gi.id = g.cover_image_id WHERE g.is_hidden = 0 AND EXISTS (SELECT 1 FROM leftover_items li WHERE li.group_id = g.id AND li.is_active = 1 AND li.deleted_at IS NULL) ORDER BY g.sort_order, g.name`);
     res.json({ items: rows.map((r) => ({ id: r.id, title: r.title, price: r.price, notes: r.notes || '', payDays: r.payDays, groupId: r.groupId || null, image: imageOut(r.file, r.w, r.h), left: Math.max(0, Number(r.remaining)),
       ...(r.optionLabel ? { optionLabel: r.optionLabel, options: opts.filter((o) => o.itemId === r.id).map((o) => ({ name: o.name, price: o.price ?? r.price, left: Math.max(0, o.qty - Number(o.claimed)) })) } : {}) })),
       groups: groups.map((g) => ({ id: g.id, name: g.name, cover: imageOut(g.file, g.w, g.h) })) });
@@ -39,14 +39,14 @@ export function shopRoutes(app, { pool }) {
 
   app.get('/api/admin/shop', admin, wrap(async (req, res) => {
     const [items] = await pool.query(
-      `SELECT li.id, li.title, li.price, li.qty, li.notes, li.is_active AS active, li.pay_days AS payDays, li.option_label AS optionLabel, li.size_bucket AS size, li.group_id AS groupId, ${CLAIMED} AS claimed, im.filename AS file, im.width AS w, im.height AS h FROM leftover_items li LEFT JOIN images im ON im.id = li.image_id ORDER BY li.id DESC`);
+      `SELECT li.id, li.title, li.price, li.qty, li.notes, li.is_active AS active, li.pay_days AS payDays, li.option_label AS optionLabel, li.size_bucket AS size, li.group_id AS groupId, ${CLAIMED} AS claimed, (SELECT COUNT(*) FROM claims c WHERE c.leftover_item_id = li.id) AS claimRows, im.filename AS file, im.width AS w, im.height AS h FROM leftover_items li LEFT JOIN images im ON im.id = li.image_id WHERE li.deleted_at IS NULL ORDER BY li.id DESC`);
     const [claims] = items.length ? await pool.query(
       `SELECT c.leftover_item_id AS itemId, c.id AS claimId, c.member_name AS \`option\`, j.instagram_handle AS handle, c.status, c.pipeline, c.pay_by AS payBy, c.created_at AS createdAt,
               (SELECT cc.paid >= cc.cost FROM claim_costs cc WHERE cc.claim_id = c.id AND cc.category = 'initials') AS paid,
               (c.pay_by < CURDATE() AND NOT COALESCE((SELECT cc.paid >= cc.cost FROM claim_costs cc WHERE cc.claim_id = c.id AND cc.category = 'initials'), 0)) AS overdue
          FROM claims c JOIN joiners j ON j.id = c.joiner_id WHERE c.leftover_item_id IN (?) AND c.status <> 'cancelled' ORDER BY c.id`, [items.map((i) => i.id)]) : [[]];
     const opts = await optionsOf(items.filter((i) => i.optionLabel).map((i) => i.id));
-    res.json({ items: items.map(({ file, w, h, ...i }) => ({ ...i, image: imageOut(file, w, h), notes: i.notes || '', active: !!i.active,
+    res.json({ items: items.map(({ file, w, h, ...i }) => ({ ...i, image: imageOut(file, w, h), notes: i.notes || '', active: !!i.active, claimRows: Number(i.claimRows),
       ...(i.optionLabel ? { options: opts.filter((o) => o.itemId === i.id).map((o) => ({ id: o.id, name: o.name, qty: o.qty, claimed: Number(o.claimed), left: Math.max(0, o.qty - Number(o.claimed)), ownPrice: o.price === null ? null : Number(o.price), price: o.price === null ? Number(i.price) : Number(o.price) })) } : {}), left: Math.max(0, i.qty - Number(i.claimed)), claimed: Number(i.claimed),
       claims: claims.filter((c) => c.itemId === i.id).map(({ itemId, ...c }) => ({ ...c, paid: !!c.paid, overdue: !!c.overdue })) })) });
   }));
@@ -77,12 +77,34 @@ export function shopRoutes(app, { pool }) {
   }));
 
   // Changing the price only affects claims made from now on; claims already made keep the price they were made at.
+  // DELETE a listing. Nobody ever claimed it → gone for good, with its options and its picture. It has claim rows (even cancelled ones — they point at it) → it can't be erased, so it is ARCHIVED:
+  // off every list and the shop, kept behind the scenes so those claims, payments and packing carry on. Either way it can't be brought back.
+  app.delete('/api/admin/shop/:id', admin, wrap(async (req, res) => {
+    const id = Number(req.params.id); let file = null;
+    const out = await withTx(pool, async (conn) => {
+      const [[it]] = await conn.query('SELECT li.id, li.title, li.image_id AS imageId, li.deleted_at IS NOT NULL AS gone, im.filename AS file FROM leftover_items li LEFT JOIN images im ON im.id = li.image_id WHERE li.id = ? FOR UPDATE', [id]);   // the lock a claim takes
+      if (!it || it.gone) throw notFound('No such shop item');
+      const [[n]] = await conn.query('SELECT COUNT(*) AS n FROM claims WHERE leftover_item_id = ?', [id]);
+      if (Number(n.n)) {
+        await conn.query('UPDATE leftover_items SET is_active = 0, deleted_at = NOW(3) WHERE id = ?', [id]);
+        await audit(conn, req.account.id, 'shop.archive', 'shop', id, { title: it.title, claims: Number(n.n) });
+        return { deleted: false, archived: true, claims: Number(n.n), title: it.title };
+      }
+      await conn.query('DELETE FROM leftover_items WHERE id = ?', [id]);                                   // its options go with it
+      if (it.imageId) { await conn.query('DELETE FROM images WHERE id = ?', [it.imageId]); file = it.file; }
+      await audit(conn, req.account.id, 'shop.delete', 'shop', id, { title: it.title });
+      return { deleted: true, archived: false, claims: 0, title: it.title };
+    });
+    if (file) await removeFiles(cfg.uploadsDir, file);                                                     // the picture files, once it is certain nothing refers to them
+    res.json({ ok: true, ...out });
+  }));
+
   app.patch('/api/admin/shop/:id', admin, wrap(async (req, res) => {
     const b = body.partial().extend({ active: z.boolean().optional() }).parse(req.body);
     const id = Number(req.params.id);
     await withTx(pool, async (conn) => {
-      const [[it]] = await conn.query('SELECT id, title, option_label AS optionLabel FROM leftover_items WHERE id = ? FOR UPDATE', [id]);   // the same lock a claim takes, so stock can't change under a claim
-      if (!it) throw notFound('No such shop item');
+      const [[it]] = await conn.query('SELECT id, title, option_label AS optionLabel, deleted_at IS NOT NULL AS gone FROM leftover_items WHERE id = ? FOR UPDATE', [id]);   // the same lock a claim takes, so stock can't change under a claim
+      if (!it || it.gone) throw notFound('No such shop item');
       let optionChanges = null;
       if (b.options) {                                                       // options: rename / re-count / re-price / add / remove (and make an ordinary item into one with options — only while nobody has claimed it)
         if (it.optionLabel) optionChanges = await reconcileOptions(conn, id, it.title, b.options);

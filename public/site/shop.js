@@ -171,6 +171,38 @@
     const avatar = (key, name, cover, n, on) => `<button type="button" class="avatar-link ${on ? 'on' : ''}" data-act="shopgroup" data-g="${key}" aria-pressed="${on}"><span class="avatar-ring">${cover ? `<img src="${esc(cover.thumb)}" alt="" loading="lazy">` : `<span class="ph" data-i="${esc(key === 'all' ? 'All' : key === 'other' ? '…' : SITE.initials(name))}" style="--h:${key === 'all' ? 20 : key === 'other' ? 220 : SITE.hue(name)}" aria-hidden="true"></span>`}</span>${esc(name)}<span class="avatar-sub">${plural(n)}</span></button>`;
     return `<div class="avatars" id="shopArtists" role="group" aria-label="Show items by artist">${avatar('all', 'All', null, shopItems.length, shopGroup === null)}${withItems.map((g) => avatar(g.id, g.name, g.cover, count(g.id), shopGroup === g.id)).join('')}${otherN ? avatar('other', 'Other', null, otherN, shopGroup === 'other') : ''}</div>`;
   }
+  // What of this item is already in the basket (the card itself stays short — the options are chosen in the pop-up).
+  const shopBasketNote = (it) => { const mine = basket.filter((l) => l.shopId === it.id && l.qty > 0); return mine.length ? `<div class="sub" data-shop-in-basket style="margin-top:6px">In your basket: ${mine.map((l) => `${esc(l.option || it.title)} ×${l.qty}`).join(', ')}</div>` : ''; };
+
+  // THE CHOOSER for an item with options: nothing is chosen for you — pick the member / size / version, say how many, then add it. It only adds; the basket is where amounts are changed or removed.
+  let pickPop = null;
+  const closePick = () => { if (!pickPop) return; document.removeEventListener('keydown', pickPop.onKey); pickPop.el.remove(); pickPop = null; };
+  function paintPick() {
+    const { el, id, option, qty } = pickPop, it = shopItems.find((x) => x.id === id), what = it.optionLabel || 'option', chosen = shopOpt(it, option);
+    const room = chosen ? Math.min(MAX_QTY, chosen.left - shopQty(id, option)) : 0;                       // how many more can still go in the basket
+    el.innerHTML = `<div class="pcpop-box"><button type="button" class="pcpop-x" data-pick="close" aria-label="Close">×</button>
+      ${it.image ? `<img src="${esc(it.image.thumb)}" alt="" style="max-height:110px; margin:0 0 8px">` : ''}
+      <h2 style="margin:0 0 2px">${esc(it.title)}</h2><p class="sub" data-pick-prompt style="margin:0 0 8px">Choose a ${esc(what.toLowerCase())}</p>
+      <div class="shoppick" role="radiogroup" aria-label="Choose a ${esc(what)}">${it.options.map((o) => { const inB = shopQty(id, o.name), out = o.left < 1, full = !out && o.left - inB < 1;
+        return `<label class="shoppick-opt${option === o.name ? ' on' : ''}${out || full ? ' out' : ''}" data-pick-option="${esc(o.name)}"><input type="radio" name="shoppick" value="${esc(o.name)}" ${option === o.name ? 'checked' : ''} ${out || full ? 'disabled' : ''}><span class="grow">${esc(o.name)}<span class="sub" style="display:block">${o.price !== it.price ? `${money(o.price)} · ` : ''}${out ? 'Sold out' : full ? 'All of them are in your basket' : `${o.left} left`}${inB && !full ? ` · ${inB} in your basket` : ''}</span></span></label>`; }).join('')}</div>
+      ${chosen ? `<div class="stepper" style="margin:10px 0"><button type="button" class="secondary" data-pick="dec" aria-label="One fewer" ${qty <= 1 ? 'disabled' : ''}>−</button><span data-pick-qty>${qty}</span><button type="button" data-pick="inc" aria-label="One more" ${qty >= room ? 'disabled' : ''}>+</button></div>` : ''}
+      <div class="btn-row"><button type="button" data-pick="add" ${chosen && room > 0 ? '' : 'disabled'}>${chosen ? `Add to basket · ${money(chosen.price * qty)}` : `Choose a ${esc(what.toLowerCase())} first`}</button><button type="button" class="secondary" data-pick="close">Cancel</button></div></div>`;
+  }
+  function openPick(id) {
+    const it = shopItems.find((x) => x.id === id); if (!it?.options) return; closePick();
+    const el = document.createElement('div'); el.className = 'pcpop'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-label', `Add ${it.title} to your basket`);
+    pickPop = { el, id, option: null, qty: 1, onKey: (e) => { if (e.key === 'Escape') closePick(); } };
+    document.addEventListener('keydown', pickPop.onKey); document.body.appendChild(el); paintPick();
+    el.addEventListener('change', (e) => { if (e.target.name !== 'shoppick') return; pickPop.option = e.target.value; pickPop.qty = 1; paintPick(); });
+    el.addEventListener('click', (e) => {
+      if (e.target === el) return closePick();
+      const t = e.target.closest('[data-pick]')?.dataset.pick; if (!t) return;
+      if (t === 'close') return closePick();
+      if (t === 'inc' || t === 'dec') { pickPop.qty = Math.max(1, pickPop.qty + (t === 'inc' ? 1 : -1)); return paintPick(); }
+      if (t === 'add') { const { id: sid, option, qty } = pickPop; if (!option) return; bumpShop(sid, qty, option); closePick(); SITE.toast(`Added ${qty > 1 ? `${qty} × ` : ''}“${it.title}” — ${option} to your basket.`); route(); }
+    });
+  }
+
   function shopPage() {
     // an artist (or Other) that no longer has anything can't stay selected
     if (shopGroup === 'other' ? !shopItems.some((i) => !i.groupId) : shopGroup !== null && !shopItems.some((i) => i.groupId === shopGroup)) shopGroup = null;
@@ -181,8 +213,8 @@
       ${shopItems.length ? shown.map((it) => { const q = shopQty(it.id), out = it.left < 1, prices = it.options ? it.options.map((o) => o.price) : [], from = prices.length && Math.min(...prices) !== Math.max(...prices);
         return `<div class="card" data-shop-item="${it.id}">${it.image ? picbox(it.image, it.title) : ''}<div class="itemrow" style="border:0; padding:0"><div class="grow"><strong>${esc(it.title)}</strong>
           <div class="sub">${from ? `from ${money(Math.min(...prices))}` : money(it.price)} · ${out ? '<strong>Sold out</strong>' : `${it.left} left`} · pay within ${it.payDays} day${it.payDays === 1 ? '' : 's'} of claiming</div></div>
-          ${out || it.options ? '' : `<span class="stepper"><button class="secondary" data-act="shopdec" data-shop="${it.id}" ${q ? '' : 'disabled'} aria-label="One fewer">−</button><span>${q}</span><button data-act="shopinc" data-shop="${it.id}" ${q >= it.left || q >= MAX_QTY ? 'disabled' : ''} aria-label="One more">+</button></span>`}</div>
-          ${it.options ? `<div class="shopopts" data-shop-options="${it.id}">${it.options.map((o) => { const oq = shopQty(it.id, o.name), oout = o.left < 1; return `<div class="itemrow" data-shop-option="${esc(o.name)}"><div class="grow">${esc(o.name)}<div class="sub">${o.price !== it.price ? `${money(o.price)} · ` : ''}${oout ? '<strong>Sold out</strong>' : `${o.left} left`}</div></div>${oout ? '' : `<span class="stepper"><button class="secondary" data-act="shopdec" data-shop="${it.id}" data-option="${esc(o.name)}" ${oq ? '' : 'disabled'} aria-label="One fewer ${esc(o.name)}">−</button><span>${oq}</span><button data-act="shopinc" data-shop="${it.id}" data-option="${esc(o.name)}" ${oq >= o.left || oq >= MAX_QTY ? 'disabled' : ''} aria-label="One more ${esc(o.name)}">+</button></span>`}</div>`; }).join('')}</div>` : ''}
+          ${out || it.options ? '' : `<span class="stepper"><button class="secondary" data-act="shopdec" data-shop="${it.id}" ${q ? '' : 'disabled'} aria-label="One fewer">−</button><span>${q}</span><button data-act="shopinc" data-shop="${it.id}" ${q >= it.left || q >= MAX_QTY ? 'disabled' : ''} aria-label="One more">+</button></span>`}${it.options && !out ? `<button type="button" data-act="shoppick" data-shop="${it.id}">Add to basket</button>` : ''}</div>
+          ${it.options ? shopBasketNote(it) : ''}
           ${it.notes ? `<p class="itemdesc">${esc(it.notes)}</p>` : ''}</div>`; }).join('')
         : '<div class="card"><p class="muted">Nothing in the shop right now — check back soon.</p></div>'}`;
   }
@@ -329,6 +361,7 @@
     }
     if (b.dataset.act === 'moresets') { const id = Number(b.dataset.item); if (moreSets.has(id)) moreSets.delete(id); else moreSets.add(id); return route(); }
     if (b.dataset.act === 'shopgroup') { const g = b.dataset.g === 'all' ? null : b.dataset.g === 'other' ? 'other' : Number(b.dataset.g); shopGroup = g === shopGroup ? null : g; return shopPage(); }
+    if (b.dataset.act === 'shoppick') return openPick(Number(b.dataset.shop));
     if (b.dataset.act === 'shopinc' || b.dataset.act === 'shopdec') { bumpShop(Number(b.dataset.shop), b.dataset.act === 'shopinc' ? 1 : -1, b.dataset.option); return route(); }
     if (b.dataset.act === 'whole') {                        // one of every part, kept together
       const f = findItem(Number(b.dataset.item));
@@ -392,6 +425,7 @@
 
   // What the Cards pages (site/cards.js) use of the basket: a card is just an item with a purchase limit, so adding it works exactly like adding any item.
   SITE.shopApi = { qtyOf: (itemId) => qtyOf(itemId, null, null), setQty(itemId, n) { const cur = qtyOf(itemId, null, null); if (n !== cur) bump(itemId, null, null, n - cur); }, count: () => count(), totalText: () => totalText() };
+  window.addEventListener('hashchange', closePick);
   window.addEventListener('hashchange', route);
   drawHeader();
   route();

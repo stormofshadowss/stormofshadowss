@@ -24,17 +24,17 @@ async function live(boards) {
 const take = async (L, i, n) => { const h = u('other'), c = await joinerSession(app, `${h}@x.com`, h); assert.equal((await api('POST', '/api/claims', { handle: h, lines: [{ itemId: L.at(i, n).itemId }] }, c)).status, 201); };
 const go = async (p, hash) => { p.window.location.hash = hash; await sleep(60); await p.settle(); await sleep(60); await p.settle(); };
 const open = async (p, L, i, n) => { await p.click(p.q(`.hot[data-box="${L.at(i, n).id}"]`)); };
-const title = (p) => p.text(p.q('.pcpop h2')), pos = (p) => p.text(p.q('[data-pop-pos]'));
+const title = (p) => p.text(p.q('.pcpop h2'));
 const key = (p, k) => p.window.document.dispatchEvent(new p.window.KeyboardEvent('keydown', { key: k, bubbles: true }));
 const site = async (L) => { const p = await openPage(app, '/'); await go(p, `#/cards/bundle/${L.b}`); return p; };
 
 test('ARROWS MOVE THROUGH THE AVAILABLE CARDS: next and previous skip taken cards, cross from one board to the next, wrap round at both ends, and say where you are', async () => {
   const L = await live([{ title: 'Board A', boxes: row(4, [3, 4, 5, 6]) }, { title: 'Board B', boxes: row(2, [7, 2.5]) }]); await take(L, 0, 3); await take(L, 1, 2);   // A#3 and B#2 are taken: four cards remain (A#1, A#2, A#4, B#1)
-  const p = await site(L); await open(p, L, 0, 1); assert.equal(title(p), 'Card 1 · Board A'); assert.equal(pos(p), '1 of 4 still available'); assert.ok(p.q('.pcnav.prev') && p.q('.pcnav.next'));
+  const p = await site(L); await open(p, L, 0, 1); assert.equal(title(p), 'Card 1 · Board A'); assert.equal(p.q('[data-pop-pos]'), null, 'no "1 of 4 still available" line any more'); assert.ok(p.q('.pcnav.prev') && p.q('.pcnav.next'));
   const next = async () => { await p.click(p.q('[data-cact="pop-next"]')); }, prev = async () => { await p.click(p.q('[data-cact="pop-prev"]')); };
-  await next(); assert.deepEqual([title(p), pos(p)], ['Card 2 · Board A', '2 of 4 still available']); await next(); assert.deepEqual([title(p), pos(p)], ['Card 4 · Board A', '3 of 4 still available'], 'card 3 is taken, so it is skipped');
-  await next(); assert.deepEqual([title(p), pos(p)], ['Card 1 · Board B', '4 of 4 still available'], 'on to the next board'); await next(); assert.deepEqual([title(p), pos(p)], ['Card 1 · Board A', '1 of 4 still available'], 'wraps round to the first');
-  await prev(); assert.deepEqual([title(p), pos(p)], ['Card 1 · Board B', '4 of 4 still available'], 'and back round to the last'); await prev(); assert.equal(title(p), 'Card 4 · Board A'); await prev(); assert.equal(title(p), 'Card 2 · Board A'); assert.equal(p.qa('.pcpop').length, 1, 'still one pop-up');
+  await next(); assert.equal(title(p), 'Card 2 · Board A'); await next(); assert.equal(title(p), 'Card 4 · Board A', 'card 3 is taken, so it is skipped');
+  await next(); assert.equal(title(p), 'Card 1 · Board B', 'on to the next board'); await next(); assert.equal(title(p), 'Card 1 · Board A', 'wraps round to the first');
+  await prev(); assert.equal(title(p), 'Card 1 · Board B', 'and back round to the last'); await prev(); assert.equal(title(p), 'Card 4 · Board A'); await prev(); assert.equal(title(p), 'Card 2 · Board A'); assert.equal(p.qa('.pcpop').length, 1, 'still one pop-up');
   assert.equal(p.text(p.q('[data-pop-price]')), '£4.00'); assert.equal(p.q('.pcpop img').getAttribute('src'), L.at(0, 2).crop.url, 'the picture changes with the card'); assert.deepEqual(p.errors, []); p.close();
 });
 

@@ -304,3 +304,13 @@ a.gocard.hasicon { display:flex; align-items:center; gap:14px; }
 .pcnav:hover, .pcnav:focus-visible { background:rgba(0,0,0,.8); outline:2px solid var(--accent); }
 .ui-pick { margin:10px 0 2px; }
 .ui-pick select { width:100%; }
+
+/* Shop: choosing an option (member / size / version) before adding to the basket */
+.shoppick { display:grid; gap:8px; margin:8px 0; }
+.shoppick-opt { display:flex; align-items:center; gap:10px; padding:10px 12px; border:1.5px solid var(--line); border-radius:10px; cursor:pointer; background:var(--surface-2); }
+.shoppick-opt.on { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+.shoppick-opt.out { opacity:.55; cursor:default; }
+.shoppick-opt input { flex:none; }
+
+/* Cards pop-up: how many of THIS card are left — the clear number, under the price */
+.pcleft { margin:0 0 10px; font-size:1.05rem; font-weight:600; }
