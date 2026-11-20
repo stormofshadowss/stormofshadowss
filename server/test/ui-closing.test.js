@@ -63,11 +63,11 @@ const openItems = async (p, go) => { await p.click(p.q(`[data-act="open-items"][
 const row = (p, id) => p.q(`[data-act="edit-item"][data-id="${id}"]`).closest('tr');
 const cell = (p, id) => p.q('[data-closes]', row(p, id));
 
-test('THE ITEMS TABLE has a "Closes" column: "with the order", a date, "Closed by hand", or "Closed <date>" — each with a Close now or Reopen button', async () => {
+test('THE ITEMS TABLE has a "Closes" column: "with the order", a date, "Closed by hand", or "Closed <date>" — each with a Close now, or a Reopen and Hide, button', async () => {
   const go = await goOrder(); const plain = await item(go), dated = await item(go, { closeDate: day(4) }), hand = await item(go); await patch(hand, { closed: true }); const gone = await item(go, { closeDate: day(-2) });
   const p = await gomOrders(); await openItems(p, go); assert.ok(p.byText('#itemsPanel th', 'Closes'));
   assert.match(p.text(cell(p, plain)), /^with the orderClose now$/); assert.ok(p.q('[data-act="item-close"]', cell(p, plain))); assert.match(p.text(cell(p, dated)), new RegExp(`^${uk(day(4))}Close now$`));
-  assert.match(p.text(cell(p, hand)), /^Closed by handReopen$/); assert.equal(p.q('[data-item-state]', cell(p, hand)).dataset.itemState, 'hand'); assert.match(p.text(cell(p, gone)), new RegExp(`^Closed ${uk(day(-2))}Reopen$`)); assert.ok(p.q('[data-act="item-reopen"]', cell(p, gone))); assert.deepEqual([p.errors, p.native], [[], 0]); p.close();
+  assert.match(p.text(cell(p, hand)), /^Closed by handReopen Hide$/); assert.equal(p.q('[data-item-state]', cell(p, hand)).dataset.itemState, 'hand'); assert.match(p.text(cell(p, gone)), new RegExp(`^Closed ${uk(day(-2))}Reopen Hide$`)); assert.ok(p.q('[data-act="item-reopen"]', cell(p, gone))); assert.deepEqual([p.errors, p.native], [[], 0]); p.close();
 });
 
 test('CLOSE NOW asks first and says what happens; Reopen explains when it clears a date that has passed — and each does it', async () => {
@@ -75,7 +75,7 @@ test('CLOSE NOW asks first and says what happens; Reopen explains when it clears
   const p = await gomOrders(); await openItems(p, go);
   await p.click(p.q('[data-act="item-close"]', cell(p, a))); assert.match(p.text(modal(p)), /Close “Early closer” for claims now\?.*greyed out, saying “Closed for claims”\. The rest of the group order stays open, anything already claimed is untouched, and you can reopen it any time\./s); await press(p, 'Not yet');
   assert.equal((await api('GET', '/api/admin/orders')).json.orders.find((o) => o.id === go).items.find((i) => i.id === a).closedByHand, false, 'not yet means not yet');
-  await p.click(p.q('[data-act="item-close"]', cell(p, a))); await press(p, 'Close it'); await sleep(250); await p.settle(); assert.match(toast(p), /Closed for claims\./); assert.match(p.text(cell(p, a)), /^Closed by handReopen$/);
+  await p.click(p.q('[data-act="item-close"]', cell(p, a))); await press(p, 'Close it'); await sleep(250); await p.settle(); assert.match(toast(p), /Closed for claims\./); assert.match(p.text(cell(p, a)), /^Closed by handReopen Hide$/);
   await p.click(p.q('[data-act="item-reopen"]', cell(p, b))); assert.match(p.text(modal(p)), new RegExp(`Reopen “Past date” for claims\\?.*Its closing date \\(${uk(day(-3))}\\) has passed, so that date is cleared as well — it will then follow the group order\\.`, 's')); await press(p, 'Reopen it'); await sleep(250); await p.settle();
   assert.match(toast(p), /Reopened\./); assert.match(p.text(cell(p, b)), /^with the orderClose now$/); await p.click(p.q('[data-act="item-reopen"]', cell(p, a))); assert.doesNotMatch(p.text(modal(p)), /cleared as well/, 'no date to clear: nothing extra to say'); await press(p, 'Not yet'); p.close();
 });

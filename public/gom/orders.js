@@ -74,8 +74,8 @@
   // when does this item stop taking claims? (its own date, or closed by hand; otherwise it follows its group order)
   function closesCell(it) {
     if (it.cancelled) return '—';
-    if (it.closedByHand) return `<span class="pill dim" data-item-state="hand">Closed by hand</span><div><button class="sm secondary" data-act="item-reopen" data-id="${it.id}">Reopen</button></div>`;
-    if (it.closed) return `<span class="pill dim" data-item-state="date">Closed ${fmtDate(it.closeDate)}</span><div><button class="sm secondary" data-act="item-reopen" data-id="${it.id}">Reopen</button></div>`;
+    if (it.closedByHand) return `<span class="pill dim" data-item-state="hand">Closed by hand</span><div><button class="sm secondary" data-act="item-reopen" data-id="${it.id}">Reopen</button>${it.hidden ? '' : ` <button class="sm secondary" data-act="item-hide" data-id="${it.id}" title="Take it off the joiners\' order page. Claims already on it stay.">Hide</button>`}</div>`;
+    if (it.closed) return `<span class="pill dim" data-item-state="date">Closed ${fmtDate(it.closeDate)}</span><div><button class="sm secondary" data-act="item-reopen" data-id="${it.id}">Reopen</button>${it.hidden ? '' : ` <button class="sm secondary" data-act="item-hide" data-id="${it.id}" title="Take it off the joiners\' order page. Claims already on it stay.">Hide</button>`}</div>`;
     return `${it.closeDate ? `<span data-item-state="dated">${fmtDate(it.closeDate)}</span>` : '<span class="sub">with the order</span>'}<div><button class="sm secondary" data-act="item-close" data-id="${it.id}">Close now</button></div>`;
   }
   function itemRow(it) {
@@ -102,7 +102,7 @@
       <p class="msg" data-msg hidden></p>
       <div class="btn-row"><button type="submit" class="sm">Save</button><button type="button" class="sm secondary" data-act="cancel-item-edit">Cancel</button></div></form></td></tr>`;
     }
-    return `<tr><td>${it.image ? `<img class="thumb sm" src="${esc(it.image.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}${esc(it.title)}${it.hidden ? ' <span class="pill warn" data-hidden-item title="Joiners can\'t see or claim this — only you can add it for people">Hidden from joiners</span>' : ''}${it.noEms ? ' <span class="pill" data-no-ems title="Carries no share of the EMS when it is boxed">no EMS</span>' : ''}${it.noCustoms ? ' <span class="pill" data-no-customs title="Carries no share of the customs when it is boxed">no customs</span>' : ''}${it.description ? `<div class="sub" style="white-space:pre-line">${esc(it.description.length > 140 ? it.description.slice(0, 140) + '…' : it.description)}</div>` : ''}</td><td>${esc(typeName[it.type])}</td><td class="nowrap">${it.priceTbc ? '<span class="pill warn">TBC</span>' : money(it.price)}</td>
+    return `<tr><td>${it.image ? `<img class="thumb sm" src="${esc(it.image.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}${esc(it.title)}${it.hidden ? ` <span class="pill warn" data-hidden-item title="Joiners can't see or claim this — only you can add it for people">Hidden from joiners</span> <button class="sm secondary" data-act="item-show" data-id="${it.id}" title="Let joiners see it again">Show</button>` : ''}${it.noEms ? ' <span class="pill" data-no-ems title="Carries no share of the EMS when it is boxed">no EMS</span>' : ''}${it.noCustoms ? ' <span class="pill" data-no-customs title="Carries no share of the customs when it is boxed">no customs</span>' : ''}${it.description ? `<div class="sub" style="white-space:pre-line">${esc(it.description.length > 140 ? it.description.slice(0, 140) + '…' : it.description)}</div>` : ''}</td><td>${esc(typeName[it.type])}</td><td class="nowrap">${it.priceTbc ? '<span class="pill warn">TBC</span>' : money(it.price)}</td>
       <td class="nowrap">${fmtDate(it.payBy)}${it.ownPaymentDeadline ? ' <span class="sub">(own)</span>' : ''}</td>
       <td class="nowrap" data-closes>${closesCell(it)}</td><td>${esc(it.proxy || '—')}</td>
       <td>${itemSummary(it)}</td><td>${it.claimed}${limitCell(it)}</td><td>${currentOrder()?.isCards ? '' : `<button class="sm secondary" data-act="edit-item" data-id="${it.id}">Edit</button> <button class="sm secondary danger" data-act="delete-item" data-id="${it.id}">Delete</button>`}${it.cancelled ? ' <span class="pill warn" data-cancelled>Cancelled</span>' : ` <button class="sm secondary danger" data-act="cancel-item" data-id="${it.id}">Cancel…</button>`}${it.type === 'set' ? ` <button class="sm secondary" data-act="fixed" data-id="${it.id}">Fixed claimers</button>` : ''}</td></tr>`;
@@ -477,6 +477,14 @@
         const it = currentOrder().items.find((i) => i.id === id);
         if (!(await GOM.confirm(`Close “${it.title}” for claims now?\n\nJoiners will see it greyed out, saying “Closed for claims”. The rest of the group order stays open, anything already claimed is untouched, and you can reopen it any time.`, { ok: 'Close it', cancel: 'Not yet' }))) break;
         const r = await api('PATCH', `/api/admin/items/${id}`, { closed: true }); if (!r.ok) return GOM.toast(errText(r), true); await reload(true); GOM.toast('Closed for claims.'); break;
+      }
+      case 'item-hide': {                                                           // one click: off the joiners' order page. Claims already on it are untouched, and Show brings it back.
+        const r = await api('PATCH', `/api/admin/items/${id}`, { hidden: true }); if (!r.ok) return GOM.toast(errText(r), true); await reload(true); GOM.toast('Hidden from joiners. Claims already on it are untouched.'); break;
+      }
+      case 'item-show': {                                                           // asks first: a hidden item may be a bonus you keep hidden on purpose
+        const it = currentOrder().items.find((i) => i.id === id);
+        if (!(await GOM.confirm(`Show “${it.title}” to joiners again?\n\n${it.closed ? 'It is closed, so they will see it greyed out, saying “Closed for claims”.' : 'They will be able to see it and claim it.'}`, { ok: 'Show it', cancel: 'Not yet' }))) break;
+        const r = await api('PATCH', `/api/admin/items/${id}`, { hidden: false }); if (!r.ok) return GOM.toast(errText(r), true); await reload(true); GOM.toast('Showing it to joiners again.'); break;
       }
       case 'item-reopen': {
         const it = currentOrder().items.find((i) => i.id === id), clears = !!it.closeDate && it.closeDate < ukToday();           // its own date has passed: reopening clears it too
