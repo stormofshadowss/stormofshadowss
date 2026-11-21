@@ -7,12 +7,13 @@
   const KEY = 'sos_pack_order_names';
   let showOrders = (() => { try { return localStorage.getItem(KEY) === '1'; } catch { return false; } })();
   let combine = null;       // the "combine with another parcel" panel that is open: { id, candidates, pick, ok }
+  let search = '', searchTimer = null;     // the search box: a parcel number, a person or a tracking number — across every status
 
   async function render(el) {
     root = el;
     const results = await Promise.all(STATES.map(([s]) => api('GET', `/api/admin/packing?status=${s}`)));
     STATES.forEach(([s], i) => { counts[s] = (results[i].json?.parcels || []).length; });
-    parcels = results[STATES.findIndex(([s]) => s === status)].json?.parcels || [];
+    parcels = search ? ((await api('GET', `/api/admin/packing?q=${encodeURIComponent(search)}`)).json?.parcels || []) : results[STATES.findIndex(([s]) => s === status)].json?.parcels || [];
     draw();
   }
 
@@ -122,14 +123,17 @@
           <span class="sub" data-pack-hint ${allTicked(p) ? 'hidden' : ''}>${waiting(p).length ? `Waiting for ${names(waiting(p).map((f) => f.handle))} to answer the invitation${waiting(p).length === 1 ? '' : 's'} before this can be packed.` : 'Tick everything on the checklist to enable Mark packed.'}</span></div>`;
     }
     const next = { packed: ['shipped', 'Mark shipped'], shipped: ['received', 'Mark received (on their behalf)'] }[p.status];
+    // One tracking number per parcel: typed here when you mark it shipped (it goes with the button), or added / fixed afterwards. Joiners see it once it is shipped; nothing is emailed.
+    const trackRow = ['packed', 'shipped', 'received'].includes(p.status) ? `<div class="btn-row" data-tracking-row style="align-items:center; margin-top:6px"><label class="sub" for="trk${p.id}" style="margin:0">Tracking</label><input id="trk${p.id}" data-track-input="${p.id}" value="${esc(p.trackingNo || '')}" placeholder="${p.status === 'packed' ? 'Tracking number (optional)' : 'Not added yet'}" maxlength="40" style="max-width:220px">${p.status === 'packed' ? '' : `<button class="sm secondary" data-act="track-save" data-id="${p.id}">Save</button>`}${p.trackingNo ? `<button class="sm secondary" data-act="track-copy" data-id="${p.id}">Copy</button>` : ''}${p.trackingUrl ? ` <a href="${esc(p.trackingUrl)}" target="_blank" rel="noopener noreferrer">Track it ↗</a>` : ''}</div>` : '';
     return `<div class="sub" style="margin-top:8px">${[p.domsTotal != null && `Postage ${money(p.domsTotal)}`, p.packagingTotal != null && `Packaging ${money(p.packagingTotal)}`].filter(Boolean).join(' · ')}${p.domsTotal != null || p.packagingTotal != null ? ' · ' : ''}${[p.packedDate && `packed ${fmtDate(p.packedDate)}`, p.shippedDate && `shipped ${fmtDate(p.shippedDate)}`, p.receivedDate && `received ${fmtDate(p.receivedDate)}`].filter(Boolean).join(' · ')}</div>
-      ${next ? `<div class="btn-row"><button data-act="${next[0]}" data-id="${p.id}">${next[1]}</button></div>` : ''}`;
+      ${trackRow}${next ? `<div class="btn-row"><button data-act="${next[0]}" data-id="${p.id}">${next[1]}</button></div>` : ''}`;
   }
 
   function draw() {
     root.innerHTML = `<h1 style="margin:18px 0 10px">Packing</h1>
       <div class="btn-row" style="margin:0 0 12px; align-items:center">${STATES.map(([s, l]) => `<button class="sm ${status === s ? '' : 'secondary'}" data-act="status" data-status="${s}">${l} (${counts[s] ?? 0})</button>`).join('')}<label class="chk" style="margin:0 0 0 auto" title="Shows which group order each item comes from — handy when two group orders have an item with the same name"><input type="checkbox" data-act="toggle-orders" ${showOrders ? 'checked' : ''}> Show group order names</label></div>
-      ${parcels.length ? parcels.map(card).join('') : `<div class="card"><p class="muted">${status === 'requested' ? 'The queue is empty.' : 'Nothing here.'}</p></div>`}`;
+      <div class="btn-row" style="margin:0 0 12px; align-items:center"><input id="packSearch" type="search" placeholder="Search parcel #, person or tracking number" value="${esc(search)}" style="max-width:320px">${search ? '<span class="sub" data-search-note>Every parcel matching your search, whatever its status.</span>' : ''}</div>
+      ${parcels.length ? parcels.map(card).join('') : `<div class="card"><p class="muted">${search ? 'No parcel matches that.' : status === 'requested' ? 'The queue is empty.' : 'Nothing here.'}</p></div>`}`;
   }
 
   // Reads the two fee boxes of a parcel's form. blank = left alone; returns { values, error }.
@@ -222,6 +226,8 @@
       try { await navigator.clipboard.writeText(text); GOM.toast('Address copied.'); } catch { GOM.alert(`Copy this address:\n\n${text}`); }
       return;
     }
+    if (act === 'track-copy') { try { await navigator.clipboard.writeText(p.trackingNo); GOM.toast('Tracking number copied.'); } catch { GOM.alert(`Tracking number:\n\n${p.trackingNo}`); } return; }
+    if (act === 'track-save') { const r = await api('PATCH', `/api/admin/parcels/${id}/tracking`, { trackingNo: $(`[data-track-input="${id}"]`, root).value }); await render(root); return GOM.toast(r.ok ? (r.json.trackingNo ? 'Tracking saved.' : 'Tracking removed.') : errText(r), !r.ok); }
     if (act === 'packed') {
       if (!allTicked(p)) return GOM.toast('Tick everything on the checklist first.', true);
       // Fees are typed in by hand each time, so show exactly what the joiner will owe before this goes ahead.
@@ -250,9 +256,10 @@
       if (!(await GOM.confirm(`Cancel parcel ${id} for @${p.handle}?\n\nTheir items go back to "ready to pack", and any postage and packaging fee you added are taken off (returned as credit if they'd already paid them). They can request shipping again.`, { ok: 'Cancel the parcel', cancel: 'Keep it' }))) return;
     }
     if (act === 'received' && !(await GOM.confirm(`Mark parcel ${id} as received on behalf of @${p.handle}?\n\nTheir items move to Completed.`, { ok: 'Yes, mark received' }))) return;
-    const r = await api('POST', `/api/admin/parcels/${id}/${act}`, {});
+    const trackingNo = act === 'shipped' ? ($(`[data-track-input="${id}"]`, root)?.value || '').trim() : '';
+    const r = await api('POST', `/api/admin/parcels/${id}/${act}`, act === 'shipped' ? { trackingNo } : {});
     await render(root); GOM.refreshBadges();
-    const done = { packed: 'Marked packed.', shipped: 'Marked shipped.', received: 'Marked received.', cancel: 'Parcel cancelled.' }[act];
+    const done = { packed: 'Marked packed.', shipped: trackingNo ? 'Marked shipped, tracking saved.' : 'Marked shipped.', received: 'Marked received.', cancel: 'Parcel cancelled.' }[act];
     GOM.toast(r.ok ? done : errText(r), !r.ok);
   }
 
@@ -288,6 +295,10 @@
   GOM.registerTab({
     id: 'packing', label: 'Packing',
     badgeCount: async () => ((await api('GET', '/api/admin/packing?status=requested')).json?.parcels || []).length,
-    async render(el) { await render(el); el.onclick = onClick; el.onsubmit = onSubmit; el.onchange = onChange; },
+    async render(el) { await render(el); el.onclick = onClick; el.onsubmit = onSubmit; el.onchange = onChange;
+      el.oninput = (e) => {                                                  // search as you type (after a short pause), keeping the cursor in the box
+        if (e.target.id !== 'packSearch') return; search = e.target.value.trim(); clearTimeout(searchTimer);
+        searchTimer = setTimeout(async () => { await render(root); const i = root.querySelector('#packSearch'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 250);
+      }; },
   });
 })();

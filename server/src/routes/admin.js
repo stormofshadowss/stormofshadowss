@@ -5,6 +5,7 @@ import { wrap } from '../lib/http.js';
 import { requireAdmin, audit } from '../auth.js';
 import { withTx, withRollback } from '../db.js';
 import { removeFromParcel } from '../lib/removals.js';
+import { trackingField, trackingUrl } from '../lib/tracking.js';
 import { bad, conflict, notFound } from '../errors.js';
 import { distribute, lockJoiner, recordOverpayment, sweepCredit, creditBalance, addLedger } from '../lib/ledger.js';
 import { applyFee, removeFees, markParcelReceived, queuePosition, personWeights, resplitFees, feeModeOf } from '../lib/parcels.js';
@@ -177,13 +178,15 @@ export function adminRoutes(app, { pool, notifier }) {
   // ── packing queue ──
   app.get('/api/admin/packing', admin, wrap(async (req, res) => {
     const status = ['requested', 'packed', 'shipped', 'received'].includes(req.query.status) ? req.query.status : 'requested';
+    // ?q= searches EVERY parcel (whatever its status): by parcel number, the person's handle, or the tracking number
+    const q = String(req.query.q || '').trim().replace(/^@/, '').slice(0, 40), like = `%${q.replace(/[\\%_]/g, '\\$&')}%`;
     const [parcels] = await pool.query(
-      `SELECT p.id, p.joiner_id AS joinerId, j.instagram_handle AS handle, (j.verified_at IS NOT NULL) AS handleVerified, p.method, p.declared_value AS declaredValue, p.notes, p.bias, p.lomo_name AS lomoName, p.lomo_source AS lomoSource, p.status,
+      `SELECT p.id, p.joiner_id AS joinerId, j.instagram_handle AS handle, (j.verified_at IS NOT NULL) AS handleVerified, p.method, p.tracking_no AS trackingNo, p.declared_value AS declaredValue, p.notes, p.bias, p.lomo_name AS lomoName, p.lomo_source AS lomoSource, p.status,
               p.requested_at, p.doms_total AS domsTotal, p.packaging_total AS packagingTotal, p.packed_date AS packedDate, p.shipped_date AS shippedDate, p.received_date AS receivedDate,
               p.address_checked_at AS addressCheckedAt, p.lomo_checked_at AS lomoCheckedAt, p.bias_checked_at AS biasCheckedAt, p.fee_split AS feeSplitSetting, p.weight_g AS weightG, p.fees_check_needed AS feesCheckNeeded,
               ad.full_name AS deliveryName, ad.address AS deliveryAddress, ad.phone AS deliveryPhone, ad.email AS deliveryEmail
          FROM parcels p JOIN joiners j ON j.id = p.joiner_id LEFT JOIN addresses ad ON ad.joiner_id = j.id
-        WHERE p.status = ? ORDER BY p.requested_at, p.id`, [status]);
+        WHERE ${q ? "p.status <> 'cancelled' AND (p.id = ? OR j.instagram_handle LIKE ? OR p.tracking_no LIKE ?)" : 'p.status = ?'} ORDER BY ${q ? '(p.id = ?) DESC, p.id DESC' : 'p.requested_at, p.id'}`, q ? [Number(q) || 0, like, like, Number(q) || 0] : [status]);   // a search puts the exact parcel number first
     const ids = parcels.map((p) => p.id);
     const items = ids.length ? (await pool.query(
       'SELECT pi.parcel_id, c.id AS claimId, c.joiner_id AS ownerId, c.label, pi.packed_at AS packedAt, pi.added_at AS addedAt, jc.instagram_handle AS owner, pi.doms_share AS doms, pi.packaging_share AS packaging, COALESCE(go.title, \'Shop (on hand)\') AS orderTitle, im.filename AS imgFile, im.width AS imgW, im.height AS imgH FROM parcel_items pi JOIN claims c ON c.id = pi.claim_id JOIN joiners jc ON jc.id = c.joiner_id LEFT JOIN items it ON it.id = c.item_id LEFT JOIN group_orders go ON go.id = c.order_id LEFT JOIN leftover_items lo ON lo.id = c.leftover_item_id LEFT JOIN images im ON im.id = COALESCE(it.image_id, lo.image_id) WHERE pi.parcel_id IN (?) ORDER BY c.id', [ids]))[0] : [];
@@ -230,6 +233,7 @@ export function adminRoutes(app, { pool, notifier }) {
       } else { p.people = []; p.feeSplit = null; }
       for (const k of ['feeSplitSetting', 'weightG', 'joinerId']) delete p[k];
       p.requestedAt = p.requested_at; delete p.requested_at;
+      p.trackingUrl = trackingUrl(p.method, p.trackingNo);
       delete p.addressCheckedAt; delete p.lomoCheckedAt; delete p.biasCheckedAt;
     }
     res.json({ parcels });
@@ -270,7 +274,24 @@ export function adminRoutes(app, { pool, notifier }) {
     await conn.query('UPDATE claims SET pipeline = ? WHERE id IN (SELECT claim_id FROM parcel_items WHERE parcel_id = ?)', [pipeline, id]);
   };
   parcelAction('packed', ['requested'], async (conn, id) => { await requireChecklist(conn, id); await setStage('packed', 'packed_date', 'packed')(conn, id); });
-  parcelAction('shipped', ['packed'], setStage('shipped', 'shipped_date', 'shipped'));
+  parcelAction('shipped', ['packed'], async (conn, id, req) => {            // an optional tracking number can go with it (blank = none)
+    const { trackingNo } = z.object({ trackingNo: trackingField.optional() }).parse(req.body || {});
+    await setStage('shipped', 'shipped_date', 'shipped')(conn, id);
+    if (trackingNo !== undefined) await conn.query('UPDATE parcels SET tracking_no = ? WHERE id = ?', [trackingNo, id]);
+  });
+  // Add, fix or remove the tracking number afterwards (once it is packed). Joiners see it once it is shipped. Nothing is emailed.
+  app.patch('/api/admin/parcels/:id/tracking', admin, wrap(async (req, res) => {
+    const { trackingNo } = z.object({ trackingNo: trackingField }).parse(req.body);
+    const id = Number(req.params.id); let method = null;
+    await withTx(pool, async (conn) => {
+      const [[p]] = await conn.query('SELECT id, status, method FROM parcels WHERE id = ? FOR UPDATE', [id]);
+      if (!p) throw notFound('No such parcel');
+      if (!['packed', 'shipped', 'received'].includes(p.status)) throw conflict(`That parcel is ${p.status} — a tracking number can be added once it is packed.`, 'bad_state');
+      await conn.query('UPDATE parcels SET tracking_no = ? WHERE id = ?', [trackingNo, id]); method = p.method;
+      await audit(conn, req.account.id, 'parcel.tracking', 'parcel', id, { trackingNo });
+    });
+    res.json({ ok: true, trackingNo, trackingUrl: trackingUrl(method, trackingNo) });
+  }));
   parcelAction('received', ['shipped'], (conn, id) => markParcelReceived(conn, id)); // on the joiner's behalf
   parcelAction('cancel', ['requested'], async (conn, id) => {
     await removeFees(conn, id);

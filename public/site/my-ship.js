@@ -74,6 +74,7 @@
       <strong>Parcel #${p.id}</strong> <span class="pill ${p.status === 'received' ? 'ok' : ''}">${STATUS[p.status](p)}</span>
       <div class="sub">${active ? `Your items: ${mineItems.map((i) => esc(i.label)).join(', ')}${owners.map((o) => ` · @${esc(o)}'s items: ${p.items.filter((i) => i.owner === o).map((i) => esc(i.label)).join(', ')}`).join('')}` : p.items.map((i) => esc(i.label)).join(', ')} · ${esc(p.method)}</div>
       ${feeBits.length ? `<div class="sub" data-fees>${active ? 'Your share — ' : ''}${feeBits.join(' · ')}${active ? ` <span class="muted">(${splitWords(p)})</span>` : ''}</div>` : ''}
+      ${p.trackingNo ? `<div class="sub" data-tracking>Tracking: <strong data-tracking-no>${esc(p.trackingNo)}</strong> <button type="button" class="sm secondary" data-act="copy-tracking" data-no="${esc(p.trackingNo)}">Copy</button>${p.trackingUrl ? ` <a href="${esc(p.trackingUrl)}" target="_blank" rel="noopener noreferrer">Track it ↗</a>` : ''}</div>` : ''}
       ${p.lomoName ? `<div class="sub">Personalised Lomo: ${esc(p.lomoName)}</div>` : ''}${shareHtml(p)}</div>
       ${p.status === 'shipped' && p.canConfirm ? `<button data-act="received" data-id="${p.id}">It's arrived${active ? ' — confirms it for everyone' : ' — mark as received'}</button>` : ''}</div>`;
   }).join('')}</div>` : '';
@@ -131,6 +132,8 @@
     view.onclick = async (e) => {                                          // answering an invitation, withdrawing one, or leaving a shared parcel
       const sel = e.target.closest('[data-act="ship-all"], [data-act="ship-none"]');
       if (sel) { for (const c of sel.closest('form').querySelectorAll('input[name="claim"]')) c.checked = sel.dataset.act === 'ship-all'; return; }
+      const copy = e.target.closest('[data-act="copy-tracking"]');
+      if (copy) { try { await navigator.clipboard.writeText(copy.dataset.no); SITE.toast('Tracking number copied.'); } catch { SITE.toast(`Tracking number: ${copy.dataset.no}`); } return; }
       const b = e.target.closest('[data-act]'); if (!b || !['decline', 'withdraw', 'leave'].includes(b.dataset.act)) return;
       const id = b.dataset.id, ask = {
         decline: [`Say no to sharing with @${b.dataset.from}?\n\nTheir parcel will be posted on its own.`, 'No thanks', 'POST', `/api/my/parcels/${id}/companion/decline`, 'You said no.'],

@@ -10,6 +10,7 @@ import { bad, conflict, forbidden, notFound, HttpError } from '../errors.js';
 import { resolveJoiner } from '../lib/joiner.js';
 import { owedInScope, owingPlan, lockJoiner, creditBalance } from '../lib/ledger.js';
 import { queuePosition, markParcelReceived, applyFee, feeDueOf } from '../lib/parcels.js';
+import { trackingUrl } from '../lib/tracking.js';
 import { validateShippable, inviteCompanions, acceptCompanion, declineCompanion, withdrawInvitation, leaveParcel } from '../lib/combine.js';
 import { feeModeOf } from '../lib/parcels.js';
 import { CATS, round2 } from '../lib/money.js';
@@ -329,7 +330,7 @@ export function meRoutes(app, { pool }) {
   app.get('/api/my/parcels', auth, wrap(async (req, res) => {
     const scope = await scopeOf(req), mine_ids = new Set(scope.joiners.map((j) => j.id)), idList = [...mine_ids];
     const [parcels] = await pool.query(
-      `SELECT p.id, p.joiner_id AS ownerId, jo.instagram_handle AS ownerHandle, p.method, p.status, p.requested_at, p.lomo_name AS ownLomoName, p.lomo_source AS ownLomoSource, p.fee_split,
+      `SELECT p.id, p.joiner_id AS ownerId, jo.instagram_handle AS ownerHandle, p.method, CASE WHEN p.status IN ('shipped', 'received') THEN p.tracking_no END AS trackingNo, p.status, p.requested_at, p.lomo_name AS ownLomoName, p.lomo_source AS ownLomoSource, p.fee_split,
               p.doms_total AS domsTotal, p.packaging_total AS packagingTotal, p.packed_date AS packedDate, p.shipped_date AS shippedDate, p.received_date AS receivedDate
          FROM parcels p JOIN joiners jo ON jo.id = p.joiner_id
         WHERE p.status <> 'cancelled' AND (p.joiner_id IN (?) OR EXISTS (SELECT 1 FROM parcel_companions pc WHERE pc.parcel_id = p.id AND pc.joiner_id IN (?) AND pc.status = 'accepted')) ORDER BY p.id DESC`, [idList, idList]);
@@ -340,7 +341,7 @@ export function meRoutes(app, { pool }) {
       'SELECT pc.parcel_id AS parcelId, pc.joiner_id AS joinerId, pc.status, pc.how, pc.lomo_name AS lomoName, pc.lomo_source AS lomoSource, j.instagram_handle AS handle FROM parcel_companions pc JOIN joiners j ON j.id = pc.joiner_id WHERE pc.parcel_id IN (?) ORDER BY pc.id', [ids]))[0] : [];
     for (const p of parcels) {
       const mine = mine_ids.has(p.ownerId), all = items.filter((i) => i.parcel_id === p.id), cs = comps.filter((c) => c.parcelId === p.id);
-      p.queuePosition = await queuePosition(pool, p);
+      p.queuePosition = await queuePosition(pool, p); p.trackingUrl = trackingUrl(p.method, p.trackingNo);
       p.canAddItems = (mine || cs.some((c) => mine_ids.has(c.joinerId) && c.status === 'accepted')) && p.status === 'requested';      // more of your items can be added until it is packed — by the person it's posted to, or a friend who has joined it
       p.items = all.map((i) => ({ claimId: i.claimId, label: i.label, mine: mine_ids.has(i.ownerId), owner: i.owner }));
       p.myDoms = Math.round(all.filter((i) => mine_ids.has(i.ownerId)).reduce((s, i) => s + Number(i.doms), 0) * 100) / 100;
