@@ -1,7 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, seed, joinerSession } from './helpers.js';
-import { openPage, gomPage, modal, press, toast } from './ui.helpers.js';
+import { openPage, gomPage, modal, press, toast, itemRow } from './ui.helpers.js';
 
 let app, admin, w, N = 0;
 const ROSTER = ['Bang Chan', 'Han', 'Felix', 'Hyunjin'];
@@ -24,7 +24,7 @@ async function openFixed(p, itemTitleStart) {
   await p.click(p.byText('#tabs button', 'Group Orders'));
   const o = (await api('GET', '/api/admin/orders')).json.orders.find((x) => x.title === 'Run It GO');
   await p.click(p.q(`[data-act="open-items"][data-id="${o.id}"]`));
-  const row = p.byText('#itemsPanel tbody tr', itemTitleStart);
+  const row = itemRow(p, itemTitleStart);
   await p.click(p.q('[data-act="fixed"]', row));
 }
 

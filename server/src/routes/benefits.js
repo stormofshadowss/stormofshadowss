@@ -48,7 +48,8 @@ export function benefitRoutes(app, { pool }) {
       let bonusItemId = b.bonusItemId;
       if (b.newBonusTitle !== undefined) {
         if (bonusItemId) throw bad('Choose an existing bonus item or create a new one — not both.', 'bad_bonus');
-        const [made] = await conn.query('INSERT INTO items (order_id, item_type, title, price, price_tbc, size_bucket, hidden_from_public, no_ems, no_customs) VALUES (?, ?, ?, 0, 0, ?, 1, 1, 1)', [orderId, 'normal', b.newBonusTitle, 'M']);
+        const [[mx]] = await conn.query('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM items WHERE order_id = ?', [orderId]);          // to the end of the list
+        const [made] = await conn.query('INSERT INTO items (order_id, item_type, title, price, price_tbc, size_bucket, hidden_from_public, no_ems, no_customs, sort_order) VALUES (?, ?, ?, 0, 0, ?, 1, 1, 1, ?)', [orderId, 'normal', b.newBonusTitle, 'M', mx.n]);
         bonusItemId = made.insertId; await audit(conn, req.account.id, 'item.create', 'item', bonusItemId, { bonusFor: 'purchase benefit', hidden: true });
       } else if (!bonusItemId) throw bad('Choose the bonus item (or create a new one).', 'bad_bonus');
       const ids = await check(conn, orderId, { ...b, bonusItemId });

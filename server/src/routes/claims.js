@@ -12,6 +12,7 @@ import { placeSetParts } from '../lib/sets.js';
 import { urls } from '../lib/images.js';
 import { placeItemLine, lockLineItems, alreadyHas } from '../lib/claim-create.js';
 import { moveClaims } from '../lib/move-claims.js';
+import { storageDeadlineOf, realDate } from '../lib/storage.js';
 import { changeClaimPrices } from '../lib/reprice-claims.js';
 import { HttpError } from '../errors.js';
 import { CATS, round2 } from '../lib/money.js';
@@ -146,9 +147,10 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
     if (req.query.status) { where.push('c.status = ?'); params.push(String(req.query.status)); }
     if (req.query.handle) { where.push('j.instagram_handle = ?'); params.push(normalizeHandle(req.query.handle)); }
     const [rows] = await pool.query(
-      `SELECT c.id, c.joiner_id AS joinerId, c.price_tbc AS priceTbc, c.label, (SELECT im.filename FROM items it JOIN group_orders g ON g.id = it.order_id AND g.is_cards = 1 JOIN images im ON im.id = it.image_id WHERE it.id = c.item_id) AS cardFile, c.status, c.pipeline, c.order_id, go.title AS orderTitle, c.set_id AS setId, (SELECT admin_decision FROM item_sets WHERE id = c.set_id) AS setDecision, c.is_direct, c.is_fixed, c.ready_to_pack_date, c.received_date, j.instagram_handle AS handle
+      `SELECT c.id, c.joiner_id AS joinerId, c.price_tbc AS priceTbc, c.label, (SELECT im.filename FROM items it JOIN group_orders g ON g.id = it.order_id AND g.is_cards = 1 JOIN images im ON im.id = it.image_id WHERE it.id = c.item_id) AS cardFile, c.status, c.pipeline, c.size_bucket AS sizeBucket, c.ready_to_pack_date AS readyDate, c.storage_deadline_override AS storageOverride, c.order_id, go.title AS orderTitle, c.set_id AS setId, (SELECT admin_decision FROM item_sets WHERE id = c.set_id) AS setDecision, c.is_direct, c.is_fixed, c.ready_to_pack_date, c.received_date, j.instagram_handle AS handle
          FROM claims c JOIN joiners j ON j.id = c.joiner_id LEFT JOIN group_orders go ON go.id = c.order_id WHERE ${where.join(' AND ')} ORDER BY j.instagram_handle, c.id LIMIT ${maxList() + 1}`, params);
-    const truncated = rows.length > maxList(); if (truncated) rows.length = maxList();          // the screen says so, so nothing is ever cut off silently
+    const truncated = rows.length > maxList(); if (truncated) rows.length = maxList();
+    for (const r of rows) { r.storageDeadline = storageDeadlineOf({ size: r.sizeBucket, readyDate: r.readyDate, override: r.storageOverride }); r.storageSet = !!r.storageOverride; delete r.storageOverride; }          // a hand-set date wins; else the day it became ready + days for its size; none if neither          // the screen says so, so nothing is ever cut off silently
     // THE GROUP ORDER'S TOTAL (item cost only — what you pay the store or proxy), for cross-checking against what you actually paid. Worked out in the database over EVERY claim in the order, so it doesn't depend on
     // the status filter, the search box or the list being cut off. Secured and still-requested are kept apart; cancelled claims never count; fees (EMS, customs, postage, packaging) are not in it.
     // …and every group order's item cost, for the cards in the list (whole orders, whatever the list is filtered by)
@@ -254,7 +256,7 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
     const b = z.object({
       costs: z.object(Object.fromEntries(CATS.map((c) => [c, line.optional()]))).partial().optional(),
       pipeline: z.enum(PIPELINE).optional(), status: z.enum(['confirmed', 'cancelled']).optional(),
-      sizeBucket: z.enum(['XS', 'S', 'M', 'L', 'XL']).optional(), weightG: z.number().int().min(1).max(100000).nullable().optional(), storageDeadlineOverride: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+      sizeBucket: z.enum(['XS', 'S', 'M', 'L', 'XL']).optional(), weightG: z.number().int().min(1).max(100000).nullable().optional(), storageDeadlineOverride: realDate.nullable().optional(),
     }).parse(req.body);
     let movedUp = [];
     await withTx(pool, async (conn) => {
@@ -294,6 +296,22 @@ export function claimRoutes(app, { pool, cfg, notifier }) {
 
   // Move many claims to a new stage in one go (e.g. a whole order to "ordered via proxy"). Safer than changing them one at a time: it only
   // touches confirmed claims, and leaves alone anything whose stage is driven by another screen (boxes, packing), saying so for each one.
+
+  // SET OR CLEAR THE STORAGE DEADLINE OF SEVERAL CLAIMS AT ONCE (e.g. the ones whose date was lost in the Notion import). date = a day, or null to go back to the normal rule (the day it became ready + days for its size).
+  // Cancelled claims are left alone. Claims already on that date are left as they are.
+  app.post('/api/admin/claims/storage-deadline', requireAdmin, wrap(async (req, res) => {
+    const b = z.object({ claimIds: z.array(z.number().int().positive()).min(1).max(500), date: realDate.nullable() }).parse(req.body);
+    const out = await withTx(pool, async (conn) => {
+      const ids = [...new Set(b.claimIds)];
+      const [rows] = await conn.query('SELECT id, status, storage_deadline_override AS cur FROM claims WHERE id IN (?) ORDER BY id FOR UPDATE', [ids]);
+      if (rows.length !== ids.length) throw notFound('One of those claims no longer exists');
+      const live = rows.filter((r) => r.status !== 'cancelled'), todo = live.filter((r) => (r.cur ? String(r.cur).slice(0, 10) : null) !== b.date);
+      if (todo.length) await conn.query('UPDATE claims SET storage_deadline_override = ? WHERE id IN (?)', [b.date, todo.map((r) => r.id)]);
+      await audit(conn, req.account.id, 'claims.storage_deadline', 'claim', todo[0]?.id ?? ids[0], { date: b.date, claimIds: todo.map((r) => r.id) });
+      return { changed: todo.length, unchanged: live.length - todo.length, skipped: rows.length - live.length };
+    });
+    res.json({ ok: true, date: b.date, ...out });
+  }));
 
   // CHANGE THE PRICE OF SEVERAL CLAIMS AT ONCE (see lib/reprice-claims.js). `preview: true` runs the real thing and rolls it back, so it shows exactly what will happen. The people affected are emailed (those with emails on)
   // unless notify is false.

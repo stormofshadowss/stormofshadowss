@@ -102,7 +102,7 @@ test('PRIVATE AND CLOSED group orders are on the list (and labelled); a cancelle
   await api('POST', `/api/admin/items/${dead}/cancel`, { confirm: 'Dead item' }); await api('POST', `/api/admin/orders/${gone}/cancel`, { confirm: 'Cancelled order' });
   const p = await open(); await openPanel(p); const labels = p.qa('select[name="orderId"] option', panel(p)).map((o) => p.text(o));
   assert.ok(labels.includes('Secret DM order (private)')); assert.ok(labels.includes('Finished order (closed)')); assert.ok(!labels.some((l) => /Cancelled order/.test(l)));
-  await pick(p, { order: priv }); assert.deepEqual(p.qa('select[name="itemId"] option', panel(p)).map((o) => p.text(o)).slice(1), ['Kept — £10.00']); void keep; p.close();
+  await pick(p, { order: priv }); assert.deepEqual(p.qa('select[name="itemId"] option', panel(p)).map((o) => p.text(o)).slice(1), ['Kept — £10.00', '＋ New item…'], 'the real items, then the quick-entry choice'); void keep; p.close();
 });
 
 test('WHAT YOU TYPED SURVIVES: other changes on the page (Expand all, a filter) do not wipe the panel', async () => {

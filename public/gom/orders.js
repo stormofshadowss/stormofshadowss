@@ -78,16 +78,30 @@
     if (it.closed) return `<span class="pill dim" data-item-state="date">Closed ${fmtDate(it.closeDate)}</span><div><button class="sm secondary" data-act="item-reopen" data-id="${it.id}">Reopen</button>${it.hidden ? '' : ` <button class="sm secondary" data-act="item-hide" data-id="${it.id}" title="Take it off the joiners\' order page. Claims already on it stay.">Hide</button>`}</div>`;
     return `${it.closeDate ? `<span data-item-state="dated">${fmtDate(it.closeDate)}</span>` : '<span class="sub">with the order</span>'}<div><button class="sm secondary" data-act="item-close" data-id="${it.id}">Close now</button></div>`;
   }
+  // A handle to drag the row, and ▲ ▼ to move it one place: the order of this list is the order joiners see the items in.
+  const reorderCell = (it) => {
+    if (currentOrder()?.isCards) return '<td></td>';
+    const list = currentOrder().items || [], at = list.findIndex((x) => x.id === it.id);
+    return `<td class="reorder-cell"><span class="drag-handle" draggable="true" data-drag="${it.id}" title="Drag to move this item" aria-label="Drag to move">⠿</span><button type="button" class="sm secondary" data-act="item-up" data-id="${it.id}" aria-label="Move up" title="Move up" ${at <= 0 ? 'disabled' : ''}>▲</button><button type="button" class="sm secondary" data-act="item-down" data-id="${it.id}" aria-label="Move down" title="Move down" ${at === list.length - 1 ? 'disabled' : ''}>▼</button></td>`;
+  };
+  // Move an item (and its claims) to another group order: a choice of the group orders it can go to.
+  const moveField = (it) => {
+    if (currentOrder()?.isCards || it.cancelled) return '';
+    const targets = orders.filter((x) => x.id !== itemsFor && !x.cancelled && !x.archivedAt && !x.isCards);
+    if (!targets.length) return '';
+    return `<div class="full" data-move-item><label>Move to another group order</label><div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center"><select data-move-target aria-label="Group order to move to"><option value="">Choose a group order…</option>${targets.map((x) => `<option value="${x.id}">${esc(x.group)} — ${esc(x.title)}${x.status === 'closed' ? ' (closed)' : ''}</option>`).join('')}</select><button type="button" class="sm secondary" data-act="item-move" data-id="${it.id}">Move it…</button></div><div class="sub">Moves this item and all its claims there, to the end of that group order's list — nothing is deleted or re-made.</div></div>`;
+  };
   function itemRow(it) {
     if (editingItem === it.id) {
-      return `<tr><td colspan="9"><form data-form="edit-item" data-id="${it.id}"><div class="formgrid">
+      return `<tr><td colspan="10"><form data-form="edit-item" data-id="${it.id}"><div class="formgrid">
         <div class="span2"><label>Title</label><input name="title" value="${esc(it.title)}" maxlength="160" required></div>
         <div><label>Price (£)</label><input name="price" type="number" step="0.01" min="0" value="${it.priceTbc ? '' : it.price}" ${it.priceTbc ? 'disabled' : 'required'}><label class="chk" style="display:flex; margin-top:6px"><input type="checkbox" name="priceTbc" ${it.priceTbc ? 'checked' : ''}> Price to be confirmed (TBC)</label><div class="sub" data-price-note>Claims that haven't been secured yet will switch to the new price. Anything already secured keeps the price it was secured at. Tick TBC if the price isn't final yet: people can still claim, but nothing can be secured until you set a price.</div></div>
         <div class="full"><label>Description (optional)</label><textarea name="description" rows="3" maxlength="2000" style="width:100%; padding:10px 12px; border:1.5px solid var(--line); border-radius:8px; font:inherit" placeholder="Anything joiners should know…">${esc(it.description || '')}</textarea></div>
-        ${['independent', 'set'].includes(it.type) && it.members.length ? `<div class="full" data-members-edit><label>Member names and prices</label>
-          <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:8px">${it.members.map((m) => `<div style="display:flex; gap:6px"><input data-member-id="${m.id}" data-orig="${esc(m.name)}" data-orig-price="${m.ownPrice ?? ''}" value="${esc(m.name)}" maxlength="80" aria-label="Member name" style="flex:1; min-width:0"><input data-member-price type="number" step="0.01" min="0" inputmode="decimal" value="${m.ownPrice ?? ''}" placeholder="${it.priceTbc ? 'TBC' : money(it.price).replace('£', '')}" aria-label="Price (blank = the item's price)" style="width:84px"></div>`).join('')}</div>
-          <div class="sub">Fix a spelling, or give a size its own price (blank = the item's price) — the new name is carried through to any claims already made, and unsecured claims on a changed price switch to it (secured ones keep theirs). To add or remove members, make a new item.</div>
+        ${['independent', 'set'].includes(it.type) && it.members.length ? `<div class="full" data-members-edit><label>Member names${it.type === 'independent' ? ', prices and limits' : ' and prices'}</label>
+          <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:8px">${it.members.map((m) => `<div style="display:flex; gap:6px"><input data-member-id="${m.id}" data-orig="${esc(m.name)}" data-orig-price="${m.ownPrice ?? ''}" value="${esc(m.name)}" maxlength="80" aria-label="Member name" style="flex:1; min-width:0"><input data-member-price type="number" step="0.01" min="0" inputmode="decimal" value="${m.ownPrice ?? ''}" placeholder="${it.priceTbc ? 'TBC' : money(it.price).replace('£', '')}" aria-label="Price (blank = the item's price)" style="width:84px">${it.type === 'independent' ? `<input data-member-limit type="number" min="1" max="9999" inputmode="numeric" value="${m.ownLimit ?? ''}" data-orig-limit="${m.ownLimit ?? ''}" placeholder="limit" aria-label="Limit for this member (blank = no number of its own)" style="width:72px">` : ''}</div>`).join('')}</div>
+          <div class="sub">Fix a spelling, or give a size its own price (blank = the item's price) — the new name is carried through to any claims already made, and unsecured claims on a changed price switch to it (secured ones keep theirs). To add or remove members, make a new item.${it.type === 'independent' ? ' <strong>Limit</strong> is how many of that member can be claimed in total (blank = none of its own): it replaces the item’s “each member” limit for that member, and the whole-item limit above still caps the total. Lowering one never cancels claims already made.' : ''}</div>
           ${it.members.some((m) => SPLIT.test(m.name)) ? '<div class="btn-row" style="margin-top:6px"><button type="button" class="sm secondary" data-act="split-prices">Move “name=price” into the name and price boxes</button></div>' : ''}</div>` : ''}
+        ${it.type === 'size' && it.variantLimits?.length ? `<div class="full" data-variants-edit><label>Limit for each size</label><div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:8px">${it.variantLimits.map((v) => `<div style="display:flex; gap:6px; align-items:center"><span style="min-width:34px">${esc(v.label)}</span><input data-variant-id="${v.id}" data-orig-limit="${v.ownLimit ?? ''}" type="number" min="1" max="9999" inputmode="numeric" value="${v.ownLimit ?? ''}" placeholder="limit" aria-label="Limit for size ${esc(v.label)} (blank = no number of its own)" style="width:80px"></div>`).join('')}</div><div class="sub">How many of each size can be claimed in total (blank = none of its own). It replaces the item’s “each size” limit for that size, and the whole-item limit above still caps the total. Lowering one never cancels claims already made.</div></div>` : ''}
         <div class="full">${GOM.pictureControl('item', it.id, it.image, 'Item picture')}</div>
         <div><label>Weight of one (g), optional</label><input name="weightG" type="number" min="1" max="100000" step="1" value="${it.weightG ?? ''}" placeholder="e.g. 120" style="max-width:130px"><div class="sub">Carries over to the Warehouse. Changing it reaches every claim that isn't in a box yet (one you typed a weight on keeps its own).</div></div>
         ${dateInput('paymentDeadline', it.ownPaymentDeadline, "Pay by (blank = the GO's date)")}
@@ -97,12 +111,13 @@
         <div><label>Purchase limit (blank = none)</label><input name="purchaseLimit" type="number" min="1" max="9999" inputmode="numeric" placeholder="e.g. 5" value="${it.limit ? it.limit.n : ''}"><div class="sub">At most this many across everyone, first come first served. Lowering it never cancels claims people already have — it only stops new ones.</div></div>
         ${['set', 'independent', 'size'].includes(it.type) ? `<div><label>The limit counts</label><select name="limitScope"><option value="item" ${it.limit?.scope === 'option' ? '' : 'selected'}>The whole item together</option><option value="option" ${it.limit?.scope === 'option' ? 'selected' : ''}>Each member / size separately</option></select></div>` : ''}
         <div><label>Proxy (blank = the GO's)</label><input name="proxy" list="proxyList" value="${esc(it.proxy && it.proxy !== currentOrder().proxy ? it.proxy : '')}"></div>
+        ${moveField(it)}
       </div>
       <p class="sub">Changing the price only affects future claims — existing claims keep the price they were made at.</p>
       <p class="msg" data-msg hidden></p>
       <div class="btn-row"><button type="submit" class="sm">Save</button><button type="button" class="sm secondary" data-act="cancel-item-edit">Cancel</button></div></form></td></tr>`;
     }
-    return `<tr><td>${it.image ? `<img class="thumb sm" src="${esc(it.image.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}${esc(it.title)}${it.hidden ? ` <span class="pill warn" data-hidden-item title="Joiners can't see or claim this — only you can add it for people">Hidden from joiners</span> <button class="sm secondary" data-act="item-show" data-id="${it.id}" title="Let joiners see it again">Show</button>` : ''}${it.noEms ? ' <span class="pill" data-no-ems title="Carries no share of the EMS when it is boxed">no EMS</span>' : ''}${it.noCustoms ? ' <span class="pill" data-no-customs title="Carries no share of the customs when it is boxed">no customs</span>' : ''}${it.description ? `<div class="sub" style="white-space:pre-line">${esc(it.description.length > 140 ? it.description.slice(0, 140) + '…' : it.description)}</div>` : ''}</td><td>${esc(typeName[it.type])}</td><td class="nowrap">${it.priceTbc ? '<span class="pill warn">TBC</span>' : money(it.price)}</td>
+    return `<tr data-row-id="${it.id}">${reorderCell(it)}<td>${it.image ? `<img class="thumb sm" src="${esc(it.image.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}${esc(it.title)}${it.hidden ? ` <span class="pill warn" data-hidden-item title="Joiners can't see or claim this — only you can add it for people">Hidden from joiners</span> <button class="sm secondary" data-act="item-show" data-id="${it.id}" title="Let joiners see it again">Show</button>` : ''}${it.noEms ? ' <span class="pill" data-no-ems title="Carries no share of the EMS when it is boxed">no EMS</span>' : ''}${it.noCustoms ? ' <span class="pill" data-no-customs title="Carries no share of the customs when it is boxed">no customs</span>' : ''}${it.description ? `<div class="sub" style="white-space:pre-line">${esc(it.description.length > 140 ? it.description.slice(0, 140) + '…' : it.description)}</div>` : ''}</td><td>${esc(typeName[it.type])}</td><td class="nowrap">${it.priceTbc ? '<span class="pill warn">TBC</span>' : money(it.price)}</td>
       <td class="nowrap">${fmtDate(it.payBy)}${it.ownPaymentDeadline ? ' <span class="sub">(own)</span>' : ''}</td>
       <td class="nowrap" data-closes>${closesCell(it)}</td><td>${esc(it.proxy || '—')}</td>
       <td>${itemSummary(it)}</td><td>${it.claimed}${limitCell(it)}</td><td>${currentOrder()?.isCards ? '' : `<button class="sm secondary" data-act="edit-item" data-id="${it.id}">Edit</button> <button class="sm secondary danger" data-act="delete-item" data-id="${it.id}">Delete</button>`}${it.cancelled ? ' <span class="pill warn" data-cancelled>Cancelled</span>' : ` <button class="sm secondary danger" data-act="cancel-item" data-id="${it.id}">Cancel…</button>`}${it.type === 'set' ? ` <button class="sm secondary" data-act="fixed" data-id="${it.id}">Fixed claimers</button>` : ''}</td></tr>`;
@@ -119,8 +134,8 @@
   function itemsPanel() {
     const o = currentOrder();
     return `<div class="card" id="itemsPanel"><div class="row"><h2 style="margin:0">Items — ${esc(o.title)}</h2><div class="btn-row" style="margin:0"><button class="sm secondary" data-act="benefits" title="Spend £X on these items, get N photocards">Purchase benefits</button><button class="sm secondary" data-act="close-items">Close</button></div></div>
-      <div class="scroll"><table class="grid"><thead><tr><th>Item</th><th>Type</th><th>Price</th><th>Pay by</th><th>Closes</th><th>Proxy</th><th>Parts / sizes</th><th>Claimed</th><th></th></tr></thead>
-      <tbody>${o.items.length ? o.items.map(itemRow).join('') : '<tr><td colspan="9" class="muted">No items yet — add the first one below.</td></tr>'}</tbody></table></div>
+      <div class="scroll"><table class="grid"><thead><tr><th></th><th>Item</th><th>Type</th><th>Price</th><th>Pay by</th><th>Closes</th><th>Proxy</th><th>Parts / sizes</th><th>Claimed</th><th></th></tr></thead>
+      <tbody>${o.items.length ? o.items.map(itemRow).join('') : '<tr><td colspan="10" class="muted">No items yet — add the first one below.</td></tr>'}</tbody></table></div>
       ${o.isCards ? '<p class="sub" data-cards-note style="margin-top:14px">This is a photocard bundle — its cards (prices, copies, pictures) are changed from the Cards tab, not here.</p>' : ''}<h2 style="margin-top:20px" ${o.isCards ? 'hidden' : ''}>Add an item</h2>
       <form data-form="new-item" data-id="${o.id}" ${o.isCards ? 'hidden' : ''}><div class="formgrid">
         <div class="span2"><label>Type</label><select name="type">${TYPES.map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select></div>
@@ -260,6 +275,11 @@
   // under "Claimed" in the items list: the purchase limit and how much of it is used (whole item, or the options that are full)
   const limitCell = (it) => {
     const l = it.limit; if (!l) return '';
+    if (l.options && Object.values(l.options).some((x) => x.own)) {                                              // some option has a number of its own: say what is left of each
+      const bits = Object.entries(l.options).map(([nm, x]) => `${esc(nm)} ${x.left > 0 ? `${x.left} left` : '<strong>full</strong>'}`);
+      const head = l.scope === 'item' ? `Limit ${l.n} in total · ${l.left > 0 ? `${l.left} left` : '<strong>full</strong>'} · ` : l.n ? `Limit ${l.n} of each unless set · ` : '';
+      return `<div class="sub" data-item-limit>${head}${bits.join(' · ')}</div>`;
+    }
     if (l.scope === 'item') return `<div class="sub" data-item-limit>Limit ${l.n} · ${l.left > 0 ? `${l.left} left` : l.used > l.n ? `<strong>full (${l.used - l.n} over)</strong>` : '<strong>full</strong>'}</div>`;
     const full = Object.entries(l.options).filter(([, o]) => o.left === 0).map(([n]) => n);
     return `<div class="sub" data-item-limit>Limit ${l.n} of each${full.length ? ` · full: ${full.map(esc).join(', ')}` : ''}</div>`;
@@ -296,6 +316,33 @@
     await reload(true); GOM.toast(`Deleted “${name}”.`);
   }
 
+  const idsNow = () => (currentOrder().items || []).map((i) => i.id);
+  async function saveOrder(ids) {                                                                              // the whole new order goes in one go; a changed list says so and refreshes
+    const r = await api('POST', `/api/admin/orders/${itemsFor}/items/reorder`, { itemIds: ids });
+    if (!r.ok) { GOM.toast(errText(r), true); if (r.json?.code === 'stale_list') await reload(true); return false; }
+    await reload(true); return true;
+  }
+  let dragId = null;
+  const rowOf = (e) => e.target.closest?.('tr[data-row-id]');
+  const clearDrag = () => { dragId = null; root.querySelectorAll('tr.dragging, tr.drop-before, tr.drop-after').forEach((r) => r.classList.remove('dragging', 'drop-before', 'drop-after')); };
+  const isAfter = (e, row) => { const r = row.getBoundingClientRect(); return e.clientY > r.top + r.height / 2; };
+  function onDragStart(e) {
+    const h = e.target.closest?.('[data-drag]'); if (!h) return;
+    if (editingItem) { e.preventDefault?.(); return GOM.toast('Finish or cancel the edit first, then move items.', true); }
+    dragId = Number(h.dataset.drag); try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(dragId)); } catch { /* some browsers need this, some don't have it */ }
+    h.closest('tr').classList.add('dragging');
+  }
+  function onDragOver(e) {
+    if (dragId === null) return; const row = rowOf(e); if (!row) return; e.preventDefault();
+    root.querySelectorAll('tr.drop-before, tr.drop-after').forEach((r) => r.classList.remove('drop-before', 'drop-after'));
+    if (Number(row.dataset.rowId) !== dragId) row.classList.add(isAfter(e, row) ? 'drop-after' : 'drop-before');
+  }
+  async function onDrop(e) {
+    if (dragId === null) return; const row = rowOf(e), from = dragId, after = row ? isAfter(e, row) : false; clearDrag(); if (!row) return; e.preventDefault();
+    const target = Number(row.dataset.rowId); if (target === from) return;
+    const before = idsNow(), ids = before.filter((x) => x !== from); ids.splice(ids.indexOf(target) + (after ? 1 : 0), 0, from);
+    if (ids.join() !== before.join()) await saveOrder(ids);
+  }
   async function reload(keepOpen) { const keep = itemsFor; await render(root); if (keepOpen) { itemsFor = keep; draw(); } }
 
   function parseExtra(type, raw) {
@@ -375,14 +422,21 @@
       if (r.json.skipped.length) await GOM.alert(`Some weren't copied:\n\n${r.json.skipped.join('\n')}`);
     } else if (kind === 'edit-item') {
       if (!form.elements.priceTbc.checked && val(form, 'price') === '') return showMsg(form, 'Enter a price, or tick "price to be confirmed".');
-      const renames = [], prices = [];
+      const renames = [], prices = [], memberLimits = [], variantLimits = [];
       for (const inp of $$('input[data-member-id]', form)) {
         const name = inp.value.trim(); if (!name) return showMsg(form, "A member's name can't be blank."); if (name !== inp.dataset.orig) renames.push({ id: Number(inp.dataset.memberId), name });
         const raw = inp.parentElement.querySelector('[data-member-price]').value.trim(), price = raw === '' ? null : Number(raw); if (price !== null && (Number.isNaN(price) || price < 0)) return showMsg(form, `“${name}” has a price that isn't a number.`);
         if ((price === null ? '' : String(price)) !== (inp.dataset.origPrice === '' ? '' : String(Number(inp.dataset.origPrice)))) prices.push({ id: Number(inp.dataset.memberId), price });
+        const lbox = inp.parentElement.querySelector('[data-member-limit]');                                         // a number for just this member (blank = none of its own)
+        if (lbox) { const lraw = lbox.value.trim(), lim = lraw === '' ? null : Number(lraw); if (lim !== null && (!Number.isInteger(lim) || lim < 1)) return showMsg(form, `“${name}” needs a limit that's a whole number, 1 or more — or leave it blank.`); if ((lim === null ? '' : String(lim)) !== lbox.dataset.origLimit) memberLimits.push({ id: Number(inp.dataset.memberId), limit: lim }); }
+      }
+      for (const inp of $$('input[data-variant-id]', form)) {                                                      // …and for each size
+        const lraw = inp.value.trim(), lim = lraw === '' ? null : Number(lraw), label = inp.getAttribute('aria-label').replace(/^Limit for size /, '').replace(/ \(blank.*$/, '');
+        if (lim !== null && (!Number.isInteger(lim) || lim < 1)) return showMsg(form, `Size ${label} needs a limit that's a whole number, 1 or more — or leave it blank.`);
+        if ((lim === null ? '' : String(lim)) !== inp.dataset.origLimit) variantLimits.push({ id: Number(inp.dataset.variantId), limit: lim });
       }
       const r = await api('PATCH', `/api/admin/items/${form.dataset.id}`, {
-        ...(renames.length ? { renameMembers: renames } : {}), ...(prices.length ? { memberPrices: prices } : {}),
+        ...(renames.length ? { renameMembers: renames } : {}), ...(prices.length ? { memberPrices: prices } : {}), ...(memberLimits.length ? { memberLimits } : {}), ...(variantLimits.length ? { variantLimits } : {}),
         title: val(form, 'title'), ...priceBody(form), description: val(form, 'description'), weightG: val(form, 'weightG') === '' ? null : Number(val(form, 'weightG')),
         paymentDeadline: val(form, 'paymentDeadline') || null, closeDate: val(form, 'closeDate') || null, proxy: val(form, 'proxy') || null,
         noEms: form.elements.noEms.checked, noCustoms: form.elements.noCustoms.checked, hidden: form.elements.hidden.checked, purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), ...(form.elements.limitScope ? { limitScope: val(form, 'limitScope') } : {}),
@@ -478,6 +532,23 @@
         if (!(await GOM.confirm(`Close “${it.title}” for claims now?\n\nJoiners will see it greyed out, saying “Closed for claims”. The rest of the group order stays open, anything already claimed is untouched, and you can reopen it any time.`, { ok: 'Close it', cancel: 'Not yet' }))) break;
         const r = await api('PATCH', `/api/admin/items/${id}`, { closed: true }); if (!r.ok) return GOM.toast(errText(r), true); await reload(true); GOM.toast('Closed for claims.'); break;
       }
+      case 'item-up': case 'item-down': {                                                                          // one place up or down
+        if (editingItem) return GOM.toast('Finish or cancel the edit first, then move items.', true);
+        const ids = idsNow(), i = ids.indexOf(id), j = b.dataset.act === 'item-up' ? i - 1 : i + 1; if (i < 0 || j < 0 || j >= ids.length) break;
+        [ids[i], ids[j]] = [ids[j], ids[i]]; await saveOrder(ids); break;
+      }
+      case 'item-move': {                                                                                          // to another group order: say what changes, then ask
+        const toId = Number(b.closest('[data-move-item]').querySelector('[data-move-target]').value); if (!toId) return GOM.toast('Choose the group order to move it to.', true);
+        const pv = await api('POST', `/api/admin/items/${id}/move`, { toOrderId: toId, preview: true }); if (!pv.ok) return GOM.toast(errText(pv), true);
+        const p = pv.json, day = (d) => (d ? fmtDate(d) : 'no date'), today = new Date().toISOString().slice(0, 10);
+        const lines = [`Move “${p.item}” from “${p.from.title}” to “${p.to.title}”?`, p.claims ? `Its ${p.claims} claim${p.claims === 1 ? '' : 's'} (${p.liveClaims} not cancelled) move with it — nothing is deleted or re-made.` : 'It has no claims yet.', "It goes to the end of that group order's list."];
+        if (p.payBy.changes) lines.push(`Pay-by date: ${day(p.payBy.from)} → ${day(p.payBy.to)} for claims secured from now on (claims already secured keep theirs).`);
+        if (p.proxy.changes) lines.push(`Proxy: ${p.proxy.from || 'none'} → ${p.proxy.to || 'none'}.`);
+        if (p.to.status === 'closed' || (p.to.closeDate && p.to.closeDate < today)) lines.push(`“${p.to.title}” is closed, so joiners won't be able to claim this item there.`);
+        if (!(await GOM.confirm(lines.join('\n\n'), { ok: 'Move it', cancel: 'Not yet' }))) break;
+        const r = await api('POST', `/api/admin/items/${id}/move`, { toOrderId: toId }); if (!r.ok) return GOM.toast(errText(r), true);
+        editingItem = null; await reload(true); GOM.toast(`Moved “${p.item}” to “${p.to.title}”.`); break;
+      }
       case 'item-hide': {                                                           // one click: off the joiners' order page. Claims already on it are untouched, and Show brings it back.
         const r = await api('PATCH', `/api/admin/items/${id}`, { hidden: true }); if (!r.ok) return GOM.toast(errText(r), true); await reload(true); GOM.toast('Hidden from joiners. Claims already on it are untouched.'); break;
       }
@@ -537,7 +608,7 @@
 
   GOM.registerTab({
     id: 'orders', label: 'Group Orders',
-    async render(el) { await render(el); el.onclick = onClick; el.onsubmit = onSubmit; el.onchange = onChange; el.oninput = (e) => {
+    async render(el) { await render(el); el.onclick = onClick; el.onsubmit = onSubmit; el.onchange = onChange; el.ondragstart = onDragStart; el.ondragover = onDragOver; el.ondrop = onDrop; el.ondragend = clearDrag; el.oninput = (e) => {
       if (e.target.matches?.('form[data-form="add-fixed"] input[name="handle"]')) { fixedHint(e.target.form); fixedLookupLater(e.target.form); return; }
       if (e.target.id === 'orderSearch') {                                                   // only the LIST is redrawn, so the cursor stays in the box
         { const d = $('#closedOrders', root); if (d) closedOpen = d.open; const a = $('#archivedOrders', root); if (a) archivedOpen = a.open; }

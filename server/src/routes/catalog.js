@@ -8,8 +8,8 @@ import { deletionPlan, deleteCatalog, itemsOfOrder } from '../lib/delete-catalog
 import { imageOut, removeFiles } from '../lib/images.js';
 import { wrap } from '../lib/http.js';
 import { requireAdmin, requireLogin, audit } from '../auth.js';
-import { withTx } from '../db.js';
-import { bad, notFound } from '../errors.js';
+import { withTx, withRollback } from '../db.js';
+import { bad, conflict, notFound } from '../errors.js';
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD').nullable().optional();
 const money = z.number().min(0).max(100000).refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, 'At most 2 decimal places');
@@ -40,18 +40,26 @@ async function loadOrders(pool, whereSql, params, { admin }) {
     `SELECT i.id, i.no_ems, i.no_customs, i.weight_g, i.order_id, i.item_type, i.title, i.cancelled_at, i.description, i.price, i.price_tbc, i.payment_deadline, i.close_date, i.closed_by_hand, i.requires_full_set, i.purchase_limit, i.limit_scope, i.hidden_from_public, p.name AS proxy_name, im.filename AS image_file, im.width AS image_w, im.height AS image_h
        FROM items i LEFT JOIN proxies p ON p.id = i.proxy_id LEFT JOIN images im ON im.id = i.image_id WHERE i.order_id IN (?) ${admin ? '' : 'AND i.cancelled_at IS NULL AND i.hidden_from_public = 0'} ORDER BY i.sort_order, i.id`, [ids]);          // hidden items are for the GOM only
   const itemIds = items.map((i) => i.id);
-  const [members] = itemIds.length ? await pool.query('SELECT id, item_id, name, price FROM item_members WHERE item_id IN (?) ORDER BY sort_order, id', [itemIds]) : [[]];
-  const [variants] = itemIds.length ? await pool.query('SELECT item_id, label FROM item_variants WHERE item_id IN (?) ORDER BY sort_order, id', [itemIds]) : [[]];
+  const [members] = itemIds.length ? await pool.query('SELECT id, item_id, name, price, qty_limit FROM item_members WHERE item_id IN (?) ORDER BY sort_order, id', [itemIds]) : [[]];
+  const [variants] = itemIds.length ? await pool.query('SELECT id, item_id, label, qty_limit FROM item_variants WHERE item_id IN (?) ORDER BY sort_order, id', [itemIds]) : [[]];
   const [counts] = itemIds.length ? await pool.query("SELECT item_id, COUNT(*) AS n FROM claims WHERE item_id IN (?) AND status <> 'cancelled' GROUP BY item_id", [itemIds]) : [[]];
   const countOf = Object.fromEntries(counts.map((c) => [c.item_id, c.n]));
   // for items whose purchase limit counts each version / member / size on its own: how many of each are claimed
-  const byOptionIds = items.filter((i) => i.purchase_limit && i.limit_scope === 'option' && hasOptions(i.item_type)).map((i) => i.id);
+  // …and an option can have a limit of its own (washi tape: Green 3, Red 2) — member items and size items
+  const ownOf = {}; for (const m of members) if (m.qty_limit !== null && m.qty_limit !== undefined) (ownOf[m.item_id] ||= {})[m.name] = Number(m.qty_limit);
+  for (const v of variants) if (v.qty_limit !== null && v.qty_limit !== undefined) (ownOf[v.item_id] ||= {})[v.label] = Number(v.qty_limit);
+  const typeOf = Object.fromEntries(items.map((i) => [i.id, i.item_type]));
+  for (const id of Object.keys(ownOf)) if (!['independent', 'size'].includes(typeOf[id])) delete ownOf[id];
+  const byOptionIds = items.filter((i) => (i.purchase_limit && i.limit_scope === 'option' && hasOptions(i.item_type)) || ownOf[i.id]).map((i) => i.id);
   const [optCounts] = byOptionIds.length ? await pool.query("SELECT item_id, COALESCE(member_name, variant_label) AS opt, COUNT(*) AS n FROM claims WHERE item_id IN (?) AND status <> 'cancelled' GROUP BY item_id, opt", [byOptionIds]) : [[]];
   const limitOf = (i, names) => {
-    if (!i.purchase_limit) return null;
-    const n = i.purchase_limit, left = (used) => Math.max(0, n - Number(used || 0));
-    if (i.limit_scope === 'option' && hasOptions(i.item_type)) return { n, scope: 'option', options: Object.fromEntries(names.map((nm) => { const used = Number(optCounts.find((o) => o.item_id === i.id && o.opt === nm)?.n || 0); return [nm, { used, left: left(used) }]; })) };
-    const used = countOf[i.id] || 0; return { n, scope: 'item', used, left: left(used) };
+    const own = ownOf[i.id], hasOwn = !!own && Object.keys(own).length > 0;
+    if (!i.purchase_limit && !hasOwn) return null;
+    const n = i.purchase_limit ? Number(i.purchase_limit) : null, left = (lim, used) => Math.max(0, lim - Number(used || 0)), byOpt = i.limit_scope === 'option' && hasOptions(i.item_type);
+    // per option: its own number, else the item's "each option" number; an option with neither has no limit and isn't listed. (n / own are only added when some option has a number of its own, so the older shape is unchanged.)
+    const options = (byOpt || hasOwn) ? Object.fromEntries(names.map((nm) => { const lim = own?.[nm] ?? (byOpt ? n : null); if (lim === null || lim === undefined) return null; const used = Number(optCounts.find((o) => o.item_id === i.id && o.opt === nm)?.n || 0); return [nm, { used, left: left(lim, used), ...(hasOwn ? { n: lim, own: own?.[nm] !== undefined } : {}) }]; }).filter(Boolean)) : undefined;
+    if (n && !byOpt) { const used = countOf[i.id] || 0; return { n, scope: 'item', used, left: left(n, used), ...(options ? { options } : {}) }; }
+    return { n, scope: 'option', options };
   };
   const setItemIds = items.filter((i) => i.item_type === 'set').map((i) => i.id);
   const [partCounts] = setItemIds.length ? await pool.query("SELECT item_id, member_name, COUNT(*) AS n FROM claims WHERE item_id IN (?) AND set_id IS NOT NULL AND status <> 'cancelled' GROUP BY item_id, member_name", [setItemIds]) : [[]];
@@ -66,7 +74,7 @@ async function loadOrders(pool, whereSql, params, { admin }) {
     ...(admin ? { proxy: o.proxy_name, isTest: !!o.is_test } : {}),
     items: items.filter((i) => i.order_id === o.id).map((i) => {
       // each part carries its effective price: its own if it has one, else the item's
-      const parts = members.filter((m) => m.item_id === i.id).map((m) => ({ ...(admin ? { id: m.id, ownPrice: m.price === null || m.price === undefined ? null : Number(m.price) } : {}), name: m.name, price: m.price ?? (i.price_tbc ? null : i.price) }));   // null = price still TBC
+      const parts = members.filter((m) => m.item_id === i.id).map((m) => ({ ...(admin ? { id: m.id, ownPrice: m.price === null || m.price === undefined ? null : Number(m.price), ownLimit: m.qty_limit ?? null } : {}), name: m.name, price: m.price ?? (i.price_tbc ? null : i.price) }));   // null = price still TBC
       return {
       id: i.id, type: i.item_type, title: i.title, cancelled: !!i.cancelled_at, ...(admin ? { hidden: !!i.hidden_from_public, noEms: !!i.no_ems, noCustoms: !!i.no_customs, weightG: i.weight_g ?? null } : {}), description: i.description || '', image: imageOut(i.image_file, i.image_w, i.image_h), price: i.price_tbc ? null : i.price, priceTbc: !!i.price_tbc,
       // an item's own pay-by date wins; otherwise the GO's applies
@@ -80,6 +88,7 @@ async function loadOrders(pool, whereSql, params, { admin }) {
         sets: setRows.filter((s) => s.item_id === i.id).map((s) => ({ number: s.set_number, decision: s.admin_decision, taken: takenRows.filter((t) => t.set_id === s.id).map((t) => t.member_name) })),
         requiresFullSet: !!i.requires_full_set, wholeSetPrice: parts.some((m) => m.price === null) ? null : Math.round(parts.reduce((s, m) => s + m.price, 0) * 100) / 100 } : {}),
       variants: variants.filter((v) => v.item_id === i.id).map((v) => v.label),
+      ...(admin && i.item_type === 'size' ? { variantLimits: variants.filter((v) => v.item_id === i.id).map((v) => ({ id: v.id, label: v.label, ownLimit: v.qty_limit ?? null })) } : {}),
       claimed: countOf[i.id] || 0,
       limit: limitOf(i, i.item_type === 'size' ? variants.filter((v) => v.item_id === i.id).map((v) => v.label) : parts.map((m) => m.name)),
       ...(admin ? { proxy: i.proxy_name || o.proxy_name, ownPaymentDeadline: i.payment_deadline } : {}),
@@ -94,6 +103,50 @@ export function catalogRoutes(app, { pool, cfg }) {
   const planReply = (p) => ({ kind: p.kind, id: p.id, title: p.title, summary: p.summary, blockers: p.blockers,
     claims: p.claims.slice(0, 12).map((x) => ({ handle: x.handle, label: x.label, status: x.status, paid: Number(x.paid) })) });
   app.get('/api/admin/orders/:id/cancel-plan', requireAdmin, wrap(async (req, res) => res.json(planReply(await withTx(pool, (conn) => cancelPlan(conn, { orderId: Number(req.params.id) }))))));
+  // PUT THE ITEMS OF A GROUP ORDER IN A NEW ORDER (the order joiners see them in, and the order of your list). The whole list is sent, so it is saved in one go; if the list has changed since you opened it you are told to refresh.
+  app.post('/api/admin/orders/:id/items/reorder', requireAdmin, wrap(async (req, res) => {
+    const b = z.object({ itemIds: z.array(z.number().int().positive()).min(1).max(500) }).parse(req.body), orderId = Number(req.params.id);
+    await withTx(pool, async (conn) => {
+      const [[o]] = await conn.query('SELECT id, is_cards FROM group_orders WHERE id = ? FOR UPDATE', [orderId]); if (!o) throw notFound('No such group order');
+      if (o.is_cards) throw conflict('This is a card bundle — change it from the Cards tab.', 'managed_in_cards');
+      const [rows] = await conn.query('SELECT id FROM items WHERE order_id = ? ORDER BY id FOR UPDATE', [orderId]);
+      const have = rows.map((r) => r.id), want = [...b.itemIds].sort((x, y) => x - y);
+      if (have.length !== want.length || have.some((id, i) => id !== want[i])) throw conflict('This list has changed since you opened it — refresh and try again.', 'stale_list');
+      for (const [i, id] of b.itemIds.entries()) await conn.query('UPDATE items SET sort_order = ? WHERE id = ?', [i + 1, id]);
+      await audit(conn, req.account.id, 'order.reorder_items', 'order', orderId, { itemIds: b.itemIds });
+    });
+    res.json({ ok: true });
+  }));
+
+  // MOVE AN ITEM TO ANOTHER GROUP ORDER — with all its claims, to the end of that order's list. Nothing is deleted or re-made. Its pay-by date and proxy follow the new group order unless the item has its own;
+  // claims already secured keep the pay-by date they were given. Refused for card bundles, cancelled / archived orders, a cancelled item, and an item in a purchase benefit. `preview: true` says what would happen and changes nothing.
+  app.post('/api/admin/items/:id/move', requireAdmin, wrap(async (req, res) => {
+    const b = z.object({ toOrderId: z.number().int().positive(), preview: z.boolean().optional() }).parse(req.body), itemId = Number(req.params.id);
+    const run = async (conn) => {
+      const [[it]] = await conn.query('SELECT i.id, i.title, i.order_id, i.proxy_id, i.payment_deadline, i.cancelled_at, px.name AS proxy_name FROM items i LEFT JOIN proxies px ON px.id = i.proxy_id WHERE i.id = ? FOR UPDATE', [itemId]); if (!it) throw notFound('No such item');
+      if (it.order_id === b.toOrderId) throw bad('That item is already in that group order.', 'same_order');
+      const GO = 'SELECT go.id, go.title, go.status, go.close_date, go.payment_deadline, go.is_cards, go.cancelled_at, go.archived_at, px.name AS proxy_name FROM group_orders go LEFT JOIN proxies px ON px.id = go.proxy_id WHERE go.id = ?';
+      const [[from]] = await conn.query(`${GO} FOR UPDATE`, [it.order_id]), [[to]] = await conn.query(`${GO} FOR UPDATE`, [b.toOrderId]); if (!to) throw notFound('No such group order');
+      if (from.is_cards || to.is_cards) throw conflict('A card bundle is managed from the Cards tab — items can\'t be moved in or out of one.', 'managed_in_cards');
+      if (to.cancelled_at || to.archived_at) throw conflict(`“${to.title}” is ${to.cancelled_at ? 'cancelled' : 'archived'}, so nothing can be moved into it.`, 'bad_target');
+      if (it.cancelled_at) throw conflict('A cancelled item can\'t be moved.', 'cancelled');
+      const [[ben]] = await conn.query('SELECT (SELECT COUNT(*) FROM benefit_offer_items WHERE item_id = ?) + (SELECT COUNT(*) FROM benefit_offers WHERE bonus_item_id = ?) AS n', [itemId, itemId]);
+      if (Number(ben.n)) throw conflict('This item is part of a purchase benefit — take it out of the benefit before moving it.', 'in_benefit');
+      const [[cl]] = await conn.query("SELECT COUNT(*) AS total, COALESCE(SUM(status <> 'cancelled'), 0) AS live FROM claims WHERE item_id = ?", [itemId]);
+      const payFrom = dayOf(it.payment_deadline) || dayOf(from.payment_deadline) || null, payTo = dayOf(it.payment_deadline) || dayOf(to.payment_deadline) || null;
+      const proxyFrom = it.proxy_name || from.proxy_name || null, proxyTo = it.proxy_name || to.proxy_name || null;
+      if (!b.preview) {
+        const [[mx]] = await conn.query('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM items WHERE order_id = ?', [b.toOrderId]);
+        await conn.query('UPDATE items SET order_id = ?, sort_order = ? WHERE id = ?', [b.toOrderId, mx.n, itemId]);
+        await conn.query('UPDATE claims SET order_id = ? WHERE item_id = ?', [b.toOrderId, itemId]);
+        await audit(conn, req.account.id, 'item.move', 'item', itemId, { from: from.id, to: to.id, claims: Number(cl.total) });
+      }
+      return { item: it.title, from: { id: from.id, title: from.title }, to: { id: to.id, title: to.title, status: to.status, closeDate: dayOf(to.close_date) }, claims: Number(cl.total), liveClaims: Number(cl.live), payBy: { from: payFrom, to: payTo, changes: payFrom !== payTo, own: !!it.payment_deadline }, proxy: { from: proxyFrom, to: proxyTo, changes: proxyFrom !== proxyTo, own: !!it.proxy_id } };
+    };
+    if (b.preview) return res.json({ preview: true, ...(await withRollback(pool, run)) });
+    res.json({ ok: true, ...(await withTx(pool, run)) });
+  }));
+
   app.get('/api/admin/items/:id/cancel-plan', requireAdmin, wrap(async (req, res) => res.json(planReply(await withTx(pool, (conn) => cancelPlan(conn, { itemId: Number(req.params.id) }))))));
   const doCancel = (what) => wrap(async (req, res) => {
     const { confirm } = z.object({ confirm: z.string().max(300) }).parse(req.body || {});
@@ -260,13 +313,15 @@ export function catalogRoutes(app, { pool, cfg }) {
     if (b.requiresFullSet && b.type !== 'set') throw bad('"Every part must be claimed" only applies to sets');
     if (b.type === 'size' && !(b.variants || []).length) throw bad('Size items need at least one size');
     const id = await withTx(pool, async (conn) => {
-      const [[o]] = await conn.query('SELECT id, close_date FROM group_orders WHERE id = ?', [orderId]);
+      const [[o]] = await conn.query('SELECT id, title, close_date, cancelled_at, archived_at FROM group_orders WHERE id = ?', [orderId]);
       if (!o) throw notFound('No such order');
+      if (o.cancelled_at || o.archived_at) throw conflict(`“${o.title}” is ${o.cancelled_at ? 'cancelled' : 'archived'}, so items can't be added to it.`, 'bad_target');          // (e.g. from a page that was left open)
       checkItemCloseDate(b.closeDate, o.close_date);
       const proxyId = await proxyIdFor(conn, b.proxy);
+      const [[mx]] = await conn.query('SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM items WHERE order_id = ?', [orderId]);            // a new item goes to the end of the list
       const [r] = await conn.query(
-        'INSERT INTO items (order_id, item_type, title, description, price, price_tbc, size_bucket, weight_g, payment_deadline, close_date, proxy_id, requires_full_set, purchase_limit, limit_scope, hidden_from_public, no_ems, no_customs) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-        [orderId, b.type, b.title, b.description || null, b.priceTbc ? 0 : b.price, b.priceTbc ? 1 : 0, b.sizeBucket || 'M', b.weightG ?? null, b.paymentDeadline || null, b.closeDate || null, proxyId, b.requiresFullSet ? 1 : 0, b.purchaseLimit || null, hasOptions(b.type) && b.limitScope === 'option' ? 'option' : 'item', b.hidden ? 1 : 0, b.noEms ? 1 : 0, b.noCustoms ? 1 : 0]);
+        'INSERT INTO items (order_id, item_type, title, description, price, price_tbc, size_bucket, weight_g, payment_deadline, close_date, proxy_id, requires_full_set, purchase_limit, limit_scope, hidden_from_public, no_ems, no_customs, sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        [orderId, b.type, b.title, b.description || null, b.priceTbc ? 0 : b.price, b.priceTbc ? 1 : 0, b.sizeBucket || 'M', b.weightG ?? null, b.paymentDeadline || null, b.closeDate || null, proxyId, b.requiresFullSet ? 1 : 0, b.purchaseLimit || null, hasOptions(b.type) && b.limitScope === 'option' ? 'option' : 'item', b.hidden ? 1 : 0, b.noEms ? 1 : 0, b.noCustoms ? 1 : 0, mx.n]);
       for (const [i, m] of parts.entries()) await conn.query('INSERT INTO item_members (item_id, name, price, sort_order) VALUES (?,?,?,?)', [r.insertId, m.name, m.price, i]);
       for (const [i, v] of (b.variants || []).entries()) await conn.query('INSERT INTO item_variants (item_id, label, sort_order) VALUES (?,?,?)', [r.insertId, v, i]);
       await audit(conn, req.account.id, 'item.create', 'item', r.insertId);
@@ -279,7 +334,7 @@ export function catalogRoutes(app, { pool, cfg }) {
   app.patch('/api/admin/items/:id', requireAdmin, wrap(async (req, res) => {
     const id = Number(req.params.id);
     let repriced = 0, memberRepriced = 0, renamed = [], memberPriced = [];
-    const b = z.object({ paymentDeadline: date, closeDate: date, closed: z.boolean().optional(), proxy: z.string().trim().max(80).nullable().optional(), price: money.optional(), priceTbc: z.boolean().optional(), purchaseLimit: z.number().int().min(1).max(9999).nullable().optional(), limitScope: z.enum(['item', 'option']).optional(), hidden: z.boolean().optional(), noEms: z.boolean().optional(), noCustoms: z.boolean().optional(), weightG: z.number().int().min(1).max(100000).nullable().optional(), renameMembers: z.array(z.object({ id: z.number().int().positive(), name: z.string().trim().max(80) })).max(30).optional(), memberPrices: z.array(z.object({ id: z.number().int().positive(), price: money.nullable() })).max(30).optional(),  title: z.string().trim().min(1).max(160).optional(), description: z.string().trim().max(2000).nullable().optional() }).parse(req.body);
+    const b = z.object({ paymentDeadline: date, closeDate: date, closed: z.boolean().optional(), proxy: z.string().trim().max(80).nullable().optional(), price: money.optional(), priceTbc: z.boolean().optional(), purchaseLimit: z.number().int().min(1).max(9999).nullable().optional(), memberLimits: z.array(z.object({ id: z.number().int().positive(), limit: z.number().int().min(1).max(9999).nullable() })).max(200).optional(), variantLimits: z.array(z.object({ id: z.number().int().positive(), limit: z.number().int().min(1).max(9999).nullable() })).max(200).optional(), limitScope: z.enum(['item', 'option']).optional(), hidden: z.boolean().optional(), noEms: z.boolean().optional(), noCustoms: z.boolean().optional(), weightG: z.number().int().min(1).max(100000).nullable().optional(), renameMembers: z.array(z.object({ id: z.number().int().positive(), name: z.string().trim().max(80) })).max(30).optional(), memberPrices: z.array(z.object({ id: z.number().int().positive(), price: money.nullable() })).max(30).optional(),  title: z.string().trim().min(1).max(160).optional(), description: z.string().trim().max(2000).nullable().optional() }).parse(req.body);
     await withTx(pool, async (conn) => {
       const [[it]] = await conn.query('SELECT i.id, i.item_type, i.price, i.price_tbc, i.close_date, go.close_date AS go_close_date FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id = ? FOR UPDATE', [id]);
       if (!it) throw notFound('No such item');
@@ -293,6 +348,16 @@ export function catalogRoutes(app, { pool, cfg }) {
         if (!['independent', 'set'].includes(it.item_type)) throw bad('Only a member item or a member set has member prices.', 'no_members');
         memberPriced = await setMemberPrices(conn, id, b.memberPrices);
         for (const c of memberPriced) await audit(conn, req.account.id, 'item.member_price', 'item', id, { member: c.name, from: c.from, to: c.to });
+      }
+      if (b.memberLimits?.length || b.variantLimits?.length) {                                                       // a number for ONE option (washi tape: Green 3, Red 2). Lowering never cancels claims already made.
+        const isSize = it.item_type === 'size', list = isSize ? b.variantLimits : b.memberLimits;
+        if (!['independent', 'size'].includes(it.item_type) || !list?.length) throw bad('Only a member item or a size item can have a limit on each option.', 'no_options');
+        for (const { id: oid, limit } of list) {
+          const [[row]] = await conn.query(isSize ? 'SELECT id, label AS name FROM item_variants WHERE id = ? AND item_id = ?' : 'SELECT id, name FROM item_members WHERE id = ? AND item_id = ?', [oid, id]);
+          if (!row) throw bad("That option isn't on this item.", 'no_such_option');
+          await conn.query(`UPDATE ${isSize ? 'item_variants' : 'item_members'} SET qty_limit = ? WHERE id = ?`, [limit, oid]);
+          await audit(conn, req.account.id, 'item.option_limit', 'item', id, { option: row.name, limit });
+        }
       }
       if (b.weightG !== undefined) {                                                                                   // what ONE of these weighs, in grams — claims with no weight of their own use it (Warehouse, postage sharing)
         await conn.query('UPDATE items SET weight_g = ? WHERE id = ?', [b.weightG, id]);

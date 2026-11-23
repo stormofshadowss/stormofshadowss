@@ -109,7 +109,7 @@
     for (const [id, it] of live) {
       if (!it.limit) continue; const lines = basket.filter((l) => !l.shopId && l.itemId === id);
       if (it.limit.scope === 'item') { let room = it.limit.left; for (const l of lines) { const keep = Math.max(0, Math.min(l.qty, room)); if (keep < l.qty) trimmed += 1; l.qty = keep; room -= keep; } }
-      else for (const l of lines) { const o = it.limit.options?.[l.member || l.variant]; if (o && l.qty > o.left) { trimmed += 1; l.qty = Math.max(0, o.left); } }
+      for (const l of lines) { const o = it.limit.options?.[l.member || l.variant]; if (o && l.qty > o.left) { trimmed += 1; l.qty = Math.max(0, o.left); } }
     }
     basket = basket.filter((l) => l.qty > 0);
     if (JSON.stringify(basket) !== before) saveBasket();
@@ -123,16 +123,17 @@
   const inBasket = (itemId) => basket.filter((l) => !l.shopId && l.itemId === itemId).reduce((n, l) => n + l.qty, 0);
   const roomFor = (it, member, variant) => {
     const lim = it?.limit; if (!lim) return Infinity;
-    if (lim.scope === 'option') { const o = lim.options?.[member || variant]; return o ? o.left - qtyOf(it.id, member, variant) : Infinity; }
-    return lim.left - inBasket(it.id);
+    const o = lim.options?.[member || variant]; let room = o ? o.left - qtyOf(it.id, member, variant) : Infinity;       // this option's own number (or the "each option" one)…
+    if (lim.scope === 'item') room = Math.min(room, lim.left - inBasket(it.id));                                      // …and the whole-item total, if there is one: the stricter wins
+    return room;
   };
-  const limitNote = (it) => { const l = it.limit; if (!l || it.closed) return ''; if (l.scope === 'option') return `<p class="sub" data-limit style="margin:6px 0 0">Limit ${l.n} of each</p>`; return l.left > 0 ? `<p class="sub" data-limit style="margin:6px 0 0">Limit ${l.n} in total · ${l.left} left</p>` : '<p style="margin:6px 0 0"><span class="pill warn" data-limit-reached>Limit reached</span></p>'; };
-  const optLimit = (it, name) => { const o = it.limit?.scope === 'option' ? it.limit.options?.[name] : null; return o ? (o.left > 0 ? ` · ${o.left} left` : ' · <span data-limit-reached>limit reached</span>') : ''; };
+  const limitNote = (it) => { const l = it.limit; if (!l || it.closed) return ''; if (l.scope === 'option') return l.n ? `<p class="sub" data-limit style="margin:6px 0 0">Limit ${l.n} of each</p>` : ''; return l.left > 0 ? `<p class="sub" data-limit style="margin:6px 0 0">Limit ${l.n} in total · ${l.left} left</p>` : '<p style="margin:6px 0 0"><span class="pill warn" data-limit-reached>Limit reached</span></p>'; };
+  const optLimit = (it, name) => { const o = it.limit?.options?.[name]; return o ? (o.left > 0 ? ` · ${o.left} left` : ' · <span data-limit-reached>limit reached</span>') : ''; };
   const qtyOf = (itemId, member, variant) => basket.find((l) => l.key === lineKey(itemId, member, variant))?.qty || 0;
 
   function bump(itemId, member, variant, delta) {
     const f = findItem(itemId); if (!f || f.order.status !== 'open') return;
-    if (delta > 0 && roomFor(f.item, member, variant) < delta) { SITE.toast(`“${f.item.title}${member ? ` — ${member}` : variant ? ` (${variant})` : ''}” has reached its purchase limit${f.item.limit.scope === 'option' ? ` (${f.item.limit.n} of each)` : ` (${f.item.limit.n} in total)`}.`, true); return; }
+    if (delta > 0 && roomFor(f.item, member, variant) < delta) { SITE.toast(`“${f.item.title}${member ? ` — ${member}` : variant ? ` (${variant})` : ''}” has reached its purchase limit${(() => { const o = f.item.limit.options?.[member || variant]; return o?.own && o.left - qtyOf(itemId, member, variant) < delta ? ` (limit ${o.n})` : f.item.limit.scope === 'option' ? ` (${f.item.limit.n} of each)` : ` (${f.item.limit.n} in total)`; })()}.`, true); return; }
     const key = lineKey(itemId, member, variant);
     let line = basket.find((l) => l.key === key);
     if (!line) {

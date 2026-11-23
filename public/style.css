@@ -314,3 +314,11 @@ a.gocard.hasicon { display:flex; align-items:center; gap:14px; }
 
 /* Cards pop-up: how many of THIS card are left — the clear number, under the price */
 .pcleft { margin:0 0 10px; font-size:1.05rem; font-weight:600; }
+
+/* Items list: drag handle and ▲ ▼ to reorder, and where a dragged row would land */
+.reorder-cell { white-space:nowrap; width:1%; }
+.drag-handle { cursor:grab; user-select:none; padding:0 6px 0 0; color:var(--soft); }
+.reorder-cell button { padding:0 6px; min-width:0; line-height:1.5; margin-right:2px; }
+tr.dragging { opacity:.5; }
+tr.drop-before > td { box-shadow:inset 0 3px 0 var(--accent); }
+tr.drop-after > td { box-shadow:inset 0 -3px 0 var(--accent); }

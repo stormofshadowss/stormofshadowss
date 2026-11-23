@@ -1,7 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, seed, claimAndSecure, joinerSession } from './helpers.js';
-import { gomPage, openPage, press, toast } from './ui.helpers.js';
+import { gomPage, openPage, press, toast, itemRow } from './ui.helpers.js';
 
 let app, admin, w, N = 0;
 before(async () => { app = await startApp(); admin = await app.adminLogin(); w = await seed(app, admin); });
@@ -46,7 +46,7 @@ test('GOM: an item added with TBC has no price; one with neither a price nor TBC
   p.fill(form(), { title: 'Mystery album', priceTbc: true }); await p.submit(form());
   const it = (await api('GET', '/api/admin/orders')).json.orders.find((o) => o.id === go_).items[0];
   assert.deepEqual([it.title, it.price, it.priceTbc], ['Mystery album', null, true]);
-  assert.match(p.text(p.byText('#itemsPanel tbody tr', 'Mystery album')), /Mystery album.*TBC/);
+  assert.match(p.text(itemRow(p, 'Mystery album')), /Mystery album.*TBC/);
   assert.deepEqual([p.errors, p.native], [[], 0]);
   p.close();
 });

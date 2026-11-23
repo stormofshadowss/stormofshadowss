@@ -1,4 +1,6 @@
+import fs from 'node:fs';
 import path from 'node:path';
+import { versionHtml, pageFile } from './lib/asset-version.js';
 import { createNotifier } from './lib/notify.js';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -67,7 +69,14 @@ export function createApp({ cfg, pool, mailer, extraRoutes = [] }) {
   });
   const selfFrame = helmet.contentSecurityPolicy({ directives: { defaultSrc: ["'self'"], scriptSrc: ["'self'"], styleSrc: ["'self'", "'unsafe-inline'"], imgSrc: ["'self'", 'data:'], connectSrc: ["'self'"], formAction: ["'self'"], frameAncestors: ["'self'"], baseUri: ["'self'"], objectSrc: ["'none'"], upgradeInsecureRequests: cfg.cookieSecure ? [] : null } });
   app.get('/my.html', (req, res, next) => (req.account?.isAdmin && req.query.viewAs ? selfFrame(req, res, next) : next()));       // everyone else (and everything else) stays unframeable
-  app.use(express.static(PUBLIC_DIR, { index: 'index.html', maxAge: '5m' }));
+  // PAGES are always re-checked (so a new version is picked up straight away) and are sent with every script / stylesheet link stamped with that file's fingerprint (…/orders.js?v=3fa9c1d2e0).
+  // A stamped file can be kept for a year, because its address changes the moment its contents do; an unstamped one is always re-checked. Result: nobody has to purge Cloudflare after an update.
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    const file = pageFile(PUBLIC_DIR, req.path); if (!file) return next();
+    fs.readFile(file, 'utf8', (err, html) => { if (err) return next(); res.set({ 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' }); res.send(versionHtml(html, PUBLIC_DIR)); });
+  });
+  app.use(express.static(PUBLIC_DIR, { index: 'index.html', maxAge: '5m', setHeaders: (res, file) => { if (/\.(js|css)$/i.test(file)) res.set('Cache-Control', res.req?.query?.v ? 'public, max-age=31536000, immutable' : 'no-cache'); } }));
 
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 

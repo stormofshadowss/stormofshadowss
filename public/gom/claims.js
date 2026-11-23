@@ -9,7 +9,11 @@
   const BULK_STAGES = ['awaiting fulfillment', 'ordered via proxy / warehouse', 'arrived at proxy / warehouse', 'arrived at GOM', 'checking parcel', 'ready to pack / on hand'];
   const SORTS = [['person', 'Person (A–Z)'], ['owed', 'Most owed first'], ['stage', 'Earliest stage first'], ['newest', 'Newest first']];
   let root = null, orders = [], claims = [], people = {}, cancelReqs = [], cancelDone = [];
-  const filter = { order: '', status: 'active', q: '', stage: '', unpaid: false, sort: 'person' };
+  const filter = { order: '', status: 'active', q: '', stage: '', unpaid: false, noDeadline: false, sort: 'person' };
+  const READY_STAGE = 'ready to pack / on hand';
+  // ready to pack but nothing tells us when its storage runs out (no date from Notion, no ready date, nothing set by hand) — these never reach the Overdue tab and joiners see no deadline
+  const noDeadlineOf = (c) => c.status === 'confirmed' && c.pipeline === READY_STAGE && !c.storageDeadline;
+  let storageState = null;     // the bulk "storage deadline" panel: { date, error }
   const picked = new Set();    // claim ids ticked for a bulk stage move
   let moveState = null;        // the "move to another person" panel: { handle, create, preview, previewFor, error }
   let priceState = null;       // the "change price" panel: { mode: 'set' | 'adjust', amount, notify, error }
@@ -56,6 +60,7 @@
       if (filter.status === 'active' ? c.status === 'cancelled' : filter.status !== 'all' && c.status !== filter.status) return false;
       if (filter.stage && !opts.ignoreStage && c.pipeline !== filter.stage) return false;
       if (filter.unpaid && owedOf(c) <= 0) return false;
+      if (filter.noDeadline && !noDeadlineOf(c)) return false;
       return !q || c.handle.includes(q) || c.label.toLowerCase().includes(q);
     });
   }
@@ -105,6 +110,7 @@
       return `<tr><td colspan="7"><form data-form="edit-costs" data-id="${c.id}"><strong>${esc(c.label)}</strong>
         <div class="cost-edit" style="margin:10px 0"><span></span><span class="sub">Cost (£)</span><span class="sub">Paid (£)</span><span class="sub">Due by</span>
         ${CATS.map(([k, name]) => `<span>${name}</span><input type="number" step="0.01" min="0" name="${k}_cost" value="${c.costs[k]?.cost ?? 0}"><input type="number" step="0.01" min="0" name="${k}_paid" value="${c.costs[k]?.paid ?? 0}">${k === 'initials' ? '<span class="sub" title="The item cost is due on the claim\'s pay-by date">pay-by date</span>' : `<input type="date" name="${k}_due" value="${c.costs[k]?.due || (c.costs[k]?.cost > 0 ? '' : GOM.inDays(14))}" aria-label="${name} due by">`}`).join('')}</div>
+        <div style="margin:6px 0 10px"><label for="sd${c.id}">Storage deadline</label><input type="date" id="sd${c.id}" name="storageDeadline" value="${c.storageSet ? esc(c.storageDeadline) : ''}" style="max-width:180px"> <span class="sub">${c.storageDeadline && !c.storageSet ? `Normally ${fmtDate(c.storageDeadline)} (the day it became ready to pack plus days for its size). ` : ''}Pick a date to set it by hand; clear it to go back to the normal rule.</span></div>
         <p class="sub">Raising a cost never changes what's already been paid. A paid amount above the cost becomes credit. <strong>Each fee has its own due date</strong> — it is only called overdue once that date has passed (the item cost keeps the claim's pay-by date).</p>
         <p class="msg" data-msg hidden></p>
         <div class="btn-row"><button type="submit" class="sm">Save</button><button type="button" class="sm secondary" data-act="cancel-edit">Cancel</button></div></form></td></tr>`;
@@ -112,7 +118,7 @@
     const owed = owedOf(c);
     return `<tr data-claim="${c.id}"><td>${c.status === 'confirmed' ? `<input type="checkbox" data-act="pick" data-id="${c.id}" ${picked.has(c.id) ? 'checked' : ''} aria-label="Select ${esc(c.label)}">` : ''}</td><td>${c.cardThumb ? `<img class="thumb sm" src="${esc(c.cardThumb)}" alt="" data-card-thumb loading="lazy" style="float:left; margin-right:8px; width:40px; border-radius:4px">` : ''}${esc(c.label)} ${c.setId ? '<span class="pill">set part</span>' : ''}${c.is_fixed ? '<span class="pill">fixed</span>' : ''}${c.is_direct ? '<span class="pill">assigned</span>' : ''}</td>
       <td>${statusPill(c.status)}</td>
-      <td>${c.status === 'cancelled' ? '<span class="sub">—</span>' : `<select data-act-change="pipeline" data-id="${c.id}">${PIPELINE.map((p) => `<option ${p === c.pipeline ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>`}</td>
+      <td>${c.status === 'cancelled' ? '<span class="sub">—</span>' : `<select data-act-change="pipeline" data-id="${c.id}">${PIPELINE.map((p) => `<option ${p === c.pipeline ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>${storageNote(c)}`}</td>
       <td class="nowrap">${c.priceTbc ? '<span class="pill warn">Price TBC</span>' : ''}${CATS.map(([k, name]) => (c.costs[k]?.cost || c.costs[k]?.paid) ? `<div class="sub">${name} ${money(c.costs[k].cost)} <span class="${c.costs[k].paid >= c.costs[k].cost ? '' : 'pill warn'}">paid ${money(c.costs[k].paid)}</span></div>` : '').join('')}</td>
       <td class="nowrap">${c.status === 'confirmed' ? (owed > 0 ? `<strong>${money(owed)}</strong> owed` : '<span class="pill ok">paid</span>') : '—'}</td>
       <td class="nowrap">${c.status === 'cancelled' ? '' : `<button class="sm secondary" data-act="edit" data-id="${c.id}">Edit costs</button> <button class="sm secondary" data-act="fix" data-id="${c.id}">Fix…</button> <button class="sm secondary" data-act="cancel" data-id="${c.id}">Cancel</button>`}</td></tr>`;
@@ -159,12 +165,12 @@
     const owing = base.filter((c) => owedOf(c) > 0).length, requested = base.filter((c) => c.status === 'requested').length;
     const chip = (act, label, count, on, extra = '') => `<button class="sm ${on ? '' : 'secondary'}" data-act="${act}" ${extra} aria-pressed="${on}">${label} <strong>${count}</strong></button>`;
     const chips = [...PIPELINE.filter((p) => n.get(p)).map((p) => chip('stage-chip', esc(p), n.get(p), filter.stage === p, `data-stage="${esc(p)}"`)),
-      owing ? chip('owing-chip', 'owing money', owing, filter.unpaid) : '', requested ? chip('requested-chip', 'waiting to be secured', requested, filter.status === 'requested') : ''].filter(Boolean);
+      owing ? chip('owing-chip', 'owing money', owing, filter.unpaid) : '', base.filter(noDeadlineOf).length ? chip('nodeadline-chip', 'no storage deadline', base.filter(noDeadlineOf).length, filter.noDeadline) : '', requested ? chip('requested-chip', 'waiting to be secured', requested, filter.status === 'requested') : ''].filter(Boolean);
     return chips.length ? `<div class="card" id="stageStrip"><div class="sub" style="margin-bottom:6px">Where everything is — click one to show just those</div><div class="btn-row" style="flex-wrap:wrap; gap:6px; margin:0">${chips.join('')}</div></div>` : '';
   }
   const more = (total, limit, key, noun) => (total > limit ? `<div style="margin-top:10px"><button class="sm secondary" data-act="more" data-key="${key}">Show ${Math.min(PAGE, total - limit)} more ${noun} (${total - limit} not shown)</button></div>` : '');
   const searching = () => !!filter.q.trim();
-  const goOpen = (key, n) => (goChosen.has(key) ? goChosen.get(key) : (searching() || !!filter.stage || !!filter.unpaid || n <= 3));
+  const goOpen = (key, n) => (goChosen.has(key) ? goChosen.get(key) : (searching() || !!filter.stage || !!filter.unpaid || !!filter.noDeadline || n <= 3));
   function allKeys() {                                            // every person (or item) currently listed, for "Expand all"
     const keys = new Set();
     for (const c of visible()) keys.add(view === 'item' ? `i:${c.order_id || 0}::${c.label}` : `${c.order_id || 0}::${c.handle}`);
@@ -266,9 +272,15 @@
       + `${purchased ? `\n${purchased} ${purchased === 1 ? 'is' : 'are'} already ordered or further along — they'll owe the difference.` : ''}${back.length ? `\n${new Set(back.map((c) => c.joinerId)).size} ${new Set(back.map((c) => c.joinerId)).size === 1 ? 'person has' : 'people have'} paid more than the new price — ${money(back.reduce((s, c) => s + c.creditBack, 0))} goes back to them as credit.` : ''}`
       + `\nNew claims still use the item's price — change that in Group Orders if it should change too.\n${notify ? "They'll be emailed (those with emails on)." : 'Nobody will be emailed.'}`;
   }
+  const storageNote = (c) => (c.status !== 'confirmed' ? '' : c.storageDeadline ? `<div class="sub" data-storage>Storage until ${fmtDate(c.storageDeadline)}${c.storageSet ? ' · set by you' : ''}</div>` : noDeadlineOf(c) ? '<div class="sub" data-storage-missing><span class="pill warn">No storage deadline</span></div>' : '');
+  const storagePanel = () => (storageState ? `<div class="card" data-storage-panel style="margin:10px 0 0"><strong>Storage deadline for the ${picked.size} selected claim${picked.size === 1 ? '' : 's'}</strong>
+      <div class="formgrid" style="margin:8px 0; align-items:end"><div><label for="storageDate">Keep it until</label><input type="date" id="storageDate" value="${esc(storageState.date || '')}"></div></div>
+      <p class="sub">For items that lost their storage date. It replaces the normal rule (the day it became ready to pack plus days for its size) until you clear it. Cancelled claims are left alone.</p>
+      ${storageState.error ? `<p class="msg" data-storage-error>${esc(storageState.error)}</p>` : ''}
+      <div class="btn-row"><button class="sm" data-act="storage-go">Set it…</button><button class="sm secondary" data-act="storage-clear">Clear it…</button><button class="sm secondary" data-act="storage-close">Cancel</button></div></div>` : '');
   const bulkBar = () => `<div class="card" id="bulkBar" style="position:sticky; top:0; z-index:5; background:var(--paper)"><div class="row"><strong>${picked.size} claim${picked.size === 1 ? '' : 's'} selected</strong>
       <div class="btn-row" style="margin:0; align-items:center"><label for="bulkStage" class="sub" style="margin:0">Move to</label><select id="bulkStage">${BULK_STAGES.map((s) => `<option>${esc(s)}</option>`).join('')}</select>
-        <button class="sm" data-act="bulk-apply">Move them</button><button class="sm secondary" data-act="move-open">Move to another person…</button><button class="sm secondary" data-act="price-open">Change price…</button><button class="sm secondary" data-act="bulk-delete">Delete…</button><button class="sm secondary" data-act="bulk-clear">Clear</button></div></div>${movePanel()}${pricePanel()}</div>`;
+        <button class="sm" data-act="bulk-apply">Move them</button><button class="sm secondary" data-act="move-open">Move to another person…</button><button class="sm secondary" data-act="price-open">Change price…</button><button class="sm secondary" data-act="storage-open">Storage deadline…</button><button class="sm secondary" data-act="bulk-delete">Delete…</button><button class="sm secondary" data-act="bulk-clear">Clear</button></div></div>${movePanel()}${pricePanel()}${storagePanel()}</div>`;
 
   // Joiners' requests to cancel an item. You decide each one, and choose how much of what they paid to KEEP as a cancellation fee.
   const asked = (iso) => `${fmtDate((iso || '').slice(0, 10))} ${(iso || '').slice(11, 16)}`;
@@ -313,7 +325,29 @@
   const addItems = () => (orders.find((o) => String(o.id) === String(addS.orderId))?.items || []).filter((i) => !i.cancelled);
   const addItem = () => addItems().find((i) => String(i.id) === String(addS.itemId));
   const cleanHandle = (h) => String(h || '').trim().replace(/^@+/, '').toLowerCase();
+  // QUICK NEW ITEM: when the item you need isn't in the list, make a plain one right here (one price, any quantity) in the chosen group order. It is made HIDDEN from joiners — only you can add it for people —
+  // and selected for you, so you carry on with how many and the status. Show it to joiners later from Group Orders → Items.
+  const newItemForm = () => {
+    const n = addS.newItem || { title: '', price: '', tbc: false };
+    return `<div class="card" data-new-item style="margin:10px 0; background:var(--surface-2)"><strong>New item in this group order</strong>
+      <div class="formgrid"><div><label for="niTitle">Title</label><input id="niTitle" name="niTitle" value="${esc(n.title)}" placeholder="e.g. Washi tape" maxlength="160" autocomplete="off"></div><div><label for="niPrice">Price (£)</label><input id="niPrice" name="niPrice" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(n.price)}" ${n.tbc ? 'disabled' : ''}></div></div>
+      <label class="chk"><input type="checkbox" name="niTbc" ${n.tbc ? 'checked' : ''}> Price still TBC</label>
+      <p class="sub">A plain item: one price, any quantity. It is <strong>hidden from joiners</strong> — only you can add it for people. Show it from Group Orders → Items when you want it on the order page.</p>
+      <p class="msg err" data-ni-error hidden></p><div class="btn-row"><button type="button" class="sm" data-act="ni-create">Create item</button><button type="button" class="sm secondary" data-act="ni-cancel">Cancel</button></div></div>`;
+  };
+  async function createNewItem() {
+    const n = addS.newItem || {}, fail = (t) => { const m = $('[data-ni-error]', root); if (m) { m.textContent = t; m.hidden = !t; } };
+    const title = String(n.title || '').trim(), price = n.tbc ? null : Number(n.price);
+    if (!title) return fail('Enter a title for the new item.');
+    if (!n.tbc && (n.price === '' || !Number.isFinite(price) || price < 0)) return fail('Enter the price (£0 or more), or tick “Price still TBC”.');
+    const r = await api('POST', `/api/admin/orders/${addS.orderId}/items`, { type: 'normal', title, ...(n.tbc ? { priceTbc: true } : { price }), hidden: true });
+    if (!r.ok) return fail(errText(r));
+    addS.itemId = String(r.json.id); addS.newItem = null; addS.qty = '1';
+    addMsg = { ok: true, text: `Created “${title}” in this group order — hidden from joiners. Now say how many, and add the claim.` };
+    await render(root);
+  }
   function addDetail(it) {
+    if (addS.itemId === '__new') return newItemForm();
     if (!it) return '';
     const tbc = it.priceTbc ? '<p class="sub" data-tbc>The price is still TBC — you can add this as a request, but it can\'t be confirmed until the price is set.</p>' : '';
     const num = (name, val, lab) => `<label class="sub" style="display:inline-flex; align-items:center; gap:6px; margin:0 12px 6px 0">${lab}<input type="number" min="0" max="20" ${name} value="${esc(val)}" style="width:70px; padding:5px 8px"></label>`;
@@ -332,7 +366,7 @@
       <div class="formgrid"><div><label>Person (Instagram handle)</label><input name="handle" list="knownHandles" value="${esc(addS.handle)}" placeholder="@handle" autocomplete="off" required><datalist id="knownHandles">${addLook.matches.map((x) => `<option value="${esc(x)}">`).join('')}</datalist>
           <label class="chk" style="margin-top:6px"><input type="checkbox" name="createHandle" ${addS.create ? 'checked' : ''}> New person — create this handle</label><div class="sub" data-unknown hidden></div></div>
         <div><label>Group order</label><select name="orderId"><option value="">Choose…</option>${live.map((o) => `<option value="${o.id}" ${String(o.id) === String(addS.orderId) ? 'selected' : ''}>${esc(o.title)}${o.isPrivate ? ' (private)' : ''}${o.status && o.status !== 'open' ? ` (${esc(o.status)})` : ''}</option>`).join('')}</select></div>
-        <div><label>Item</label><select name="itemId" ${addS.orderId ? '' : 'disabled'}><option value="">${addS.orderId ? 'Choose…' : 'Choose a group order first'}</option>${addItems().map((i) => `<option value="${i.id}" ${String(i.id) === String(addS.itemId) ? 'selected' : ''}>${esc(i.title)}${i.priceTbc ? ' (price TBC)' : i.price != null ? ` — ${money(i.price)}` : ''}</option>`).join('')}</select></div></div>
+        <div><label>Item</label><select name="itemId" ${addS.orderId ? '' : 'disabled'}><option value="">${addS.orderId ? 'Choose…' : 'Choose a group order first'}</option>${addItems().map((i) => `<option value="${i.id}" ${String(i.id) === String(addS.itemId) ? 'selected' : ''}>${esc(i.title)}${i.priceTbc ? ' (price TBC)' : i.price != null ? ` — ${money(i.price)}` : ''}</option>`).join('')}${addS.orderId && !live.find((o) => String(o.id) === String(addS.orderId))?.isCards ? `<option value="__new" ${addS.itemId === '__new' ? 'selected' : ''}>＋ New item…</option>` : ''}</select></div></div>
       <div data-add-detail>${addDetail(it)}</div>
       <div class="sub" style="margin:12px 0 4px; font-weight:600">Status — you choose each time</div>
       <label class="chk"><input type="radio" name="status" value="requested" ${addS.status === 'requested' ? 'checked' : ''}> <strong>Requested</strong> — waits for you to secure it, like a joiner's claim</label>
@@ -359,8 +393,11 @@
   function readAdd(t) {
     if (t.name === 'handle') { addS.handle = t.value; addHint(); lookupLater(); }
     else if (t.name === 'createHandle') { addS.create = t.checked; addHint(); }
-    else if (t.name === 'orderId') { addS.orderId = t.value; addS.itemId = ''; addS.parts = {}; addS.variant = ''; addS.qty = '1'; addS.together = false; }
-    else if (t.name === 'itemId') { addS.itemId = t.value; addS.parts = {}; addS.variant = ''; addS.qty = '1'; addS.together = false; }
+    else if (t.name === 'orderId') { addS.orderId = t.value; addS.itemId = ''; addS.newItem = null; addS.parts = {}; addS.variant = ''; addS.qty = '1'; addS.together = false; }
+    else if (t.name === 'itemId') { addS.itemId = t.value; addS.parts = {}; addS.variant = ''; addS.qty = '1'; addS.together = false; if (t.value === '__new' && !addS.newItem) addS.newItem = { title: '', price: '', tbc: false }; }
+    else if (t.name === 'niTitle') addS.newItem.title = t.value;
+    else if (t.name === 'niPrice') addS.newItem.price = t.value;
+    else if (t.name === 'niTbc') { addS.newItem.tbc = t.checked; const pr = $('#niPrice', root); if (pr) pr.disabled = t.checked; }
     else if (t.name === 'qty') addS.qty = t.value;
     else if (t.name === 'variant') addS.variant = t.value;
     else if (t.name === 'together') addS.together = t.checked;
@@ -371,6 +408,7 @@
   async function submitAdd(form) {
     const err = (text) => { const m = $('[data-add-error]', form); m.textContent = text; m.hidden = !text; };
     err('');
+    if (addS.itemId === '__new') return createNewItem();                                              // Enter in the new-item form makes the item; it doesn't submit the claim
     const handle = cleanHandle(addS.handle), it = addItem(); let lines;
     if (!handle) return err('Enter the person\'s Instagram handle.');
     if (!addS.orderId || !it) return err('Choose the group order and the item.');
@@ -426,7 +464,7 @@
         <div><label>Search a handle or item</label><input data-filter="q" value="${esc(filter.q)}" placeholder="@handle or item"></div>
         <div><label>Stage</label><select data-filter="stage"><option value="">All stages</option>${PIPELINE.map((p) => `<option ${p === filter.stage ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select></div>
         <div><label>Sort by</label><select data-filter="sort">${SORTS.map(([v, l]) => `<option value="${v}" ${v === filter.sort ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
-        <div><label class="chk" style="margin-top:24px"><input type="checkbox" data-filter="unpaid" ${filter.unpaid ? 'checked' : ''}> Only claims that still owe money</label></div></div></div>
+        <div><label class="chk" style="margin-top:24px"><input type="checkbox" data-filter="unpaid" ${filter.unpaid ? 'checked' : ''}> Only claims that still owe money</label></div><div><label class="chk" style="margin-top:24px"><input type="checkbox" data-filter="noDeadline" ${filter.noDeadline ? 'checked' : ''}> Only ready to pack with no storage deadline</label></div></div></div>
       ${(() => { const ids = confirmedIds(list); return ids.length ? `<div class="row" style="margin:0 0 10px; justify-content:flex-start; gap:12px; align-items:center"><button class="sm secondary" data-act="pick-all" data-ids="${ids.join(',')}">${ids.every((i) => picked.has(i)) ? 'Unselect' : 'Select'} all ${ids.length} confirmed claim${ids.length === 1 ? '' : 's'} shown</button><span class="sub">Narrow with <em>Group order</em>, <em>Stage</em> or search first to select just those.</span></div>` : ''; })()}
       ${strip()}
       ${list.length ? `<div class="btn-row" style="margin:0 0 10px; gap:8px"><button class="sm secondary" data-act="expand-all">Expand all</button><button class="sm secondary" data-act="collapse-all">Collapse all</button></div>` : ''}
@@ -457,7 +495,23 @@
         ids.forEach((i) => (b.dataset.act === 'pick-person' ? b.checked : !all) ? picked.add(i) : picked.delete(i));
         draw(); break;
       }
-      case 'bulk-clear': picked.clear(); moveState = null; priceState = null; draw(); break;
+      case 'bulk-clear': picked.clear(); moveState = null; priceState = null; storageState = null; draw(); break;
+      case 'storage-open': storageState = storageState ? null : { date: '', error: '' }; moveState = null; priceState = null; draw(); break;
+      case 'storage-close': storageState = null; draw(); break;
+      case 'storage-go': case 'storage-clear': {
+        const clear = b.dataset.act === 'storage-clear', n = picked.size, plural = n === 1 ? '' : 's', date = clear ? null : storageState.date;
+        if (!clear && !date) { storageState.error = 'Pick the date to keep them until.'; return draw(); }
+        const past = !clear && date < new Date().toISOString().slice(0, 10);
+        const ok = await GOM.confirm(clear
+          ? `Clear the hand-set storage deadline of ${n} claim${plural}?\n\nThey go back to the normal rule: the day they became ready to pack plus days for their size. A claim with no ready-to-pack date will have no deadline at all.`
+          : `Set the storage deadline of ${n} claim${plural} to ${fmtDate(date)}?\n\nIt replaces the normal rule for them until you clear it. Cancelled claims are left alone.${past ? '\n\nThat date has already passed, so any that are not packed yet will show on the Overdue tab straight away.' : ''}`, { ok: clear ? 'Clear it' : 'Set it', cancel: 'Not yet' });
+        if (!ok) return;
+        const r = await api('POST', '/api/admin/claims/storage-deadline', { claimIds: [...picked], date });
+        if (!r.ok) { storageState.error = errText(r); return draw(); }
+        picked.clear(); storageState = null; await render(root); GOM.refreshBadges();
+        const c = r.json.changed;
+        return GOM.toast(`${clear ? 'Cleared' : `Set to ${fmtDate(date)}:`} ${c} claim${c === 1 ? '' : 's'}.${r.json.unchanged ? ` ${r.json.unchanged} ${clear ? 'were already on the normal rule' : 'already had that date'}.` : ''}${r.json.skipped ? ` ${r.json.skipped} cancelled left alone.` : ''}`);
+      }
       case 'move-open': moveState = { handle: '', create: false, preview: null, previewFor: '', error: '' }; draw(); $('#moveHandle', root)?.focus(); break;
       case 'move-close': moveState = null; draw(); break;
       case 'price-open': priceState = { mode: 'set', amount: '', notify: true, error: '' }; moveState = null; draw(); $('#priceAmount', root)?.focus(); break;
@@ -508,6 +562,8 @@
       case 'more': shown.set(b.dataset.key, (shown.get(b.dataset.key) || PAGE) + PAGE); draw(); break;
       case 'view': view = b.dataset.view; try { localStorage.setItem('gom.claims.view', view); } catch { /* fine */ } draw(); break;
       case 'add-open': addOpen = true; addMsg = null; draw(); $('#addClaim input[name="handle"]', root)?.focus(); if (addS.handle) lookupLater(); break;
+      case 'ni-create': return createNewItem();
+      case 'ni-cancel': addS.itemId = ''; addS.newItem = null; draw(); break;
       case 'add-close': addOpen = false; draw(); break;
       case 'add-show': filter.q = b.dataset.handle; goChosen.clear(); draw(); break;
       case 'toggle-go': { const k = Number(b.dataset.go); goChosen.set(k, b.getAttribute('aria-expanded') !== 'true'); draw(); break; }
@@ -515,6 +571,7 @@
       case 'collapse-all': for (const x of visible()) goChosen.set(x.order_id || 0, false); open.clear(); openGroups.clear(); shown.clear(); draw(); break;
       case 'stage-chip': filter.stage = filter.stage === b.dataset.stage ? '' : b.dataset.stage; draw(); break;
       case 'owing-chip': filter.unpaid = !filter.unpaid; draw(); break;
+      case 'nodeadline-chip': filter.noDeadline = !filter.noDeadline; draw(); break;
       case 'requested-chip': filter.status = filter.status === 'requested' ? 'active' : 'requested'; draw(); break;
       case 'edit': editing = id; fixing = null; draw(); break;
       case 'fix': {
@@ -601,14 +658,19 @@
       }
       if (Object.keys(patch).length) costs[k] = patch;
     }
-    if (!Object.keys(costs).length) { editing = null; return draw(); }
-    const r = await api('PATCH', `/api/admin/claims/${id}`, { costs });
+    const body = {};
+    if (Object.keys(costs).length) body.costs = costs;
+    const wasDl = claim.storageSet ? claim.storageDeadline : null, nowDl = form.elements.storageDeadline?.value || null;        // only if you changed it
+    if (nowDl !== wasDl) body.storageDeadlineOverride = nowDl;
+    if (!Object.keys(body).length) { editing = null; return draw(); }
+    const r = await api('PATCH', `/api/admin/claims/${id}`, body);
     if (!r.ok) { const m = $('[data-msg]', form); m.textContent = errText(r); m.className = 'msg'; m.hidden = false; return; }
     editing = null; await render(root); GOM.toast('Saved.');
   }
 
   async function onChange(e) {
     const t = e.target;
+    if (t.id === 'storageDate' && storageState) { storageState.date = t.value; storageState.error = ''; return; }
     if (t.closest?.('[data-form="fix"]')) { readFix(t); if (['orderId', 'itemId', 'pricing', 'member'].includes(t.name)) draw(); return; }          // a different size can change the price question, so the panel redraws
     if (t.closest?.('#addClaim')) { readAdd(t); if (['orderId', 'itemId', 'status'].includes(t.name)) draw(); return; }
     if (t.name === 'priceMode' && priceState) { priceState.amount = $('#priceAmount', root)?.value ?? priceState.amount; priceState.mode = t.value; return draw(); }

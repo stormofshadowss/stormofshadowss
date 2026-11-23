@@ -44,20 +44,32 @@ export async function alreadyHas(conn, joinerId, lines) {
 }
 
 export const hasOptions = (type) => ['set', 'independent', 'size'].includes(type);                    // item types where a person picks a member / size — the only ones a limit can count "each option" of
+// An option's OWN limit (washi tape: Green 3, Red 2) — for member items and size items. NULL = none of its own.
+export async function ownLimits(conn, item) {
+  if (!['independent', 'size'].includes(item.item_type)) return {};
+  const [rows] = item.item_type === 'size'
+    ? await conn.query('SELECT label AS opt, qty_limit AS n FROM item_variants WHERE item_id = ? AND qty_limit IS NOT NULL', [item.id])
+    : await conn.query('SELECT name AS opt, qty_limit AS n FROM item_members WHERE item_id = ? AND qty_limit IS NOT NULL', [item.id]);
+  return Object.fromEntries(rows.map((r) => [r.opt, Number(r.n)]));
+}
 export async function checkPurchaseLimit(conn, item, wanted, { asAdmin = false, overrideLimit = false, excludeClaimId = null } = {}) {
-  if (!item.purchase_limit || (asAdmin && overrideLimit)) return;
-  const n = Number(item.purchase_limit), byOption = item.limit_scope === 'option' && hasOptions(item.item_type);
-  const ask = byOption ? wanted : { '': Object.values(wanted).reduce((a, b) => a + b, 0) };                       // wanted: { optionName: qty } — what this request adds
-  for (const [opt, qty] of Object.entries(ask)) {
+  if (asAdmin && overrideLimit) return;
+  const own = await ownLimits(conn, item);
+  if (!item.purchase_limit && !Object.keys(own).length) return;
+  const n = item.purchase_limit ? Number(item.purchase_limit) : null, byOption = item.limit_scope === 'option' && hasOptions(item.item_type);
+  const usedOf = async (opt) => (await conn.query(                                                              // opt === null: the whole item together
+    `SELECT COUNT(*) AS used FROM claims WHERE item_id = ? AND status <> 'cancelled' ${excludeClaimId ? 'AND id <> ?' : ''} ${opt !== null ? 'AND COALESCE(member_name, variant_label) = ?' : ''}`,
+    [item.id, ...(excludeClaimId ? [excludeClaimId] : []), ...(opt !== null ? [opt] : [])]))[0][0].used;
+  const refuse = (left, qty, what, limit) => { throw conflict(left === 0 ? `Sorry — ${what} has reached its purchase limit (${limit}).` : `Only ${left} left of ${what} (${limit}) — you asked for ${qty}.`, 'limit_reached'); };
+  if (n && !byOption) {                                                                                         // a limit on the whole item together
+    const qty = Object.values(wanted).reduce((a, b) => a + b, 0);
+    if (qty > 0) { const left = Math.max(0, n - Number(await usedOf(null))); if (qty > left) refuse(left, qty, `“${item.title}”`, `limit ${n} in total`); }
+  }
+  for (const [opt, qty] of Object.entries(wanted)) {                                                            // each option: its own number, else the item's "each option" number
     if (!(qty > 0)) continue;
-    const [[{ used }]] = await conn.query(
-      `SELECT COUNT(*) AS used FROM claims WHERE item_id = ? AND status <> 'cancelled' ${excludeClaimId ? 'AND id <> ?' : ''} ${byOption ? 'AND COALESCE(member_name, variant_label) = ?' : ''}`,
-      [item.id, ...(excludeClaimId ? [excludeClaimId] : []), ...(byOption ? [opt] : [])]);
-    const left = Math.max(0, n - Number(used));
-    if (qty > left) {
-      const what = byOption ? `“${item.title} — ${opt}”` : `“${item.title}”`, limit = byOption ? `limit ${n} of each` : `limit ${n} in total`;
-      throw conflict(left === 0 ? `Sorry — ${what} has reached its purchase limit (${limit}).` : `Only ${left} left of ${what} (${limit}) — you asked for ${qty}.`, 'limit_reached');
-    }
+    const lim = own[opt] ?? (byOption ? n : null); if (lim === null || lim === undefined) continue;
+    const left = Math.max(0, lim - Number(await usedOf(opt)));
+    if (qty > left) refuse(left, qty, `“${item.title} — ${opt}”`, own[opt] !== undefined ? `limit ${lim}` : `limit ${lim} of each`);
   }
 }
 

@@ -68,3 +68,6 @@ export async function gomPage(app, cookie) {
 export const modal = (p) => p.q('.ui-modal');
 export const press = (p, label) => p.click(p.byText('.ui-modal button', label));
 export const toast = (p) => (p.q('#toast').hidden ? '' : p.q('#toast').textContent);
+
+// The row of an item in the GOM items list, found by the start of its TITLE (the first column holds the drag handle and the ▲ ▼ arrows, so the row's own text no longer starts with the title).
+export const itemRow = (p, titleStart) => p.qa('#itemsPanel tbody tr').find((r) => (r.cells[1] || r.cells[0]).textContent.trim().startsWith(titleStart));

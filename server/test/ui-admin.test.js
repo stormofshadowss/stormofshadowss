@@ -1,7 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startApp, ADMIN } from './helpers.js';
-import { openPage } from './ui.helpers.js';
+import { openPage, itemRow } from './ui.helpers.js';
 
 let app, adminCookie;
 before(async () => { app = await startApp(); adminCookie = await app.adminLogin(); });
@@ -133,11 +133,11 @@ test('adding items: the form adapts to the type, and every kind lands correctly'
   const set = items['Seasons Greetings'];
   assert.deepEqual(set.members.map(({ name, price }) => ({ name, price })), [{ name: 'Bang Chan', price: 3 }, { name: 'Han', price: 3 }, { name: 'Diary', price: 2 }, { name: 'Washi tape', price: 1 }]);          // (the GOM's data also carries each member's id, for renaming)
   assert.deepEqual([set.requiresFullSet, set.wholeSetPrice], [true, 9]);
-  const row = p.text(p.byText('#itemsPanel tbody tr', 'Seasons Greetings'));
+  const row = p.text(itemRow(p, 'Seasons Greetings'));
   assert.match(row, /4 parts · £9\.00 whole set/);
   assert.match(row, /every part required/);
   assert.match(row, /Diary £2\.00/);
-  assert.match(p.text(p.byText('#itemsPanel tbody tr', 'Keyring 2')), /£6\.50.*02\/02\/2099 \(own\).*Lulu/);
+  assert.match(p.text(itemRow(p, 'Keyring 2')), /£6\.50.*02\/02\/2099 \(own\).*Lulu/);
   assert.deepEqual([p.errors, p.native], [[], 0]);
   p.close();
 });
@@ -365,7 +365,7 @@ test('descriptions: add one when creating an item, see a preview in the list, ed
   const form = () => p.q('form[data-form="new-item"]');
   assert.match(p.text(form()), /Description \(optional — shown to joiners on the item\)/);
   p.fill(form(), { title: 'Described album', price: '20', description: 'Includes a poster.\nShips next month.' }); await p.submit(form());
-  const item = () => p.byText('#itemsPanel tbody tr', 'Described album');
+  const item = () => itemRow(p, 'Described album');
   assert.match(p.text(item()), /Described album.*Includes a poster\. Ships next month\./);
   assert.equal((await orderNamed('Run It GO')).items.find((i) => i.title === 'Described album').description, 'Includes a poster.\nShips next month.');
 
@@ -396,7 +396,7 @@ test('descriptions: too long is explained, and HTML in a description is shown as
   assert.equal((await orderNamed('Run It GO')).items.some((i) => i.title === 'Too wordy'), false);
   p.fill(form(), { title: 'Markup item', price: '1', description: '<img src=x onerror="window.pwned=1">' }); await p.submit(form());
   assert.equal(p.q('#itemsPanel img'), null);
-  assert.match(p.text(p.byText('#itemsPanel tbody tr', 'Markup item')), /<img src=x onerror="window\.pwned=1">/);
+  assert.match(p.text(itemRow(p, 'Markup item')), /<img src=x onerror="window\.pwned=1">/);
   assert.equal(p.window.pwned, undefined);
   p.close();
 });
