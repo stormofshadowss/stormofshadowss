@@ -1,13 +1,13 @@
 // Proxy tab: a log of what you owe (or have paid) your proxies, so nothing is paid twice and nothing slips past its date.
 (function () {
   const { esc, money, fmtDate, api, errText, $, $$ } = GOM;
-  let root = null, cands = [], pays = [], names = [], proxyList = [], selected = new Set(), search = '';
+  let root = null, cands = [], pays = [], names = [], proxyList = [], selected = new Set(), search = '', view = 'payments', hist = { proxies: [], totals: { payments: 0, waiting: 0, toChase: 0 } }, hidden = { orders: [], items: [] }, histFilter = 'all';
   const val = (id) => ($(`#${id}`, root) || {}).value || '';
 
   async function render(el) {
     root = el;
-    const [c, p, n] = await Promise.all([api('GET', '/api/admin/proxy/candidates'), api('GET', `/api/admin/proxy/payments${search ? `?q=${encodeURIComponent(search)}` : ''}`), api('GET', '/api/admin/proxy/names')]);
-    cands = c.json?.candidates || []; pays = p.json?.payments || []; names = n.json?.names || []; proxyList = n.json?.proxies || [];
+    const [c, p, n, h, hd] = await Promise.all([api('GET', '/api/admin/proxy/candidates'), api('GET', `/api/admin/proxy/payments${search ? `?q=${encodeURIComponent(search)}` : ''}`), api('GET', '/api/admin/proxy/names'), api('GET', '/api/admin/proxy/history'), api('GET', '/api/admin/proxy/hidden')]);
+    cands = c.json?.candidates || []; pays = p.json?.payments || []; names = n.json?.names || []; proxyList = n.json?.proxies || []; hist = h.json || hist; hidden = hd.json || hidden;
     selected = new Set([...selected].filter((k) => cands.some((x) => x.key === k)));
     draw();
   }
@@ -35,6 +35,26 @@
       <div class="btn-row" style="margin:0; align-items:center"><label class="chk"><input type="checkbox" data-act="paid" data-id="${p.id}" ${p.paid ? 'checked' : ''}> Paid</label><button class="sm secondary" data-act="remove" data-id="${p.id}">Remove</button></div></div></div>`;
   }
 
+  // THE TWO VIEWS: Payments (log and pay) and Ordered from (what each payment covered and how much has arrived — who to chase)
+  const viewSwitch = () => `<div class="chips" id="pxView" role="group" aria-label="Proxy view"><button type="button" class="chip ${view === 'payments' ? 'on' : ''}" data-act="px-view" data-view="payments" aria-pressed="${view === 'payments'}">Payments</button><button type="button" class="chip ${view === 'history' ? 'on' : ''}" data-act="px-view" data-view="history" aria-pressed="${view === 'history'}">Ordered from${hist.totals.toChase ? ` <span class="pill warn" data-chase-pill>${hist.totals.toChase} to chase</span>` : ''}</button></div>`;
+  const histPay = (p) => `<div class="card" data-hist="${p.id}" style="background:var(--paper)"><div class="row"><div><strong>${esc(p.summary || 'Payment')}</strong> <span class="sub">${p.paid ? `paid ${fmtDate(p.paidOn || p.loggedOn)}` : `logged ${fmtDate(p.loggedOn)} — not paid yet`}</span>
+      <div style="margin-top:4px">${p.covered === 0 ? '<span class="sub">Nothing left on it (its claims were cancelled).</span>' : p.complete ? `<span class="pill ok" data-complete>All ${p.covered} arrived</span>` : `<span class="pill ${p.chase ? 'warn' : ''}" data-progress>${p.arrived} of ${p.covered} arrived</span>${p.chase ? ` <span class="pill warn" data-chase>Chase — paid ${p.days} day${p.days === 1 ? '' : 's'} ago</span>` : p.paid ? ` <span class="sub">paid ${p.days} day${p.days === 1 ? '' : 's'} ago</span>` : ''}`}</div></div></div>
+      <details style="margin-top:6px"><summary class="sub">What it covered (${p.items.length} item${p.items.length === 1 ? '' : 's'})</summary>${p.items.map((i) => `<div class="sub" data-hist-item>${esc(i.label)} — ${i.covered ? `${i.arrived} of ${i.covered} arrived` : 'none left'}</div>`).join('')}</details></div>`;
+  function historyCard() {
+    const keep = (p) => histFilter === 'chase' ? p.chase : histFilter === 'waiting' ? p.waiting > 0 : true;
+    const groups = hist.proxies.map((g) => ({ ...g, shown: g.payments.filter(keep) })).filter((g) => g.shown.length);
+    const chips = [['all', 'All'], ['chase', `To chase${hist.totals.toChase ? ` (${hist.totals.toChase})` : ''}`], ['waiting', `Still waiting${hist.totals.waiting ? ` (${hist.totals.waiting})` : ''}`]];
+    return `<div class="card" id="pxHistory"><div class="row"><h2 style="margin:0">Ordered from</h2><div class="chips" id="histFilter" role="group" aria-label="Which payments">${chips.map(([k, l]) => `<button type="button" class="chip ${histFilter === k ? 'on' : ''}" data-act="px-filter" data-k="${k}" aria-pressed="${histFilter === k}">${l}</button>`).join('')}</div></div>
+      <p class="sub" style="margin:6px 0 0">Every proxy payment you've logged, by proxy, and how much of it has reached your warehouse since. <strong>Chase</strong> = paid at least 14 days ago and something still hasn't arrived.</p>
+      ${groups.length ? groups.map((g) => `<div data-proxy-group="${esc(g.name)}" style="margin-top:14px"><h3 style="margin:0 0 6px">${esc(g.name)} <span class="sub">— ${g.totals.payments} payment${g.totals.payments === 1 ? '' : 's'}${g.totals.waiting ? ` · ${g.totals.waiting} still waiting` : ''}</span>${g.totals.toChase ? ` <span class="pill warn" data-group-chase>${g.totals.toChase} to chase</span>` : ''}</h3>${g.shown.map(histPay).join('')}</div>`).join('') : `<p class="muted" style="margin-top:12px">${hist.totals.payments ? (histFilter === 'chase' ? 'Nothing to chase right now.' : 'Nothing is still waiting.') : 'No proxy payments logged yet.'}</p>`}</div>`;
+  }
+  // What the "not via a proxy" tick has taken off the list above — so you can see it and put it back.
+  function hiddenCard() {
+    const n = hidden.orders.length + hidden.items.length; if (!n) return '';
+    return `<details class="card" id="pxHidden"><summary><strong>Hidden from this list</strong> <span class="sub">(${n}) — ordered direct or on hand</span></summary><p class="sub" style="margin:8px 0">These are ticked “not via a proxy”, so they aren't listed above. Card bundles are never listed.</p>
+      ${hidden.orders.map((o) => `<div class="row" data-hidden-order="${o.id}" style="margin:4px 0"><div>${esc(o.title)} <span class="sub">— whole group order · ${o.items} item${o.items === 1 ? '' : 's'} · ${o.claims} confirmed claim${o.claims === 1 ? '' : 's'}</span></div><button class="sm secondary" data-act="px-unhide" data-kind="order" data-id="${o.id}">Show again</button></div>`).join('')}
+      ${hidden.items.map((i) => `<div class="row" data-hidden-item="${i.id}" style="margin:4px 0"><div>${esc(i.title)} <span class="sub">— ${esc(i.orderTitle)} · ${i.claims} confirmed claim${i.claims === 1 ? '' : 's'}</span></div><button class="sm secondary" data-act="px-unhide" data-kind="item" data-id="${i.id}">Show again</button></div>`).join('')}</details>`;
+  }
   function listCard() {
     const active = pays.filter((p) => !p.paid), done = pays.filter((p) => p.paid);
     return `<div class="card"><div class="row"><h2 style="margin:0">Proxy payments</h2><input id="pxSearch" placeholder="Search proxy, summary or item" value="${esc(search)}" style="max-width:260px"></div>
@@ -49,14 +69,20 @@
   function draw() {
     { const d = $('#proxyMe', root); if (d) meOpen = d.open; }                                              // remember whether it was open or folded across redraws
     const keep = { name: val('pxName'), deadline: val('pxDeadline'), summary: val('pxSummary'), paid: ($('#pxPaid', root) || {}).checked };
-    root.innerHTML = `<h1 style="margin:18px 0 10px">Proxy</h1>${meCard()}${logCard()}${listCard()}`;
-    $('#pxName', root).value = keep.name; $('#pxDeadline', root).value = keep.deadline; $('#pxSummary', root).value = keep.summary; $('#pxPaid', root).checked = !!keep.paid;
+    root.innerHTML = `<h1 style="margin:18px 0 10px">Proxy</h1>${viewSwitch()}${view === 'history' ? historyCard() : `${meCard()}${logCard()}${hiddenCard()}${listCard()}`}`;
+    if ($('#pxName', root)) { $('#pxName', root).value = keep.name; $('#pxDeadline', root).value = keep.deadline; $('#pxSummary', root).value = keep.summary; $('#pxPaid', root).checked = !!keep.paid; }
   }
   const msg = (t, ok) => { const m = $('#pxMsg', root); m.textContent = t; m.className = `msg${ok ? ' ok' : ''}`; m.hidden = false; };
 
   async function onClick(e) {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const act = b.dataset.act;
+    if (act === 'px-view') { view = b.dataset.view; return draw(); }
+    if (act === 'px-filter') { histFilter = b.dataset.k; return draw(); }
+    if (act === 'px-unhide') {
+      const kind = b.dataset.kind, r = await api('PATCH', kind === 'order' ? `/api/admin/orders/${b.dataset.id}` : `/api/admin/items/${b.dataset.id}`, { noProxy: false });
+      if (!r.ok) return GOM.toast(errText(r), true); await render(root); return GOM.toast('Back on the list.');
+    }
     if (act === 'suggest') {
       const rows = cands.filter((c) => selected.has(c.key));
       if (!rows.length) return GOM.alert('Tick which sets/items this payment covers first.');

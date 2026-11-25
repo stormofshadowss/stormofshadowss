@@ -1,3 +1,4 @@
+import { proxyHistory } from '../lib/proxy-history.js';
 import { z } from 'zod';
 import { wrap } from '../lib/http.js';
 import { requireAdmin, audit } from '../auth.js';
@@ -19,12 +20,12 @@ export function proxyRoutes(app, { pool }) {
     const [sets] = await pool.query(
       `SELECT i.id AS itemId, i.title, go.title AS orderTitle, ${EFFECTIVE}, (SELECT COUNT(*) FROM item_members m WHERE m.item_id = i.id) AS roster, COUNT(s.id) AS count
          FROM items i JOIN item_sets s ON s.item_id = i.id AND s.admin_decision = 'secured' AND s.included_in_proxy_payment = 0 ${JOINS}
-        WHERE i.item_type = 'set' AND i.cancelled_at IS NULL AND COALESCE(pi.is_self, po.is_self, 0) = 0 GROUP BY i.id, i.title, go.id, go.title, pi.name, po.name, i.payment_deadline, go.payment_deadline ORDER BY go.id, i.id`);
+        WHERE i.item_type = 'set' AND i.cancelled_at IS NULL AND COALESCE(pi.is_self, po.is_self, 0) = 0 AND i.no_proxy = 0 AND go.no_proxy = 0 AND go.is_cards = 0 GROUP BY i.id, i.title, go.id, go.title, pi.name, po.name, i.payment_deadline, go.payment_deadline ORDER BY go.id, i.id`);
     const [items] = await pool.query(
       `SELECT i.id AS itemId, i.title, go.title AS orderTitle, ${EFFECTIVE}, COUNT(c.id) AS confirmed,
               (SELECT COALESCE(SUM(x.claim_count), 0) FROM proxy_payment_items x WHERE x.item_id = i.id AND x.set_id IS NULL) AS covered
          FROM items i JOIN claims c ON c.item_id = i.id AND c.status = 'confirmed' AND c.set_id IS NULL ${JOINS}
-        WHERE i.item_type <> 'set' AND i.cancelled_at IS NULL AND COALESCE(pi.is_self, po.is_self, 0) = 0 AND NOT EXISTS (SELECT 1 FROM import_records ir WHERE ir.kind = 'item' AND ir.entity_id = i.id)   -- imported history isn't something to pay a proxy for
+        WHERE i.item_type <> 'set' AND i.cancelled_at IS NULL AND COALESCE(pi.is_self, po.is_self, 0) = 0 AND i.no_proxy = 0 AND go.no_proxy = 0 AND go.is_cards = 0 AND NOT EXISTS (SELECT 1 FROM import_records ir WHERE ir.kind = 'item' AND ir.entity_id = i.id)   -- imported history isn't something to pay a proxy for
         GROUP BY i.id, i.title, go.id, go.title, pi.name, po.name, i.payment_deadline, go.payment_deadline
        HAVING confirmed > covered ORDER BY go.id, i.id`);
     res.json({
@@ -59,8 +60,9 @@ export function proxyRoutes(app, { pool }) {
       for (const w of wanted) {                         // lowest item first, locking each, so two people logging at once can't deadlock or both succeed
         const [[it]] = await conn.query('SELECT id, title, item_type FROM items WHERE id = ? FOR UPDATE', [w.id]);
         if (!it) throw notFound('One of those items no longer exists');
-        const [[me]] = await conn.query('SELECT COALESCE(pi.is_self, po.is_self, 0) AS self FROM items i JOIN group_orders go ON go.id = i.order_id LEFT JOIN proxies pi ON pi.id = i.proxy_id LEFT JOIN proxies po ON po.id = go.proxy_id WHERE i.id = ?', [w.id]);
+        const [[me]] = await conn.query('SELECT COALESCE(pi.is_self, po.is_self, 0) AS self, i.no_proxy AS itemNo, go.no_proxy AS orderNo, go.is_cards AS cards FROM items i JOIN group_orders go ON go.id = i.order_id LEFT JOIN proxies pi ON pi.id = i.proxy_id LEFT JOIN proxies po ON po.id = go.proxy_id WHERE i.id = ?', [w.id]);
         if (me?.self) throw bad(`"${it.title}" uses a proxy you've marked as yourself, so there's no proxy payment to log for it.`, 'self_proxy');
+        if (me?.itemNo || me?.orderNo || me?.cards) throw bad(`"${it.title}" is ${me.cards ? 'a card bundle (on hand)' : 'marked as not via a proxy'}, so there's no proxy payment to log for it.`, 'no_proxy');
         if (w.kind === 'set') {
           if (it.item_type !== 'set') throw bad(`"${it.title}" isn't a member set`);
           const [sets] = await conn.query("SELECT id FROM item_sets WHERE item_id = ? AND admin_decision = 'secured' AND included_in_proxy_payment = 0 FOR UPDATE", [w.id]);
@@ -77,7 +79,7 @@ export function proxyRoutes(app, { pool }) {
       }
       await conn.query('INSERT IGNORE INTO proxies (name) VALUES (?)', [b.proxy]);
       const [[px]] = await conn.query('SELECT id FROM proxies WHERE name = ?', [b.proxy]);
-      const [pp] = await conn.query('INSERT INTO proxy_payments (proxy_id, deadline, summary, is_paid) VALUES (?,?,?,?)', [px.id, b.deadline || null, b.summary || `${plan.length} item${plan.length === 1 ? '' : 's'}`, b.paid ? 1 : 0]);
+      const [pp] = await conn.query('INSERT INTO proxy_payments (proxy_id, deadline, summary, is_paid, paid_at) VALUES (?,?,?,?,?)', [px.id, b.deadline || null, b.summary || `${plan.length} item${plan.length === 1 ? '' : 's'}`, b.paid ? 1 : 0, b.paid ? new Date() : null]);
       for (const p of plan) {
         if (p.setIds) {
           for (const sid of p.setIds) await conn.query('INSERT INTO proxy_payment_items (proxy_payment_id, item_id, set_id) VALUES (?,?,?)', [pp.insertId, p.item.id, sid]);
@@ -108,10 +110,22 @@ export function proxyRoutes(app, { pool }) {
     res.json({ payments: list });
   }));
 
+  // ORDERED FROM: every payment you've logged, by proxy, with how much of it has reached the warehouse and which are overdue a chase.
+  app.get('/api/admin/proxy/history', admin, wrap(async (req, res) => res.json(await proxyHistory(pool))));
+
+  // What is hidden from "Log a proxy payment" by the "not via a proxy" tick (card bundles are never listed, so aren't shown here) — so it can be seen and undone.
+  app.get('/api/admin/proxy/hidden', admin, wrap(async (req, res) => {
+    const [orders] = await pool.query(`SELECT go.id, go.title, (SELECT COUNT(*) FROM items i WHERE i.order_id = go.id AND i.cancelled_at IS NULL) AS items, (SELECT COUNT(*) FROM claims c WHERE c.order_id = go.id AND c.status = 'confirmed') AS claims
+                                         FROM group_orders go WHERE go.no_proxy = 1 AND go.is_cards = 0 AND go.cancelled_at IS NULL ORDER BY go.id DESC`);
+    const [items] = await pool.query(`SELECT i.id, i.title, go.title AS orderTitle, (SELECT COUNT(*) FROM claims c WHERE c.item_id = i.id AND c.status = 'confirmed') AS claims
+                                        FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.no_proxy = 1 AND go.no_proxy = 0 AND go.is_cards = 0 AND i.cancelled_at IS NULL ORDER BY i.id DESC`);
+    res.json({ orders: orders.map((o) => ({ ...o, items: Number(o.items), claims: Number(o.claims) })), items: items.map((i) => ({ ...i, claims: Number(i.claims) })) });
+  }));
+
   app.patch('/api/admin/proxy/payments/:id', admin, wrap(async (req, res) => {
     const b = z.object({ paid: z.boolean().optional(), deadline: date, summary: z.string().trim().max(255).optional() }).parse(req.body);
     const sets = [], vals = [];
-    if (b.paid !== undefined) { sets.push('is_paid = ?'); vals.push(b.paid ? 1 : 0); }
+    if (b.paid !== undefined) { sets.push('is_paid = ?'); vals.push(b.paid ? 1 : 0); sets.push(b.paid ? 'paid_at = COALESCE(paid_at, NOW(3))' : 'paid_at = NULL'); }          // paid_at: how long since you paid, for the "Ordered from" history
     if (b.deadline !== undefined) { sets.push('deadline = ?'); vals.push(b.deadline); }
     if (b.summary !== undefined) { sets.push('summary = ?'); vals.push(b.summary || null); }
     if (!sets.length) throw bad('Nothing to change');

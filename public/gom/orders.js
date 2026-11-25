@@ -50,6 +50,7 @@
         ${dateInput('closeDate', o?.closeDate, 'Closes')}${dateInput('paymentDeadline', o?.paymentDeadline, 'Payment due')}${dateInput('expectedShipDate', o?.expectedShipDate, 'Expected ship date')}
         <div><label>Proxy</label><input name="proxy" list="proxyList" value="${esc(o?.proxy || '')}" maxlength="80"></div>
         <div class="full"><label class="chk"><input type="checkbox" name="isPrivate" ${o?.isPrivate ? 'checked' : ''}> Private — not listed publicly (for off-site orders you assign by hand)</label></div>
+        <div class="full"><label class="chk"><input type="checkbox" name="noProxy" ${o?.noProxy ? 'checked' : ''}> Ordered direct / on hand — not via a proxy</label><div class="sub">Leaves all its items off the Proxy tab's “Log a proxy payment” list.</div></div>
         <div class="full"><label class="chk"><input type="checkbox" name="isTest" ${o?.isTest ? 'checked' : ''}> Test order — can be deleted with everything on it (payments, parcels…) from the Launch tab, until you go live</label></div>
       </div>
       <p class="msg" data-msg hidden></p>
@@ -108,6 +109,7 @@
         <div>${dateInput('closeDate', it.closeDate, "Closes (blank = when the group order closes)")}<div class="sub">Claims on this item stop after this day (UK time).${currentOrder().closeDate ? ` It can't be later than the group order's ${fmtDate(currentOrder().closeDate)}.` : ''}</div></div>
         <div class="full" data-box-ticks><label class="chk" style="margin:4px 0"><input type="checkbox" name="noEms" ${it.noEms ? 'checked' : ''}> No EMS when boxed</label> <label class="chk" style="margin:4px 0 4px 14px"><input type="checkbox" name="noCustoms" ${it.noCustoms ? 'checked' : ''}> No customs when boxed</label><div class="sub">For things like free bonus cards: when this goes in a box it carries no share of the EMS or customs (the other items carry it). You can still change it for a particular box in the Warehouse.</div></div>
         <div class="full"><label class="chk" style="margin:4px 0"><input type="checkbox" name="hidden" ${it.hidden ? 'checked' : ''}> Hide from joiners</label><div class="sub">They can't see it or claim it — only you can add it for people (for example a free bonus photocard).</div></div>
+        <div class="full"><label class="chk" style="margin:4px 0"><input type="checkbox" name="noProxy" ${it.noProxy ? 'checked' : ''}> Ordered direct / on hand — not via a proxy</label><div class="sub">Leaves just this item off the Proxy tab's “Log a proxy payment” list.</div></div>
         <div><label>Purchase limit (blank = none)</label><input name="purchaseLimit" type="number" min="1" max="9999" inputmode="numeric" placeholder="e.g. 5" value="${it.limit ? it.limit.n : ''}"><div class="sub">At most this many across everyone, first come first served. Lowering it never cancels claims people already have — it only stops new ones.</div></div>
         ${['set', 'independent', 'size'].includes(it.type) ? `<div><label>The limit counts</label><select name="limitScope"><option value="item" ${it.limit?.scope === 'option' ? '' : 'selected'}>The whole item together</option><option value="option" ${it.limit?.scope === 'option' ? 'selected' : ''}>Each member / size separately</option></select></div>` : ''}
         <div><label>Proxy (blank = the GO's)</label><input name="proxy" list="proxyList" value="${esc(it.proxy && it.proxy !== currentOrder().proxy ? it.proxy : '')}"></div>
@@ -119,7 +121,7 @@
     }
     return `<tr data-row-id="${it.id}">${reorderCell(it)}<td>${it.image ? `<img class="thumb sm" src="${esc(it.image.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}${esc(it.title)}${it.hidden ? ` <span class="pill warn" data-hidden-item title="Joiners can't see or claim this — only you can add it for people">Hidden from joiners</span> <button class="sm secondary" data-act="item-show" data-id="${it.id}" title="Let joiners see it again">Show</button>` : ''}${it.noEms ? ' <span class="pill" data-no-ems title="Carries no share of the EMS when it is boxed">no EMS</span>' : ''}${it.noCustoms ? ' <span class="pill" data-no-customs title="Carries no share of the customs when it is boxed">no customs</span>' : ''}${it.description ? `<div class="sub" style="white-space:pre-line">${esc(it.description.length > 140 ? it.description.slice(0, 140) + '…' : it.description)}</div>` : ''}</td><td>${esc(typeName[it.type])}</td><td class="nowrap">${it.priceTbc ? '<span class="pill warn">TBC</span>' : money(it.price)}</td>
       <td class="nowrap">${fmtDate(it.payBy)}${it.ownPaymentDeadline ? ' <span class="sub">(own)</span>' : ''}</td>
-      <td class="nowrap" data-closes>${closesCell(it)}</td><td>${esc(it.proxy || '—')}</td>
+      <td class="nowrap" data-closes>${closesCell(it)}</td><td>${esc(it.proxy || '—')}${it.noProxy ? ' <span class="pill" data-no-proxy title="Ordered direct or on hand — left off the Proxy tab\'s Log a proxy payment list">not via a proxy</span>' : ''}</td>
       <td>${itemSummary(it)}</td><td>${it.claimed}${limitCell(it)}</td><td>${currentOrder()?.isCards ? '' : `<button class="sm secondary" data-act="edit-item" data-id="${it.id}">Edit</button> <button class="sm secondary danger" data-act="delete-item" data-id="${it.id}">Delete</button>`}${it.cancelled ? ' <span class="pill warn" data-cancelled>Cancelled</span>' : ` <button class="sm secondary danger" data-act="cancel-item" data-id="${it.id}">Cancel…</button>`}${it.type === 'set' ? ` <button class="sm secondary" data-act="fixed" data-id="${it.id}">Fixed claimers</button>` : ''}</td></tr>`;
   }
 
@@ -148,6 +150,7 @@
         <div>${dateInput('closeDate', '', "Closes (blank = when the group order closes)")}<div class="sub">Claims on this item stop after this day (UK time) — use it when an item closes before the rest of the order.</div></div>
         <div class="full" data-box-ticks><label class="chk" style="margin:4px 0"><input type="checkbox" name="noEms"> No EMS when boxed</label> <label class="chk" style="margin:4px 0 4px 14px"><input type="checkbox" name="noCustoms"> No customs when boxed</label><div class="sub">For things like free bonus cards: when this goes in a box it carries no share of the EMS or customs (the other items carry it). You can still change it for a particular box in the Warehouse.</div></div>
         <div class="full"><label class="chk" style="margin:4px 0"><input type="checkbox" name="hidden" > Hide from joiners</label><div class="sub">They can't see it or claim it — only you can add it for people (for example a free bonus photocard).</div></div>
+        <div class="full"><label class="chk" style="margin:4px 0"><input type="checkbox" name="noProxy"> Ordered direct / on hand — not via a proxy</label><div class="sub">Leaves just this item off the Proxy tab's “Log a proxy payment” list.</div></div>
         <div><label>Purchase limit (blank = none)</label><input name="purchaseLimit" type="number" min="1" max="9999" inputmode="numeric" placeholder="e.g. 5"><div class="sub">At most this many across everyone, first come first served — for a store limit or a bulky item.</div></div>
         <div data-limit-scope hidden><label>The limit counts</label><select name="limitScope"><option value="item">The whole item together</option><option value="option">Each member / size separately</option></select></div>
         <div><label>Proxy (blank = the GO's)</label><input name="proxy" list="proxyList" maxlength="80"></div>
@@ -240,7 +243,7 @@
   const isArchived = (o) => !!o.archivedAt && isClosedOrder(o);                                  // tucked away by hand (only ever a closed or cancelled order)
   const orderRow = (o) => `<tr data-order="${o.id}"><td>${o.cover ? `<img class="thumb sm" src="${esc(o.cover.thumb)}" alt="" style="float:left; margin-right:10px">` : ''}<strong>${esc(o.title)}</strong></td><td>${esc(o.group)}</td>
         <td>${o.cancelled ? '<span class="pill warn" data-cancelled>Cancelled</span>' : o.closedByDate ? '<span class="pill warn" data-closed-by-date title="Its closing date has passed, so it no longer takes claims">Closed (date passed)</span>' : `<span class="pill ${o.status === 'open' ? 'ok' : 'dim'}">${o.status === 'open' ? 'Open' : 'Closed'}</span>`}${isClosedOrder(o) && !o.cancelled && !isArchived(o) && o.outstanding === 0 ? ' <span class="pill ok" data-ready-archive title="Every claim in this order is completed — it is ready to archive">✓ all completed</span>' : ''}</td>
-        <td>${o.isPrivate ? '<span class="pill warn">Private</span>' : 'Public'}${o.isTest ? ' <span class="pill" data-test>Test</span>' : ''}</td><td>${fmtDate(o.closeDate)}</td><td>${fmtDate(o.paymentDeadline)}</td><td>${esc(o.proxy || '—')}</td>
+        <td>${o.isPrivate ? '<span class="pill warn">Private</span>' : 'Public'}${o.isTest ? ' <span class="pill" data-test>Test</span>' : ''}</td><td>${fmtDate(o.closeDate)}</td><td>${fmtDate(o.paymentDeadline)}</td><td>${esc(o.proxy || '—')}${o.noProxy ? ' <span class="pill" data-no-proxy title="Ordered direct or on hand — left off the Proxy tab\'s Log a proxy payment list">not via a proxy</span>' : ''}</td>
         <td class="nowrap">${isArchived(o) ? `<button class="sm" data-act="open-items" data-id="${o.id}">Items (${o.items.length})</button> <button class="sm secondary" data-act="unarchive-order" data-id="${o.id}">Unarchive</button>` : `${o.isCards ? '<span class="pill" data-cards-managed title="Change a photocard bundle from the Cards tab">Managed in the Cards tab</span>' : `<button class="sm secondary" data-act="edit-order" data-id="${o.id}">Edit</button>`} <button class="sm" data-act="open-items" data-id="${o.id}">Items (${o.items.length})</button>${o.isCards ? '' : ` <button class="sm secondary danger" data-act="delete-order" data-id="${o.id}">Delete</button>`}${o.cancelled ? '' : ` <button class="sm secondary danger" data-act="cancel-order" data-id="${o.id}">Cancel…</button>`}${isClosedOrder(o) ? ` <button class="sm secondary" data-act="archive-order" data-id="${o.id}" title="Tuck this finished order away (every claim in it must be completed)">Archive</button>` : ''}`}</td></tr>
         ${editingId === o.id ? `<tr><td colspan="8">${orderForm(o)}</td></tr>` : ''}`;
   const orderTable = (list) => `<div class="scroll"><table class="grid"><thead><tr><th>Title</th><th>Group</th><th>Status</th><th>Listing</th><th>Closes</th><th>Payment due</th><th>Proxy</th><th></th></tr></thead><tbody>${list.map(orderRow).join('')}</tbody></table></div>`;
@@ -378,7 +381,7 @@
       }
       if (!groupId) return showMsg(form, 'Choose a group, or type a new group name.');
       const r = await api('POST', '/api/admin/orders', {
-        groupId, title: val(form, 'title'), status: val(form, 'status'), isPrivate: form.elements.isPrivate.checked, isTest: form.elements.isTest.checked,
+        groupId, title: val(form, 'title'), status: val(form, 'status'), isPrivate: form.elements.isPrivate.checked, noProxy: form.elements.noProxy.checked, isTest: form.elements.isTest.checked,
         closeDate: val(form, 'closeDate') || null, paymentDeadline: val(form, 'paymentDeadline') || null,
         expectedShipDate: val(form, 'expectedShipDate') || null, proxy: val(form, 'proxy') || null,
       });
@@ -386,7 +389,7 @@
       showNew = false; itemsFor = r.json.id; addItemOpen = true; await render(root); GOM.toast('Group order created — now add its items.');
     } else if (kind === 'edit-order') {
       const r = await api('PATCH', `/api/admin/orders/${form.dataset.id}`, {
-        title: val(form, 'title'), status: val(form, 'status'), isPrivate: form.elements.isPrivate.checked, isTest: form.elements.isTest.checked,
+        title: val(form, 'title'), status: val(form, 'status'), isPrivate: form.elements.isPrivate.checked, noProxy: form.elements.noProxy.checked, isTest: form.elements.isTest.checked,
         closeDate: val(form, 'closeDate') || null, paymentDeadline: val(form, 'paymentDeadline') || null,
         expectedShipDate: val(form, 'expectedShipDate') || null, proxy: val(form, 'proxy') || null,
       });
@@ -407,7 +410,7 @@
       const body = {
         type, title: val(form, 'title'), description: val(form, 'description'), ...priceBody(form), sizeBucket: val(form, 'sizeBucket'), weightG: val(form, 'weightG') === '' ? null : Number(val(form, 'weightG')),
         paymentDeadline: val(form, 'paymentDeadline') || null, closeDate: val(form, 'closeDate') || null, proxy: val(form, 'proxy') || null, ...extra,
-        noEms: form.elements.noEms.checked, noCustoms: form.elements.noCustoms.checked, hidden: form.elements.hidden.checked, purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), limitScope: ['set', 'independent', 'size'].includes(type) ? val(form, 'limitScope') : 'item',
+        noEms: form.elements.noEms.checked, noCustoms: form.elements.noCustoms.checked, hidden: form.elements.hidden.checked, noProxy: form.elements.noProxy.checked, purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), limitScope: ['set', 'independent', 'size'].includes(type) ? val(form, 'limitScope') : 'item',
       };
       if (type === 'set') body.requiresFullSet = form.elements.requiresFullSet.checked;
       const r = await api('POST', `/api/admin/orders/${form.dataset.id}/items`, body);
@@ -442,7 +445,7 @@
         ...(renames.length ? { renameMembers: renames } : {}), ...(prices.length ? { memberPrices: prices } : {}), ...(memberLimits.length ? { memberLimits } : {}), ...(variantLimits.length ? { variantLimits } : {}),
         title: val(form, 'title'), ...priceBody(form), description: val(form, 'description'), weightG: val(form, 'weightG') === '' ? null : Number(val(form, 'weightG')),
         paymentDeadline: val(form, 'paymentDeadline') || null, closeDate: val(form, 'closeDate') || null, proxy: val(form, 'proxy') || null,
-        noEms: form.elements.noEms.checked, noCustoms: form.elements.noCustoms.checked, hidden: form.elements.hidden.checked, purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), ...(form.elements.limitScope ? { limitScope: val(form, 'limitScope') } : {}),
+        noEms: form.elements.noEms.checked, noCustoms: form.elements.noCustoms.checked, hidden: form.elements.hidden.checked, noProxy: form.elements.noProxy.checked, purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), ...(form.elements.limitScope ? { limitScope: val(form, 'limitScope') } : {}),
       });
       if (!r.ok) return showMsg(form, errText(r));
       editingItem = null; await reload(true);
