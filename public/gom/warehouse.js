@@ -12,7 +12,7 @@
 
   async function render(el) {
     root = el;
-    const [c, b] = await Promise.all([api('GET', '/api/admin/boxes/candidates'), api('GET', `/api/admin/boxes${search ? `?q=${encodeURIComponent(search)}` : ''}`)]);
+    const [c, b] = await Promise.all([api('GET', '/api/admin/boxes/candidates'), api('GET', `/api/admin/boxes${search ? `?q=${encodeURIComponent(search)}` : ''}`), GOM.loadWhCounts ? GOM.loadWhCounts() : null]);
     candidates = c.json?.candidates || []; boxes = b.json?.boxes || [];
     selected = new Set([...selected].filter((id) => candidates.some((x) => x.claimId === id)));
     draw(); await refreshPreview();
@@ -61,8 +61,8 @@
 
   // A box that is EN ROUTE folds to one line — its number and the group orders its items are from (e.g. "Box #21 — This & That Merch, Ateez Golden Hour Part 6") — and opens for everything inside.
   const boxOpen = new Set();
-  const foldBox = (b) => { const names = [...new Set(b.items.map((i) => i.orderTitle).filter(Boolean))], open = boxOpen.has(b.id) || !!search;
-    return `<details class="box-fold" data-box-fold="${b.id}" ${open ? 'open' : ''}><summary><strong>Box #${b.id}</strong> <span class="pill info">En route to GOM</span> <span class="sub" data-box-orders>— ${names.length ? names.map(esc).join(', ') : 'no items'} · ${b.items.length} item${b.items.length === 1 ? '' : 's'}</span></summary>${boxCard(b)}</details>`; };
+  const foldBox = (b, cls = 'info', label = 'En route to GOM') => { const names = [...new Set(b.items.map((i) => i.orderTitle).filter(Boolean))], open = boxOpen.has(b.id) || !!search;
+    return `<details class="box-fold" data-box-fold="${b.id}" ${open ? 'open' : ''}><summary><strong>Box #${b.id}</strong> <span class="pill ${cls}">${label}</span> <span class="sub" data-box-orders>— ${names.length ? names.map(esc).join(', ') : 'no items'} · ${b.items.length} item${b.items.length === 1 ? '' : 's'}</span></summary>${boxCard(b)}</details>`; };
   function boxCard(b) {
     const [cls, label] = STATUS[b.status];
     return `<div class="card" data-box="${b.id}" style="background:var(--paper)"><div class="row"><div><strong>Box #${b.id}</strong> <span class="pill ${cls}">${label}</span>
@@ -80,20 +80,34 @@
         <div><button class="sm secondary" data-act="customs" data-id="${b.id}">${b.customsTotal > 0 ? 'Update' : 'Apply'} customs split</button></div></div></div>`;
   }
 
-  function boxesCard() {
-    const active = boxes.filter((b) => !b.archived), done = boxes.filter((b) => b.archived);
-    return `<div class="card"><div class="row"><h2 style="margin:0">Boxes</h2><input id="boxSearch" placeholder="Search box #, tracking, person or item" value="${esc(search)}" style="max-width:280px"></div>
-      ${boxes.length ? '' : `<p class="muted" style="margin-top:10px">${search ? 'No boxes match that search.' : 'No boxes yet — create one above.'}</p>`}
-      <div style="margin-top:10px">${active.map((b) => (b.status === 'enroute' ? foldBox(b) : boxCard(b))).join('')}</div>
-      ${done.length ? `<details style="margin-top:10px"><summary>Archived boxes (${done.length}) — fully checked and ready, kept for reference</summary>${done.map(boxCard).join('')}</details>` : ''}</div>`;
+  // THE FIVE SUB-TABS of the Warehouse (the first two — Unordered, Incoming — are drawn by incoming.js): ARRIVED = items waiting to be boxed + boxes being made; ENROUTE = boxes on their way (folded to a line);
+  // ON HAND = boxes that have arrived: "To check" first (the ready-to-pack checklist), then "Checked and ready" (the archive, folded to a line each).
+  const searchBox = () => `<input id="boxSearch" placeholder="Search box #, tracking, person or item" value="${esc(search)}" style="max-width:280px">`;
+  const none = (text) => `<p class="muted" style="margin:10px 0 0">${search ? 'No boxes match that search.' : text}</p>`;
+  function makingCard() {
+    const list = boxes.filter((b) => b.status === 'shipping_requested');
+    return `<div class="card" data-boxes-making><div class="row"><h2 style="margin:0">Boxes being made</h2>${searchBox()}</div><p class="sub" style="margin:6px 0 0">Created, but not yet marked en route.</p>${list.length ? '' : none('No boxes waiting to go — create one above.')}<div style="margin-top:10px">${list.map(boxCard).join('')}</div></div>`;
+  }
+  function enrouteCard() {
+    const list = boxes.filter((b) => b.status === 'enroute');
+    return `<div class="card" data-boxes-enroute><div class="row"><h2 style="margin:0">En route to you</h2>${searchBox()}</div>${list.length ? '' : none('No boxes are on their way.')}<div style="margin-top:10px">${list.map((b) => foldBox(b)).join('')}</div></div>`;
+  }
+  function onHandCard() {
+    const toCheck = boxes.filter((b) => b.status === 'arrived' && !b.archived), done = boxes.filter((b) => b.archived);
+    return `<div class="card" data-boxes-to-check><div class="row"><h2 style="margin:0">To check${toCheck.length ? ` (${toCheck.length})` : ''}</h2>${searchBox()}</div><p class="sub" style="margin:6px 0 0">Arrived at you. Tick off what's fine and save — anything unticked stays at “checking parcel”.</p>${toCheck.length ? '' : none('Nothing to check.')}<div style="margin-top:10px">${toCheck.map(boxCard).join('')}</div></div>
+      <div class="card" data-boxes-checked><h2 style="margin:0">Checked and ready (${done.length})</h2><p class="sub" style="margin:6px 0 0">Fully checked and on hand — kept for reference.</p>${done.length ? '' : none('Nothing here yet.')}<div style="margin-top:10px">${done.map((b) => foldBox(b, 'ok', 'On hand')).join('')}</div></div>`;
   }
 
   function draw() {
     root.querySelectorAll('details[data-box-fold]').forEach((d) => { const id = Number(d.dataset.boxFold); if (d.open) boxOpen.add(id); else if (!search) boxOpen.delete(id); });          // which en-route boxes were open, across redraws
     const keep = { ems: val('boxEms'), due: val('boxDue'), customs: val('boxCustoms'), weight: val('boxWeight'), track: val('boxTracking'), q: search };
-    root.innerHTML = `<h1 style="margin:18px 0 10px">Warehouse</h1>${GOM.whSwitch ? GOM.whSwitch('boxes') : ''}${candidatesCard()}${boxesCard()}`;
-    $('#boxEms', root).value = keep.ems; $('#boxDue', root).value = keep.due || GOM.inDays(14); $('#boxCustoms', root).value = keep.customs; $('#boxWeight', root).value = keep.weight; $('#boxTracking', root).value = keep.track;
-    $('#boxPreview', root).innerHTML = previewHtml();
+    if (!GOM.whView || GOM.whView === 'boxes') GOM.whView = 'arrived';                      // the Warehouse opens on Arrived: what is ready to box
+    const view = GOM.whView;
+    root.innerHTML = `<h1 style="margin:18px 0 10px">Warehouse</h1>${GOM.whSwitch ? GOM.whSwitch(view) : ''}${view === 'arrived' ? candidatesCard() + makingCard() : view === 'enroute' ? enrouteCard() : onHandCard()}`;
+    if (view === 'arrived') {
+      $('#boxEms', root).value = keep.ems; $('#boxDue', root).value = keep.due || GOM.inDays(14); $('#boxCustoms', root).value = keep.customs; $('#boxWeight', root).value = keep.weight; $('#boxTracking', root).value = keep.track;
+      $('#boxPreview', root).innerHTML = previewHtml();
+    }
   }
 
   async function refreshPreview() {
@@ -176,6 +190,6 @@
   GOM.registerTab({
     id: 'warehouse', label: 'Warehouse',
     badgeCount: async () => ((await api('GET', '/api/admin/boxes/candidates')).json?.candidates || []).length,
-    async render(el) { if (GOM.whView === 'incoming' && GOM.incoming) return GOM.incoming.render(el); await render(el); el.onclick = onClick; el.onchange = onChange; el.oninput = onInput; },
+    async render(el) { if ((GOM.whView === 'unordered' || GOM.whView === 'incoming') && GOM.incoming) return GOM.incoming.render(el); await render(el); el.onclick = onClick; el.onchange = onChange; el.oninput = onInput; },
   });
 })();

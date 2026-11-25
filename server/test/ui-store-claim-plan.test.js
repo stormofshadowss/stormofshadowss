@@ -16,11 +16,11 @@ const store = async (lines) => (await api('POST', '/api/admin/store-orders', { s
 const stageOf = async (ids) => (await app.q('SELECT pipeline FROM claims WHERE id IN (?) ORDER BY id', [ids])).map((r) => r.pipeline);
 const move = (ids, pipeline) => api('POST', '/api/admin/claims/pipeline', { claimIds: ids, pipeline });
 const open = async () => { const p = await gomPage(app, admin); await p.click(p.byText('#tabs button', 'Warehouse')); await sleep(120); await p.settle(); await p.click(p.q('[data-act="wh-view"][data-view="incoming"]')); await sleep(150); await p.settle(); return p; };
-const chip = (p, k) => p.q(`[data-act="filter"][data-k="${k}"]`);
+const toUnordered = async (p) => { await p.click(p.q('[data-act="wh-view"][data-view="unordered"]')); await sleep(150); await p.settle(); };
 const group = (p, go) => p.q(`[data-to-order-group="o${go}"]`);
 const form = (p) => p.q('form[data-form="new-order"]');
 const dialog = (p) => p.text(modal(p));
-const logFromList = async (p, go, qty) => { await p.click(chip(p, 'toorder')); await p.click(p.q('[data-act="log-order"]', group(p, go))); form(p).elements.store.value = 'Weverse Shop'; if (qty !== undefined) form(p).querySelector('[data-line-row] [name="qty"]').value = String(qty); await p.submit(form(p)); await sleep(400); await p.settle(); };
+const logFromList = async (p, go, qty) => { await toUnordered(p); await p.click(p.q('[data-act="log-order"]', group(p, go))); form(p).elements.store.value = 'Weverse Shop'; if (qty !== undefined) form(p).querySelector('[data-line-row] [name="qty"]').value = String(qty); await p.submit(form(p)); await sleep(400); await p.settle(); };
 
 test('LOG A STORE ORDER → A PREVIEW OF THE CLAIMS IT WOULD MARK AS ORDERED, naming the item, its group order and the people; "Move them" moves exactly those and says so', async () => {
   const m = await mk(4); const p = await open(); await logFromList(p, m.go); assert.equal(toast(p), 'Store order saved.');

@@ -3,7 +3,7 @@ import { wrap } from '../lib/http.js';
 import { requireAdmin, audit } from '../auth.js';
 import { withTx } from '../db.js';
 import { bad, notFound } from '../errors.js';
-import { incomingSnapshot, advancePlan, toOrderList, storeOrderClaimPlan } from '../lib/incoming.js';
+import { incomingSnapshot, advancePlan, toOrderList, storeOrderClaimPlan, ARRIVED } from '../lib/incoming.js';
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-10-31').refine((s) => { const d = new Date(`${s}T00:00:00Z`); return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s; }, 'That is not a real date');
 const optText = (n) => z.string().trim().max(n).nullish().transform((v) => v || null);
@@ -23,6 +23,18 @@ export function incomingRoutes(app, { pool }) {
   const admin = requireAdmin;
   app.get('/api/admin/incoming', admin, wrap(async (req, res) => res.json(await incomingSnapshot(pool))));
   app.get('/api/admin/incoming/to-order', admin, wrap(async (req, res) => res.json(await toOrderList(pool))));        // what still needs ordering, by option
+
+  // The numbers on the Warehouse sub-tabs — Unordered · Incoming · Arrived · Enroute · On hand.
+  // unordered: copies secured and waiting to be ordered · incoming: store orders waiting (toChase: the ones to chase) · arrived: items at the proxy waiting to be boxed (making: boxes being made) · enroute: boxes on their way
+  // · toCheck: boxes that have arrived but aren't fully checked yet · checked: boxes arrived and fully checked (the "On hand" archive)
+  app.get('/api/admin/warehouse/counts', admin, wrap(async (req, res) => {
+    const one = async (sql, params = []) => Number((await pool.query(sql, params))[0][0].n);
+    const [toOrder, snap] = await Promise.all([toOrderList(pool), incomingSnapshot(pool)]);
+    const toCheck = await one("SELECT COUNT(*) AS n FROM boxes b WHERE b.status = 'arrived' AND (NOT EXISTS (SELECT 1 FROM box_items bi WHERE bi.box_id = b.id) OR EXISTS (SELECT 1 FROM box_items bi WHERE bi.box_id = b.id AND bi.item_status <> 'ready'))"), arrivedBoxes = await one("SELECT COUNT(*) AS n FROM boxes WHERE status = 'arrived'");
+    res.json({ unordered: Number(toOrder.total || 0), incoming: Number(snap.totals.waiting || 0), toChase: Number(snap.totals.toChase || 0),
+      arrived: await one("SELECT COUNT(*) AS n FROM claims WHERE status = 'confirmed' AND pipeline = ? AND box_id IS NULL", [ARRIVED]), making: await one("SELECT COUNT(*) AS n FROM boxes WHERE status = 'shipping_requested'"),
+      enroute: await one("SELECT COUNT(*) AS n FROM boxes WHERE status = 'enroute'"), toCheck, checked: arrivedBoxes - toCheck });
+  }));
 
   // Which claims should move on because of THIS store order? ?to=ordered (it was logged) or ?to=arrived (things have arrived). A plan only — the screen shows it, then the ordinary "move stage" does the moving.
   app.get('/api/admin/store-orders/:id/claim-plan', admin, wrap(async (req, res) => {

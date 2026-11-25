@@ -20,6 +20,8 @@ async function arrived(handle, item = ITEM.album) {
   return id;
 }
 const open = async () => { const p = await gomPage(app, admin); await p.click(p.byText('#tabs button', 'Warehouse')); return p; };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sub = async (p, view) => { await p.click(p.q(`[data-act="wh-view"][data-view="${view}"]`)); await sleep(150); await p.settle(); };          // switch Warehouse sub-tab
 const tick = (p, id) => p.click(p.q(`input[data-act="pick"][data-id="${id}"]`));
 const claim1 = async (h) => (await api('GET', `/api/admin/claims?handle=${h}`)).json.claims[0];
 const boxCard = (p, id) => p.q(`[data-box="${id}"]`);
@@ -27,7 +29,7 @@ const boxCard = (p, id) => p.q(`[data-box="${id}"]`);
 test('with nothing waiting, the tab explains what makes items appear, and there are no boxes yet', async () => {
   const p = await open();
   assert.match(text(p), /Nothing is waiting to be boxed.*arrived at proxy \/ warehouse/);
-  assert.match(text(p), /No boxes yet — create one above/);
+  assert.match(text(p), /No boxes waiting to go — create one above/);
   p.close();
 });
 
@@ -103,11 +105,13 @@ test('a box goes en route, then arrives; once arrived, you tick what is fine —
   const box = (await api('POST', '/api/admin/boxes', { claimIds: [ia, ib], emsTotal: 6 })).json.id;
   const p = await open();
   assert.ok(p.byText('button', 'Mark en route', boxCard(p, box)) && p.byText('button', 'Undo box', boxCard(p, box)));
-  await p.click(p.byText('button', 'Mark en route', boxCard(p, box)));
+  await p.click(p.byText('button', 'Mark en route', boxCard(p, box))); await sleep(200); await p.settle();
+  assert.equal(p.q(`[data-box="${box}"]`), null, 'it has left the boxes being made'); await sub(p, 'enroute');
   assert.match(text(p, `[data-box="${box}"]`), /En route to GOM/);
   assert.equal((await claim1(a)).pipeline, 'enroute to GOM');
   assert.equal(p.q('input[data-ready]'), null, 'no checklist until it has arrived');
-  await p.click(p.byText('button', 'Mark arrived', boxCard(p, box)));
+  await p.click(p.byText('button', 'Mark arrived', boxCard(p, box))); await sleep(200); await p.settle();
+  assert.equal(p.q(`[data-box="${box}"]`), null, 'it has left Enroute'); await sub(p, 'onhand'); assert.ok(p.q(`[data-boxes-to-check] [data-box="${box}"]`), 'it is under To check');
   assert.match(text(p, `[data-box="${box}"]`), /Arrived at GOM.*Mark ready to pack.*Untick anything that isn't actually fine/s);
   assert.equal(p.byText('button', 'Undo box', boxCard(p, box)), undefined, "an arrived box can't be undone");
   assert.equal(p.qa(`input[data-ready="${box}"]:checked`).length, 2, 'everything starts ticked');
@@ -119,8 +123,8 @@ test('a box goes en route, then arrives; once arrived, you tick what is fine —
   assert.equal(p.q('details'), null, 'still active while something is being checked');
   await p.click(p.q(`input[data-ready="${box}"][data-claim="${ib}"]`));                          // problem sorted
   await p.click(p.byText('button', 'Save ready-to-pack selections', boxCard(p, box)));
-  assert.match(text(p, 'details summary'), /Archived boxes \(1\)/);
-  assert.ok(p.q(`details [data-box="${box}"]`), 'the finished box moved into the archive');
+  assert.match(text(p, 'details summary'), new RegExp(`^Box #${box} On hand — .* · 2 items$`)); assert.equal(p.q(`[data-boxes-to-check] [data-box="${box}"]`), null, 'no longer under To check');
+  assert.ok(p.q(`[data-boxes-checked] details [data-box="${box}"]`), 'the finished box moved into Checked and ready');
   assert.deepEqual([p.errors, p.native], [[], 0]);
   p.close();
 });

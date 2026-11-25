@@ -18,13 +18,14 @@ before(async () => {
 });
 after(async () => { await app.stop(); });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const open = async () => { const p = await gomPage(app, admin); await p.click(p.byText('#tabs button', 'Warehouse')); await sleep(120); await p.settle(); await p.click(p.q('[data-act="wh-view"][data-view="incoming"]')); await sleep(150); await p.settle(); return p; };
-const chip = (p, k) => p.q(`[data-act="filter"][data-k="${k}"]`);
+const open = async () => { const p = await gomPage(app, admin); await p.click(p.byText('#tabs button', 'Warehouse')); await sleep(120); await p.settle(); await p.click(p.q('[data-act="wh-view"][data-view="unordered"]')); await sleep(150); await p.settle(); return p; };
+const chip = (p, k) => (k === 'toorder' ? p.q('[data-act="wh-view"][data-view="unordered"]') : p.q(`[data-act="filter"][data-k="${k}"]`));          // the old "To order" chip is now the Unordered sub-tab
+const toIncoming = async (p) => { await p.click(p.q('[data-act="wh-view"][data-view="incoming"]')); await sleep(150); await p.settle(); };
 const group = (p, key) => p.q(`[data-to-order-group="${key}"]`);
 const optionsOf = (p, g, item) => p.qa('[data-option]', [...p.qa('[data-to-order-item]', g)].find((r) => p.text(r).includes(item))).map((x) => p.text(x));
 
 test('THE "TO ORDER" CHIP shows the count, and opens a list of secured claims per option — "5× …, 3× …, 1× …" — by group order, with unsecured requests left out', async () => {
-  const p = await open(); assert.match(p.text(chip(p, 'toorder')), /^To order \(\d+\)$/); await p.click(chip(p, 'toorder')); const g = group(p, `o${ids.sam}`); assert.ok(g, 'a card for the group order');
+  const p = await open(); assert.match(p.text(chip(p, 'toorder')), /^Unordered \(\d+\)$/); await p.click(chip(p, 'toorder')); const g = group(p, `o${ids.sam}`); assert.ok(g, 'a card for the group order');
   assert.deepEqual(optionsOf(p, g, 'Strap plush'), ['5×'], 'a plain item: its total'); assert.deepEqual(optionsOf(p, g, 'Pop-up tee'), ['1× L', '2× M'], 'a size item: per size'); assert.deepEqual(optionsOf(p, g, 'Photocards'), ['1× Felix', '3× Han'], 'a member item: per member');
   assert.doesNotMatch(p.text(g), /Not secured yet/, 'a request nobody has secured is not something to order yet'); assert.match(p.text(p.q('[data-to-order] .sub'), 'copies'), /secured and waiting to be ordered/); assert.deepEqual([p.errors, p.native], [[], 0]); p.close();
 });
@@ -84,7 +85,7 @@ test('SAVING IT creates the store order with those lines and notes, then SHOWS w
   const api = (m, pa, b) => app.api(m, pa, b, admin); const me = await mkOrder('Save flow GO', 'Yuki', [{ title: 'Keyring set', members: ['Han', 'Felix'], claims: [['Han', 2], ['Felix', 1]] }]);
   const p = await open(); await p.click(chip(p, 'toorder')); const before = Number(p.text(chip(p, 'toorder')).match(/\((\d+)\)/)[1]); await p.click(p.q('[data-act="log-order"]', group(p, `o${me.go}`)));
   form(p).elements.store.value = 'Ktown4u'; form(p).elements.orderRef.value = 'KT-1001'; await p.submit(form(p)); await sleep(350); await p.settle();
-  assert.equal(toast(p), 'Store order saved.'); assert.match(p.text(modal(p)), /^Move 3 claims to “ordered via proxy \/ warehouse”\? • Keyring set \(Save flow GO\) — 3 claims: @.*Not nowMove them$/, 'the preview appears by itself'); await press(p, 'Not now'); await sleep(150); assert.equal(form(p), null, 'the form closes'); assert.equal(p.q('[data-act="filter"][data-k="toorder"]').getAttribute('aria-pressed'), 'true', 'and you are still on the To order list');
+  assert.equal(toast(p), 'Store order saved.'); assert.match(p.text(modal(p)), /^Move 3 claims to “ordered via proxy \/ warehouse”\? • Keyring set \(Save flow GO\) — 3 claims: @.*Not nowMove them$/, 'the preview appears by itself'); await press(p, 'Not now'); await sleep(150); assert.equal(form(p), null, 'the form closes'); assert.equal(p.q('[data-act="wh-view"][data-view="unordered"]').getAttribute('aria-pressed'), 'true', 'and you are still on the Unordered sub-tab');
   const saved = (await api('GET', '/api/admin/incoming')).json.orders.find((o) => o.orderRef === 'KT-1001'); assert.deepEqual([saved.store, saved.proxy, saved.lines.map((l) => [l.qty, l.note])], ['Ktown4u', 'Yuki', [[3, '1× Felix, 2× Han']]]);
   assert.equal(Number(p.text(chip(p, 'toorder')).match(/\((\d+)\)/)[1]), before, 'logging a store order does not move claims on by itself'); p.close();
 });
@@ -92,7 +93,7 @@ test('SAVING IT creates the store order with those lines and notes, then SHOWS w
 test('THE WHOLE JOURNEY: see what to order → log it → "Mark ordered…" under By item moves exactly those claims → they leave the To order list', async () => {
   const j = await mkOrder('Journey GO', 'Sam', [{ title: 'Journey album', qty: 4 }]); const api = (m, pa, b) => app.api(m, pa, b, admin);
   const p = await open(); await p.click(chip(p, 'toorder')); assert.match(p.text(group(p, `o${j.go}`)), /Journey album.*4 in all/s); await p.click(p.q('[data-act="log-order"]', group(p, `o${j.go}`))); form(p).elements.store.value = 'Weverse Shop'; await p.submit(form(p)); await sleep(350); await p.settle(); await press(p, 'Not now'); await sleep(150);
-  await p.click(chip(p, 'items')); await p.click(p.q(`[data-act="advance"][data-to="ordered"][data-id="${j.items[0]}"]`)); await sleep(250); await p.settle(); assert.match(p.text(modal(p)), /Move 4 claims to “ordered via proxy \/ warehouse”\?/); await press(p, 'Move them'); await sleep(350); await p.settle();
+  await toIncoming(p); await p.click(chip(p, 'items')); await p.click(p.q(`[data-act="advance"][data-to="ordered"][data-id="${j.items[0]}"]`)); await sleep(250); await p.settle(); assert.match(p.text(modal(p)), /Move 4 claims to “ordered via proxy \/ warehouse”\?/); await press(p, 'Move them'); await sleep(350); await p.settle();
   assert.equal((await api('GET', `/api/admin/claims?order=${j.go}`)).json.claims.filter((c) => c.pipeline === 'ordered via proxy / warehouse').length, 4, 'all four moved'); await p.click(chip(p, 'toorder')); assert.equal(group(p, `o${j.go}`), null, 'gone from the list'); p.close();
 });
 

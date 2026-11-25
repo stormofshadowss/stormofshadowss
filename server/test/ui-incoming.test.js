@@ -21,10 +21,10 @@ const stage = async (id) => (await app.q('SELECT pipeline FROM claims WHERE id =
 
 test('THE SWITCH: Warehouse has Boxes and Incoming; each remembers nothing it shouldn\'t, and both work', async () => {
   const p = await gomPage(app, admin); await p.click(p.byText('#tabs button', 'Warehouse')); await sleep(80); await p.settle();
-  assert.deepEqual(p.qa('#whSwitch .chip').map((c) => p.text(c)), ['Boxes', 'Incoming']); assert.equal(p.q('#whSwitch .chip.on').textContent, 'Boxes'); assert.ok(p.q('#candidates, [data-act="cand-all"], h2') && /New box/.test(p.text(p.q('#tabBody'))), 'the boxes view is as before');
+  assert.deepEqual(p.qa('#whSwitch .chip').map((c) => p.text(c)), ['Unordered', 'Incoming', 'Arrived', 'Enroute', 'On hand']); assert.equal(p.q('#whSwitch .chip.on').textContent, 'Arrived', 'the Warehouse opens on Arrived'); assert.ok(p.q('#candidates, [data-act="cand-all"], h2') && /New box/.test(p.text(p.q('#tabBody'))), 'the boxes view is as before');
   await p.click(p.q('[data-view="incoming"]')); await sleep(100); await p.settle();
   assert.equal(p.q('#whSwitch .chip.on').textContent, 'Incoming'); assert.ok(p.q('#incomingSummary')); assert.match(text(p, '#incomingSummary'), /Nothing outstanding/);
-  await p.click(p.q('[data-view="boxes"]')); await sleep(100); await p.settle(); assert.match(p.text(p.q('#tabBody')), /New box/);
+  await p.click(p.q('[data-view="arrived"]')); await sleep(100); await p.settle(); assert.match(p.text(p.q('#tabBody')), /New box/);
   assert.deepEqual([p.errors, p.native], [[], 0]); p.close();
 });
 

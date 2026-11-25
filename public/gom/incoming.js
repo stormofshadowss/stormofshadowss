@@ -17,7 +17,13 @@
   const STATE = { waiting: ['warn', 'Waiting'], part: ['warn', 'Part arrived'], arrived: ['ok', 'Arrived'], cancelled: ['dim', 'Cancelled'] };
 
   // the little switch at the top of the Warehouse tab (Boxes ⇄ Incoming); warehouse.js uses it too
-  GOM.whSwitch = (current) => `<div class="chips" id="whSwitch" role="group" aria-label="Warehouse view"><button type="button" class="chip ${current === 'boxes' ? 'on' : ''}" data-act="wh-view" data-view="boxes" aria-pressed="${current === 'boxes'}">Boxes</button><button type="button" class="chip ${current === 'incoming' ? 'on' : ''}" data-act="wh-view" data-view="incoming" aria-pressed="${current === 'incoming'}">Incoming</button></div>`;
+  // The Warehouse tab's five sub-tabs, each with its count (GOM.whCounts is refreshed by whichever screen is drawn).
+  GOM.whCounts = {};
+  GOM.loadWhCounts = async () => { const r = await api('GET', '/api/admin/warehouse/counts'); GOM.whCounts = r.ok ? r.json : {}; };
+  GOM.whSwitch = (current) => {
+    const c = GOM.whCounts || {}, tabs = [['unordered', 'Unordered', c.unordered], ['incoming', 'Incoming', c.incoming], ['arrived', 'Arrived', c.arrived], ['enroute', 'Enroute', c.enroute], ['onhand', 'On hand', 0]];
+    return `<div class="chips" id="whSwitch" role="group" aria-label="Warehouse view">${tabs.map(([k, l, n]) => `<button type="button" class="chip ${current === k ? 'on' : ''}" data-act="wh-view" data-view="${k}" aria-pressed="${current === k}">${l}${n ? ` (${n})` : ''}${k === 'incoming' && c.toChase ? ` <span class="pill warn" data-to-chase-tab>${c.toChase} to chase</span>` : ''}${k === 'onhand' && c.toCheck ? ` <span class="pill warn" data-to-check-tab>${c.toCheck} to check</span>` : ''}</button>`).join('')}</div>`;
+  };
 
   // THE ITEM PICKER: a search box, not a long dropdown. It offers items that still have something WAITING to be ordered (secured claims at 'awaiting fulfillment' — the To order list's rule), unless
   // "Show all items" is ticked. Typing filters (every word you type must appear in the group order or item name, in any order); the list is grouped by group order and says how many are waiting.
@@ -70,7 +76,7 @@
   const shipRow = () => `<div class="formgrid" data-ship-row style="margin-bottom:6px"><div><select name="carrier">${carrierOptions('')}</select></div><div class="span2"><input name="trackingNo" placeholder="Tracking number to your warehouse" maxlength="40"></div></div>`;
 
   async function render(el) {
-    root = el; const [r, t] = await Promise.all([api('GET', '/api/admin/incoming'), api('GET', '/api/admin/incoming/to-order')]); data = r.json; toOrder = t.json || { rows: [], total: 0 }; draw();
+    root = el; const [r, t] = await Promise.all([api('GET', '/api/admin/incoming'), api('GET', '/api/admin/incoming/to-order'), GOM.loadWhCounts()]); data = r.json; toOrder = t.json || { rows: [], total: 0 }; draw();
   }
   // ── To order: secured claims that are still waiting to be ordered, counted per option ──
   function toOrderCard() {
@@ -150,6 +156,11 @@
       <p class="msg" data-msg hidden></p><div class="btn-row"><button type="submit">Save store order</button><button type="button" class="secondary" data-act="new-close">Cancel</button></div></form>`;
   }
   function draw() {
+    if (GOM.whView === 'unordered') {                                                  // UNORDERED: what is secured and still has to be ordered, and the button to log the store order
+      root.innerHTML = `<h1 style="margin:18px 0 10px">Warehouse</h1>${GOM.whSwitch('unordered')}
+        <div class="btn-row" style="margin:0 0 10px"><button data-act="new" class="${showNew ? 'secondary' : ''}">${showNew ? 'Close' : '＋ New store order'}</button></div>${showNew ? newForm() : ''}${toOrderCard()}`;
+      return;
+    }
     const list = data.orders.filter((o) => filter === 'all' || filter === 'items' || (filter === 'waiting' ? o.state === 'waiting' || o.state === 'part' : o.state === filter));
     const sorted = filter === 'waiting' ? list.slice().sort((a, b) => String(a.orderedOn).localeCompare(String(b.orderedOn))) : list;
     const n = (st) => data.orders.filter((o) => (st === 'waiting' ? o.state === 'waiting' || o.state === 'part' : o.state === st)).length;
@@ -159,8 +170,8 @@
         <details style="margin-top:8px" ${data.warehouseAddress ? '' : 'open'}><summary>Your warehouse address</summary>${data.warehouseAddress ? `<pre data-address style="white-space:pre-wrap; margin:6px 0; font:inherit">${esc(data.warehouseAddress)}</pre><button class="sm secondary" data-act="copy" data-text="${esc(data.warehouseAddress)}">Copy address</button>` : '<p class="sub">Save it here once and copy it into any store\'s checkout.</p>'}
           <form data-form="address" style="margin-top:8px"><textarea name="address" rows="4" maxlength="600" style="width:100%" placeholder="Name, address and contact number at your Korean warehouse">${esc(data.warehouseAddress)}</textarea><div class="btn-row"><button class="sm" type="submit">Save address</button></div></form></details></div>
       ${showNew ? newForm() : ''}
-      <div class="chips" id="orderFilter" role="group" aria-label="Which store orders">${[['toorder', `To order${toOrder.total ? ` (${toOrder.total})` : ''}`], ['waiting', 'Waiting'], ['arrived', 'Arrived'], ['cancelled', 'Cancelled'], ['all', 'All'], ['items', 'By item']].map(([k, l]) => `<button type="button" class="chip ${filter === k ? 'on' : ''}" data-act="filter" data-k="${k}" aria-pressed="${filter === k}">${l}${k === 'all' || k === 'items' || k === 'toorder' ? '' : `<span class="n">${n(k)}</span>`}</button>`).join('')}</div>
-      ${filter === 'toorder' ? toOrderCard() : filter === 'items' ? counts() : sorted.length ? sorted.map(orderCard).join('') : `<div class="card"><p class="muted">${filter === 'waiting' ? 'No store orders are waiting. Add one when you order from a shop.' : 'Nothing here.'}</p></div>`}`;
+      <div class="chips" id="orderFilter" role="group" aria-label="Which store orders">${[['waiting', 'Waiting'], ['arrived', 'Arrived'], ['cancelled', 'Cancelled'], ['all', 'All'], ['items', 'By item']].map(([k, l]) => `<button type="button" class="chip ${filter === k ? 'on' : ''}" data-act="filter" data-k="${k}" aria-pressed="${filter === k}">${l}${k === 'all' || k === 'items' ? '' : `<span class="n">${n(k)}</span>`}</button>`).join('')}</div>
+      ${filter === 'items' ? counts() : sorted.length ? sorted.map(orderCard).join('') : `<div class="card"><p class="muted">${filter === 'waiting' ? 'No store orders are waiting. Add one when you order from a shop.' : 'Nothing here.'}</p></div>`}`;
   }
   const fail = (card, text) => { const m = $('[data-msg]', card); if (m) { m.textContent = text; m.hidden = !text; } else GOM.toast(text, true); };
   const val = (f, n) => f.elements[n]?.value?.trim() ?? '';
@@ -230,7 +241,7 @@
       if (lines.some((l) => !l.itemId || !(l.qty >= 1))) return fail(f, 'Each item line needs an item and how many.');
       const shipments = $$('[data-ship-row]', f).map((r) => ({ carrier: r.querySelector('[name=carrier]').value || null, trackingNo: r.querySelector('[name=trackingNo]').value.trim() })).filter((s) => s.trackingNo);
       const body = { store: val(f, 'store'), orderRef: val(f, 'orderRef') || null, orderedOn: val(f, 'orderedOn'), proxy: val(f, 'proxy') || null, orderUrl: val(f, 'orderUrl') || null, notes: val(f, 'notes') || null, lines, shipments };
-      const made = await call('POST', '/api/admin/store-orders', body); if (made) { const fromList = !!newPrefill; showNew = false; newPrefill = null; filter = fromList ? 'toorder' : 'waiting'; await render(root); GOM.toast('Store order saved.'); await claimPreview(made.json.id, 'ordered'); } return;
+      const made = await call('POST', '/api/admin/store-orders', body); if (made) { const fromList = !!newPrefill; showNew = false; newPrefill = null; filter = 'waiting'; await render(root); GOM.toast('Store order saved.'); await claimPreview(made.json.id, 'ordered'); } return;
     }
     if (kind === 'edit-order') {
       const body = { store: val(f, 'store'), orderRef: val(f, 'orderRef') || null, orderedOn: val(f, 'orderedOn'), proxy: val(f, 'proxy') || null, orderUrl: val(f, 'orderUrl') || null, notes: val(f, 'notes') || null };
