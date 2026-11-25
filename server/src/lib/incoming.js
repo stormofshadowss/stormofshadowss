@@ -35,6 +35,20 @@ export async function advancePlan(conn, itemId, to) {
   return { type: u.type, stage, needed: u.units.length, ordered: Number(t.ordered), arrived: Number(t.arrived), target, already, moves: moves.map((m) => ({ unit: m.label, claimIds: m.claims.map((c) => c.id), handles: [...new Set(m.claims.map((c) => c.handle))], labels: m.claims.map((c) => c.label) })), claimIds: moves.flatMap((m) => m.claims.map((c) => c.id)) };
 }
 
+// WHAT THE CLAIMS SHOULD DO NOW for one store order: for each item on it, the claims that should move to "ordered" (once it's logged) or to "arrived at the warehouse" (once things have arrived) — the same rule as
+// advancePlan (the oldest claims not yet at that stage, up to what has been ordered / has arrived across all open store orders). It only PLANS: the screen shows it and the ordinary "move stage" action does the moving.
+export async function storeOrderClaimPlan(conn, storeOrderId, to) {
+  const [[o]] = await conn.query('SELECT id, store, status FROM store_orders WHERE id = ?', [storeOrderId]); if (!o) return null;
+  const [ls] = await conn.query('SELECT DISTINCT item_id FROM store_order_lines WHERE store_order_id = ? ORDER BY item_id', [storeOrderId]), ids = ls.map((l) => l.item_id);
+  const info = ids.length ? (await conn.query('SELECT i.id, i.title, go.title AS orderTitle FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id IN (?)', [ids]))[0] : [];
+  const items = [];
+  for (const id of ids) {
+    const p = await advancePlan(conn, id, to); if (!p) continue; const meta = info.find((x) => x.id === id);
+    items.push({ itemId: id, title: meta?.title || '', orderTitle: meta?.orderTitle || '', type: p.type, needed: p.needed, ordered: p.ordered, arrived: p.arrived, target: p.target, already: p.already, moves: p.moves, claimIds: p.moves.flatMap((m) => m.claimIds) });
+  }
+  return { storeOrder: { id: o.id, store: o.store, status: o.status }, to, stage: to === 'ordered' ? ORDERED : ARRIVED, items, claimIds: items.flatMap((i) => i.claimIds), totalMoves: items.reduce((n, i) => n + i.moves.length, 0) };
+}
+
 const day = (v) => (v ? new Date(v).toISOString().slice(0, 10) : null);
 const daysSince = (d) => { const t = new Date(); t.setHours(0, 0, 0, 0); return Math.round((t - new Date(`${day(d)}T00:00:00`)) / 86400000); };
 

@@ -80,18 +80,18 @@ test('THE PROXY IS FILLED IN FROM THE GROUP: by proxy it is that proxy ("Me" = b
   assert.ok(lines(p).some(([t]) => t === 'Yuki thing'), 'by proxy, only that proxy\'s items — across group orders'); await p.click(p.q('[data-act="log-order"]', group(p, 'pMe'))); assert.equal(form(p).elements.proxy.value, ''); assert.ok(lines(p).some(([t]) => t === 'My own thing')); void none; p.close();
 });
 
-test('SAVING IT creates the store order with those lines and notes, and tells you the next step; nothing is moved on yet (the list is unchanged)', async () => {
+test('SAVING IT creates the store order with those lines and notes, then SHOWS which claims would move to ordered; "Not now" moves nothing (the list is unchanged)', async () => {
   const api = (m, pa, b) => app.api(m, pa, b, admin); const me = await mkOrder('Save flow GO', 'Yuki', [{ title: 'Keyring set', members: ['Han', 'Felix'], claims: [['Han', 2], ['Felix', 1]] }]);
   const p = await open(); await p.click(chip(p, 'toorder')); const before = Number(p.text(chip(p, 'toorder')).match(/\((\d+)\)/)[1]); await p.click(p.q('[data-act="log-order"]', group(p, `o${me.go}`)));
   form(p).elements.store.value = 'Ktown4u'; form(p).elements.orderRef.value = 'KT-1001'; await p.submit(form(p)); await sleep(350); await p.settle();
-  assert.match(toast(p), /Store order saved\. To move those claims on, use “Mark ordered…” under By item\./); assert.equal(form(p), null, 'the form closes'); assert.equal(p.q('[data-act="filter"][data-k="toorder"]').getAttribute('aria-pressed'), 'true', 'and you are still on the To order list');
+  assert.equal(toast(p), 'Store order saved.'); assert.match(p.text(modal(p)), /^Move 3 claims to “ordered via proxy \/ warehouse”\? • Keyring set \(Save flow GO\) — 3 claims: @.*Not nowMove them$/, 'the preview appears by itself'); await press(p, 'Not now'); await sleep(150); assert.equal(form(p), null, 'the form closes'); assert.equal(p.q('[data-act="filter"][data-k="toorder"]').getAttribute('aria-pressed'), 'true', 'and you are still on the To order list');
   const saved = (await api('GET', '/api/admin/incoming')).json.orders.find((o) => o.orderRef === 'KT-1001'); assert.deepEqual([saved.store, saved.proxy, saved.lines.map((l) => [l.qty, l.note])], ['Ktown4u', 'Yuki', [[3, '1× Felix, 2× Han']]]);
   assert.equal(Number(p.text(chip(p, 'toorder')).match(/\((\d+)\)/)[1]), before, 'logging a store order does not move claims on by itself'); p.close();
 });
 
 test('THE WHOLE JOURNEY: see what to order → log it → "Mark ordered…" under By item moves exactly those claims → they leave the To order list', async () => {
   const j = await mkOrder('Journey GO', 'Sam', [{ title: 'Journey album', qty: 4 }]); const api = (m, pa, b) => app.api(m, pa, b, admin);
-  const p = await open(); await p.click(chip(p, 'toorder')); assert.match(p.text(group(p, `o${j.go}`)), /Journey album.*4 in all/s); await p.click(p.q('[data-act="log-order"]', group(p, `o${j.go}`))); form(p).elements.store.value = 'Weverse Shop'; await p.submit(form(p)); await sleep(350); await p.settle();
+  const p = await open(); await p.click(chip(p, 'toorder')); assert.match(p.text(group(p, `o${j.go}`)), /Journey album.*4 in all/s); await p.click(p.q('[data-act="log-order"]', group(p, `o${j.go}`))); form(p).elements.store.value = 'Weverse Shop'; await p.submit(form(p)); await sleep(350); await p.settle(); await press(p, 'Not now'); await sleep(150);
   await p.click(chip(p, 'items')); await p.click(p.q(`[data-act="advance"][data-to="ordered"][data-id="${j.items[0]}"]`)); await sleep(250); await p.settle(); assert.match(p.text(modal(p)), /Move 4 claims to “ordered via proxy \/ warehouse”\?/); await press(p, 'Move them'); await sleep(350); await p.settle();
   assert.equal((await api('GET', `/api/admin/claims?order=${j.go}`)).json.claims.filter((c) => c.pipeline === 'ordered via proxy / warehouse').length, 4, 'all four moved'); await p.click(chip(p, 'toorder')); assert.equal(group(p, `o${j.go}`), null, 'gone from the list'); p.close();
 });

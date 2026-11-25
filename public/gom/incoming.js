@@ -165,6 +165,17 @@
   const fail = (card, text) => { const m = $('[data-msg]', card); if (m) { m.textContent = text; m.hidden = !text; } else GOM.toast(text, true); };
   const val = (f, n) => f.elements[n]?.value?.trim() ?? '';
 
+  // AFTER a store order is logged (→ "ordered") or something has arrived (→ "arrived at the warehouse"): work out which claims should move on, SHOW THEM, and move them only if you say so.
+  // They are the oldest claims not yet at that stage; the ordinary "move stage" action does the moving and keeps its own safety rules (cancelled, in a parcel, in a box…). Nothing to move: nothing is said.
+  async function claimPreview(orderId, to) {
+    const r = await api('GET', `/api/admin/store-orders/${orderId}/claim-plan?to=${to}`); if (!r.ok) return GOM.toast(errText(r), true);
+    const p = r.json; if (!p.claimIds.length) return;
+    const names = (hs) => { const x = [...new Set(hs)].map((s) => `@${s}`); return x.length > 6 ? `${x.slice(0, 6).join(', ')} and ${x.length - 6} more` : x.join(', '); };
+    const lines = p.items.filter((i) => i.moves.length).map((i) => `• ${i.title} (${i.orderTitle}) — ${plural(i.claimIds.length, 'claim', 'claims')}: ${names(i.moves.flatMap((m) => m.handles))}${i.target < i.needed ? ` — ${i.target} ${to === 'ordered' ? 'ordered' : 'arrived'} of ${i.needed} needed, so the oldest first` : ''}`);
+    if (!(await GOM.confirm(`Move ${plural(p.claimIds.length, 'claim', 'claims')} to “${p.stage}”?\n\n${lines.join('\n')}`, { ok: 'Move them', cancel: 'Not now' }))) return;
+    const m = await api('POST', '/api/admin/claims/pipeline', { claimIds: p.claimIds, pipeline: p.stage }); if (!m.ok) return GOM.toast(errText(m), true);
+    await render(root); GOM.refreshBadges?.(); GOM.toast(`Moved ${plural(m.json.changed, 'claim', 'claims')} to “${p.stage}”.${m.json.skipped?.length ? ` ${m.json.skipped.length} left alone (${m.json.skipped[0].reason}).` : ''}`);
+  }
   async function onClick(e) {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const act = b.dataset.act, id = Number(b.dataset.id);
@@ -187,7 +198,7 @@
     if (act === 'add-ship-close') { addingShip = null; return draw(); }
     if (act === 'copy') { try { await navigator.clipboard.writeText(b.dataset.text); GOM.toast('Copied.'); } catch { GOM.alert(`Copy this:\n\n${b.dataset.text}`); } return; }
     const call = async (method, path, body, msg) => { const r = await api(method, path, body); if (!r.ok) return GOM.toast(errText(r), true); await render(root); if (msg) GOM.toast(msg); };
-    if (act === 'arrived-all') { if (!(await GOM.confirm('Mark everything on this store order as arrived?\n\nEvery item is counted as fully arrived and every tracking number is dated today.', { ok: 'Yes, all arrived', cancel: 'Not yet' }))) return; return call('POST', `/api/admin/store-orders/${id}/arrived-all`, {}, 'Marked as arrived.'); }
+    if (act === 'arrived-all') { if (!(await GOM.confirm('Mark everything on this store order as arrived?\n\nEvery item is counted as fully arrived and every tracking number is dated today.', { ok: 'Yes, all arrived', cancel: 'Not yet' }))) return; const r = await api('POST', `/api/admin/store-orders/${id}/arrived-all`, {}); if (!r.ok) return GOM.toast(errText(r), true); await render(root); GOM.toast('Marked as arrived.'); return claimPreview(id, 'arrived'); }
     if (act === 'chased') return call('PATCH', `/api/admin/store-orders/${id}`, { lastChasedOn: today() }, 'Noted — chased today.');
     if (act === 'cancel-order') { if (!(await GOM.confirm('Cancel this store order?\n\nIts copies stop counting as ordered. You can reopen it.', { ok: 'Cancel it', cancel: 'Keep it' }))) return; editing = null; return call('PATCH', `/api/admin/store-orders/${id}`, { status: 'cancelled' }, 'Store order cancelled.'); }
     if (act === 'reopen') { editing = null; return call('PATCH', `/api/admin/store-orders/${id}`, { status: 'open' }, 'Reopened.'); }
@@ -219,7 +230,7 @@
       if (lines.some((l) => !l.itemId || !(l.qty >= 1))) return fail(f, 'Each item line needs an item and how many.');
       const shipments = $$('[data-ship-row]', f).map((r) => ({ carrier: r.querySelector('[name=carrier]').value || null, trackingNo: r.querySelector('[name=trackingNo]').value.trim() })).filter((s) => s.trackingNo);
       const body = { store: val(f, 'store'), orderRef: val(f, 'orderRef') || null, orderedOn: val(f, 'orderedOn'), proxy: val(f, 'proxy') || null, orderUrl: val(f, 'orderUrl') || null, notes: val(f, 'notes') || null, lines, shipments };
-      if (await call('POST', '/api/admin/store-orders', body)) { const fromList = !!newPrefill; showNew = false; newPrefill = null; filter = fromList ? 'toorder' : 'waiting'; await render(root); GOM.toast(fromList ? 'Store order saved. To move those claims on, use “Mark ordered…” under By item.' : 'Store order saved.'); } return;
+      const made = await call('POST', '/api/admin/store-orders', body); if (made) { const fromList = !!newPrefill; showNew = false; newPrefill = null; filter = fromList ? 'toorder' : 'waiting'; await render(root); GOM.toast('Store order saved.'); await claimPreview(made.json.id, 'ordered'); } return;
     }
     if (kind === 'edit-order') {
       const body = { store: val(f, 'store'), orderRef: val(f, 'orderRef') || null, orderedOn: val(f, 'orderedOn'), proxy: val(f, 'proxy') || null, orderUrl: val(f, 'orderUrl') || null, notes: val(f, 'notes') || null };
@@ -229,7 +240,7 @@
       const itemId = Number(f.querySelector('[name=itemId]').value), qty = Number(f.querySelector('[name=qty]').value);
       const tb = f.querySelector('[data-combo-input]'), typed = tb.value.trim(); if (!itemId && typed) { tb.setAttribute('aria-invalid', 'true'); return fail(f, `Choose “${typed}” from the list — start typing, then pick the item.`); }
       if (!itemId || !(qty >= 1)) return fail(f, 'Choose an item and how many.');
-      if (await call('POST', `/api/admin/store-orders/${f.dataset.id}/lines`, { itemId, qty, note: f.querySelector('[name=lnote]').value.trim() || null })) { addingLine = null; await render(root); } return;
+      if (await call('POST', `/api/admin/store-orders/${f.dataset.id}/lines`, { itemId, qty, note: f.querySelector('[name=lnote]').value.trim() || null })) { addingLine = null; await render(root); await claimPreview(f.dataset.id, 'ordered'); } return;
     }
     if (kind === 'add-ship') {
       const no = f.elements.trackingNo.value.trim(); if (!no) return;
@@ -245,6 +256,7 @@
       const r = await api('PATCH', `/api/admin/store-order-lines/${t.dataset.arrived}`, { arrivedQty: Number(t.value || 0) });
       if (!r.ok) GOM.toast(errText(r), true);
       await render(root);
+      if (r.ok && Number(t.value || 0) > Number(t.defaultValue || 0)) await claimPreview(r.json.orderId, 'arrived');          // more have arrived: which claims should move on?
     }
   }
   GOM.incoming = { render: async (el) => { await render(el); wireCombos(el); el.onclick = onClick; el.onsubmit = onSubmit; el.onchange = onChange; el.oninput = null; } };

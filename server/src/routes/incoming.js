@@ -3,7 +3,7 @@ import { wrap } from '../lib/http.js';
 import { requireAdmin, audit } from '../auth.js';
 import { withTx } from '../db.js';
 import { bad, notFound } from '../errors.js';
-import { incomingSnapshot, advancePlan, toOrderList } from '../lib/incoming.js';
+import { incomingSnapshot, advancePlan, toOrderList, storeOrderClaimPlan } from '../lib/incoming.js';
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-10-31').refine((s) => { const d = new Date(`${s}T00:00:00Z`); return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s; }, 'That is not a real date');
 const optText = (n) => z.string().trim().max(n).nullish().transform((v) => v || null);
@@ -23,6 +23,13 @@ export function incomingRoutes(app, { pool }) {
   const admin = requireAdmin;
   app.get('/api/admin/incoming', admin, wrap(async (req, res) => res.json(await incomingSnapshot(pool))));
   app.get('/api/admin/incoming/to-order', admin, wrap(async (req, res) => res.json(await toOrderList(pool))));        // what still needs ordering, by option
+
+  // Which claims should move on because of THIS store order? ?to=ordered (it was logged) or ?to=arrived (things have arrived). A plan only — the screen shows it, then the ordinary "move stage" does the moving.
+  app.get('/api/admin/store-orders/:id/claim-plan', admin, wrap(async (req, res) => {
+    const to = z.enum(['ordered', 'arrived']).parse(req.query.to);
+    const plan = await storeOrderClaimPlan(pool, Number(req.params.id), to); if (!plan) throw notFound('No such store order');
+    res.json(plan);
+  }));
 
   app.post('/api/admin/store-orders', admin, wrap(async (req, res) => {
     const b = z.object({ store: z.string().trim().min(1).max(120), orderRef: optText(120), orderUrl: url, orderedOn: date, proxy: optText(80), notes: optText(2000), lines: z.array(line).max(60).default([]), shipments: z.array(shipment).max(30).default([]) }).parse(req.body);
@@ -86,13 +93,14 @@ export function incomingRoutes(app, { pool }) {
   }));
   app.patch('/api/admin/store-order-lines/:id', admin, wrap(async (req, res) => {
     const b = z.object({ qty: z.number().int().min(1).max(9999).optional(), arrivedQty: z.number().int().min(0).max(9999).optional(), note: optText(200).optional() }).parse(req.body);
+    let orderId = null;
     await withTx(pool, async (conn) => {
-      const [[l]] = await conn.query('SELECT id, qty, arrived_qty FROM store_order_lines WHERE id = ? FOR UPDATE', [Number(req.params.id)]); if (!l) throw notFound('No such line');
+      const [[l]] = await conn.query('SELECT id, store_order_id, qty, arrived_qty FROM store_order_lines WHERE id = ? FOR UPDATE', [Number(req.params.id)]); if (!l) throw notFound('No such line'); orderId = l.store_order_id;
       const qty = b.qty ?? l.qty, arrived = b.arrivedQty ?? l.arrived_qty;
       if (arrived > qty) throw bad(`${arrived} can't have arrived when only ${qty} were ordered.`, 'too_many_arrived');
       await conn.query('UPDATE store_order_lines SET qty = ?, arrived_qty = ?, note = COALESCE(?, note) WHERE id = ?', [qty, arrived, b.note === undefined ? null : b.note, l.id]);
     });
-    res.json({ ok: true });
+    res.json({ ok: true, orderId });
   }));
   app.delete('/api/admin/store-order-lines/:id', admin, wrap(async (req, res) => { const [r] = await pool.query('DELETE FROM store_order_lines WHERE id = ?', [Number(req.params.id)]); if (!r.affectedRows) throw notFound('No such line'); res.json({ ok: true }); }));
 
