@@ -322,3 +322,10 @@ a.gocard.hasicon { display:flex; align-items:center; gap:14px; }
 tr.dragging { opacity:.5; }
 tr.drop-before > td { box-shadow:inset 0 3px 0 var(--accent); }
 tr.drop-after > td { box-shadow:inset 0 -3px 0 var(--accent); }
+
+/* A heading you click to fold or open; and a summary that looks like a button ("＋ Add an item") */
+summary.btn-like { list-style:none; display:inline-block; cursor:pointer; padding:8px 16px; border-radius:999px; border:1.5px solid var(--accent); color:var(--accent); font-weight:600; }
+summary.btn-like::-webkit-details-marker { display:none; }
+details.box-fold { margin-bottom:10px; }
+details.box-fold > summary { cursor:pointer; padding:6px 0; }
+details[data-types] > summary, details#proxyMe > summary { cursor:pointer; }

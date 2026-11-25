@@ -88,8 +88,8 @@ export function boxRoutes(app, { pool }) {
     const [boxes] = await pool.query(`SELECT id, tracking_id AS trackingId, ems_total AS emsTotal, customs_total AS customsTotal, total_weight_g AS totalWeightG, status, created_at AS createdAt FROM boxes ${where} ORDER BY id DESC LIMIT 500`, params);
     if (!boxes.length) return [];
     const [items] = await pool.query(
-      `SELECT bi.box_id, bi.claim_id AS claimId, j.instagram_handle AS handle, c.label, c.pipeline, bi.weight_used_g AS weightUsedG, bi.ems_share AS emsShare, bi.customs_share AS customsShare, bi.ems_excluded AS emsExcluded, bi.customs_excluded AS customsExcluded, bi.item_status AS itemStatus
-         FROM box_items bi JOIN claims c ON c.id = bi.claim_id JOIN joiners j ON j.id = c.joiner_id WHERE bi.box_id IN (?) ORDER BY bi.claim_id`, [boxes.map((x) => x.id)]);
+      `SELECT bi.box_id, bi.claim_id AS claimId, j.instagram_handle AS handle, c.label, c.pipeline, bi.weight_used_g AS weightUsedG, bi.ems_share AS emsShare, bi.customs_share AS customsShare, bi.ems_excluded AS emsExcluded, bi.customs_excluded AS customsExcluded, bi.item_status AS itemStatus, COALESCE(go.title, 'Shop (on hand)') AS orderTitle
+         FROM box_items bi JOIN claims c ON c.id = bi.claim_id JOIN joiners j ON j.id = c.joiner_id LEFT JOIN group_orders go ON go.id = c.order_id WHERE bi.box_id IN (?) ORDER BY bi.claim_id`, [boxes.map((x) => x.id)]);
     return boxes.map((x) => {
       const its = items.filter((i) => i.box_id === x.id).map(({ box_id, ...rest }) => ({ ...rest, emsExcluded: !!rest.emsExcluded, customsExcluded: !!rest.customsExcluded }));
       // done with once it has arrived and every item has been checked as ready

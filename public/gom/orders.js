@@ -15,7 +15,7 @@
     const price = t.form.elements.price; price.disabled = t.checked; price.required = !t.checked; if (t.checked) price.value = '';
   });
   const priceBody = (form) => (form.elements.priceTbc.checked ? { priceTbc: true } : { price: Number(val(form, 'price')) });
-  let showNew = false, editingId = null, itemsFor = null, editingItem = null, fixedFor = null, fixedList = [];
+  let showNew = false, editingId = null, itemsFor = null, editingItem = null, fixedFor = null, fixedList = [], addItemOpen = false;
 
   const TYPES = [
     ['normal', 'Normal item'], ['independent', 'Independent — claim any member, any quantity'],
@@ -136,8 +136,8 @@
     return `<div class="card" id="itemsPanel"><div class="row"><h2 style="margin:0">Items — ${esc(o.title)}</h2><div class="btn-row" style="margin:0"><button class="sm secondary" data-act="benefits" title="Spend £X on these items, get N photocards">Purchase benefits</button><button class="sm secondary" data-act="close-items">Close</button></div></div>
       <div class="scroll"><table class="grid"><thead><tr><th></th><th>Item</th><th>Type</th><th>Price</th><th>Pay by</th><th>Closes</th><th>Proxy</th><th>Parts / sizes</th><th>Claimed</th><th></th></tr></thead>
       <tbody>${o.items.length ? o.items.map(itemRow).join('') : '<tr><td colspan="10" class="muted">No items yet — add the first one below.</td></tr>'}</tbody></table></div>
-      ${o.isCards ? '<p class="sub" data-cards-note style="margin-top:14px">This is a photocard bundle — its cards (prices, copies, pictures) are changed from the Cards tab, not here.</p>' : ''}<h2 style="margin-top:20px" ${o.isCards ? 'hidden' : ''}>Add an item</h2>
-      <form data-form="new-item" data-id="${o.id}" ${o.isCards ? 'hidden' : ''}><div class="formgrid">
+      ${o.isCards ? '<p class="sub" data-cards-note style="margin-top:14px">This is a photocard bundle — its cards (prices, copies, pictures) are changed from the Cards tab, not here.</p>' : ''}<details id="addItemBox" class="add-item" data-order="${o.id}" ${addItemOpen ? 'open' : ''} ${o.isCards ? 'hidden' : ''} style="margin-top:16px"><summary class="btn-like">＋ Add an item</summary>
+      <form data-form="new-item" data-id="${o.id}" ${o.isCards ? 'hidden' : ''} style="margin-top:12px"><div class="formgrid">
         <div class="span2"><label>Type</label><select name="type">${TYPES.map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select></div>
         <div class="span2"><label>Title</label><input name="title" maxlength="160" required></div>
         <div><label>Price (£)</label><input name="price" type="number" step="0.01" min="0" required><label class="chk" style="display:flex; margin-top:6px"><input type="checkbox" name="priceTbc" > Price to be confirmed (TBC)</label><div class="sub">Tick TBC if you're hosting before the price is final — people can claim, and you set the price later.</div></div>
@@ -155,7 +155,7 @@
         <div class="full" data-setonly hidden><label class="chk"><input type="checkbox" name="requiresFullSet"> Every part must be claimed — a set that doesn't fill can't go ahead</label></div>
       </div>
       <p class="msg" data-msg hidden></p>
-      <div class="btn-row"><button type="submit">Add item</button></div></form></div>`;
+      <div class="btn-row"><button type="submit">Add item</button></div></form></details></div>`;
   }
 
   // Fixed claimers: regulars who always want a particular member of a set item. Each gets that part reserved in the earliest set that has it free.
@@ -245,19 +245,21 @@
         ${editingId === o.id ? `<tr><td colspan="8">${orderForm(o)}</td></tr>` : ''}`;
   const orderTable = (list) => `<div class="scroll"><table class="grid"><thead><tr><th>Title</th><th>Group</th><th>Status</th><th>Listing</th><th>Closes</th><th>Payment due</th><th>Proxy</th><th></th></tr></thead><tbody>${list.map(orderRow).join('')}</tbody></table></div>`;
   // the list: open orders in a table, everything closed folded away underneath; the search box filters both
-  function listHtml() {
+  // The open group orders come first, then (after the items panel, if one is open) the Closed and Archived sections.
+  function listParts() {
     const q = orderQ.trim().toLowerCase(), hit = (o) => !q || [o.title, o.group, o.proxy].some((v) => (v || '').toLowerCase().includes(q));
     const open = orders.filter((o) => !isClosedOrder(o) && hit(o)), closed = orders.filter((o) => isClosedOrder(o) && !isArchived(o) && hit(o)), closedAll = orders.filter((o) => isClosedOrder(o) && !isArchived(o)).length;
     const archived = orders.filter((o) => isArchived(o) && hit(o)), archivedAll = orders.filter(isArchived).length, unfoldArchived = archivedOpen || (q && archived.length > 0);
     const unfold = closedOpen || (q && closed.length > 0) || closed.some((o) => o.id === editingId);                // searching, or editing one of them, opens it
-    return `<div class="card" id="openOrders">${open.length ? orderTable(open) : `<p class="muted" style="margin:0">${orders.length ? (q ? `No open group orders match “${esc(orderQ.trim())}”.` : 'No open group orders right now.') : 'No group orders yet. Create your first one above.'}</p>`}</div>
-      ${closedAll ? `<details class="card" id="closedOrders" ${unfold ? 'open' : ''}><summary><strong>Closed</strong> (${closedAll}${q ? `, ${closed.length} match` : ''}) <span class="sub">— closed, past their closing date, or cancelled</span></summary>${closed.length ? orderTable(closed) : `<p class="muted">No closed group orders match “${esc(orderQ.trim())}”.</p>`}</details>` : ''}
+    const openHtml = `<div class="card" id="openOrders">${open.length ? orderTable(open) : `<p class="muted" style="margin:0">${orders.length ? (q ? `No open group orders match “${esc(orderQ.trim())}”.` : 'No open group orders right now.') : 'No group orders yet. Create your first one above.'}</p>`}</div>`;
+    const othersHtml = `${closedAll ? `<details class="card" id="closedOrders" ${unfold ? 'open' : ''}><summary><strong>Closed</strong> (${closedAll}${q ? `, ${closed.length} match` : ''}) <span class="sub">— closed, past their closing date, or cancelled</span></summary>${closed.length ? orderTable(closed) : `<p class="muted">No closed group orders match “${esc(orderQ.trim())}”.</p>`}</details>` : ''}
       ${archivedAll ? `<details class="card" id="archivedOrders" ${unfoldArchived ? 'open' : ''}><summary><strong>Archived</strong> (${archivedAll}${q ? `, ${archived.length} match` : ''}) <span class="sub">— finished and tucked away</span></summary>${archived.length ? orderTable(archived) : `<p class="muted">No archived group orders match “${esc(orderQ.trim())}”.</p>`}</details>` : ''}`;
+    return { open: openHtml, others: othersHtml };
   }
 
   function draw() {
-    { const d = $('#closedOrders', root); if (d) closedOpen = d.open; const a = $('#archivedOrders', root); if (a) archivedOpen = a.open; }                  // remember whether the Closed section was unfolded across redraws
-    const proxies = [...new Set(orders.flatMap((o) => [o.proxy, ...o.items.map((i) => i.proxy)]).filter(Boolean))];
+    { const d = $('#closedOrders', root); if (d) closedOpen = d.open; const a = $('#archivedOrders', root); if (a) archivedOpen = a.open; const ab = $('#addItemBox', root); if (ab && ab.dataset.order === String(itemsFor)) addItemOpen = ab.open; }          // only if that form is for the group order still showing                  // remember whether the Closed section was unfolded across redraws
+    const proxies = [...new Set(orders.flatMap((o) => [o.proxy, ...o.items.map((i) => i.proxy)]).filter(Boolean))], parts = listParts();
     root.innerHTML = `
       <div class="row" style="margin:18px 0 10px"><h1 style="margin:0">Group orders</h1>
         <button data-act="toggle-new" class="${showNew ? 'secondary' : ''}">${showNew ? 'Close' : '＋ New group order'}</button></div>
@@ -267,8 +269,9 @@
       ${dateNotice()}
       ${cancelPanel()}
       <div class="card"><input id="orderSearch" type="search" placeholder="Search group orders by name…" value="${esc(orderQ)}" aria-label="Search group orders" autocomplete="off"></div>
-      <div id="orderList">${listHtml()}</div>
-      ${itemsFor ? itemsPanel() : ''}${itemsFor && fixedFor ? fixedPanel() : ''}${itemsFor && benefitsFor === itemsFor ? benefitsPanel() : ''}`;
+      <div id="orderList">${parts.open}</div>
+      <div id="itemsArea">${itemsFor ? itemsPanel() : ''}${itemsFor && fixedFor ? fixedPanel() : ''}${itemsFor && benefitsFor === itemsFor ? benefitsPanel() : ''}</div>
+      <div id="orderOthers">${parts.others}</div>`;
     $$('form[data-form="new-item"]', root).forEach(syncTypeFields);
   }
 
@@ -380,7 +383,7 @@
         expectedShipDate: val(form, 'expectedShipDate') || null, proxy: val(form, 'proxy') || null,
       });
       if (!r.ok) return showMsg(form, errText(r));
-      showNew = false; itemsFor = r.json.id; await render(root); GOM.toast('Group order created — now add its items.');
+      showNew = false; itemsFor = r.json.id; addItemOpen = true; await render(root); GOM.toast('Group order created — now add its items.');
     } else if (kind === 'edit-order') {
       const r = await api('PATCH', `/api/admin/orders/${form.dataset.id}`, {
         title: val(form, 'title'), status: val(form, 'status'), isPrivate: form.elements.isPrivate.checked, isTest: form.elements.isTest.checked,
@@ -495,8 +498,8 @@
         let n = 0; for (const inp of $$('input[data-member-id]', root)) { const m = SPLIT.exec(inp.value.trim()); if (!m) continue; inp.value = m[1].trim(); inp.parentElement.querySelector('[data-member-price]').value = String(Number(m[2])); n += 1; }
         b.closest('[data-members-edit]').insertAdjacentHTML('beforeend', `<p class="sub" data-split-note>Moved ${n} price${n === 1 ? '' : 's'} into the price boxes — check them, then press Save.</p>`); b.hidden = true; break;
       }
-      case 'open-items': benefitsFor = null; benefitEdit = null; itemsFor = id; editingItem = null; draw(); $('#itemsPanel', root)?.scrollIntoView?.(); break;
-      case 'close-items': itemsFor = null; editingItem = null; fixedFor = null; benefitsFor = null; benefitEdit = null; draw(); break;
+      case 'open-items': benefitsFor = null; benefitEdit = null; if (itemsFor !== id) addItemOpen = false; itemsFor = id; editingItem = null; draw(); $('#itemsPanel', root)?.scrollIntoView?.(); break;
+      case 'close-items': addItemOpen = false; itemsFor = null; editingItem = null; fixedFor = null; benefitsFor = null; benefitEdit = null; draw(); break;
       case 'fixed': fixedFor = id; await loadFixed(); draw(); break;
       case 'close-fixed': fixedFor = null; draw(); break;
       case 'remove-fixed': {
@@ -612,7 +615,7 @@
       if (e.target.matches?.('form[data-form="add-fixed"] input[name="handle"]')) { fixedHint(e.target.form); fixedLookupLater(e.target.form); return; }
       if (e.target.id === 'orderSearch') {                                                   // only the LIST is redrawn, so the cursor stays in the box
         { const d = $('#closedOrders', root); if (d) closedOpen = d.open; const a = $('#archivedOrders', root); if (a) archivedOpen = a.open; }
-        orderQ = e.target.value; $('#orderList', root).innerHTML = listHtml(); return;
+        orderQ = e.target.value; { const parts = listParts(); $('#orderList', root).innerHTML = parts.open; $('#orderOthers', root).innerHTML = parts.others; } return;
       }
       if (e.target.id === 'cancelTyped' && cancelFlow) $('[data-act="cancel-go"]', root).disabled = norm(e.target.value) !== norm(cancelFlow.plan.title); }; },
   });

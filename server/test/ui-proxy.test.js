@@ -99,11 +99,11 @@ test('an overdue payment is flagged; ticking it paid files it under "Paid" and c
   const outstanding = `#tabBody > .card:last-child > div [data-pay="${id}"]`;
   assert.ok(p.q(outstanding), 'while unpaid it is among the outstanding ones');
   await p.click(p.q(`input[data-act="paid"][data-id="${id}"]`));
-  assert.equal(p.q('details summary') && p.text(p.q('details summary')), 'Paid (1)');
+  assert.equal(p.q('details:not(#proxyMe) summary') && p.text(p.q('details:not(#proxyMe) summary')), 'Paid (1)');
   assert.ok(p.q(`details [data-pay="${id}"]`)); assert.doesNotMatch(text(p, `[data-pay="${id}"]`), /overdue/);
   assert.equal(p.q(outstanding), null, 'no longer among the outstanding ones');
   await p.click(p.q(`input[data-act="paid"][data-id="${id}"]`));
-  assert.equal(p.q('details'), null); assert.match(text(p, `[data-pay="${id}"]`), /5 days overdue/);
+  assert.equal(p.q('details:not(#proxyMe)'), null, 'no Paid section any more'); assert.match(text(p, `[data-pay="${id}"]`), /5 days overdue/);
   p.close();
 });
 

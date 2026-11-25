@@ -43,9 +43,11 @@
   }
 
   // Which of the proxies is you? Orders using that proxy have nothing to pay and are left out of the lists below.
-  const meCard = () => proxyList.length ? `<div class="card" id="proxyMe"><h2>Your proxies</h2><p class="sub" style="margin-top:0">Tick any proxy that is <strong>you</strong>. Orders that use it won't appear in "to pay a proxy".</p>
-    ${proxyList.map((x) => `<label class="chk" style="display:flex; margin:6px 0"><input type="checkbox" data-proxy-self="${x.id}" ${x.isSelf ? 'checked' : ''}> ${esc(x.name)} — this is me</label>`).join('')}</div>` : '';
+  let meOpen = null;                 // null = not chosen yet: open until you have ticked one, then folded away (click the heading to open or fold it)
+  const meCard = () => { if (!proxyList.length) return ''; const mine = proxyList.filter((x) => x.isSelf), open = meOpen === null ? !mine.length : meOpen; return `<details class="card" id="proxyMe" ${open ? 'open' : ''}><summary><strong>Your proxies</strong> <span class="sub">— ${mine.length ? `${esc(mine.map((x) => x.name).join(', '))} (you)` : 'none ticked yet'}</span></summary><p class="sub" style="margin:8px 0 0">Tick any proxy that is <strong>you</strong>. Orders that use it won't appear in "to pay a proxy".</p>
+    ${proxyList.map((x) => `<label class="chk" style="display:flex; margin:6px 0"><input type="checkbox" data-proxy-self="${x.id}" ${x.isSelf ? 'checked' : ''}> ${esc(x.name)} — this is me</label>`).join('')}</details>`; };
   function draw() {
+    { const d = $('#proxyMe', root); if (d) meOpen = d.open; }                                              // remember whether it was open or folded across redraws
     const keep = { name: val('pxName'), deadline: val('pxDeadline'), summary: val('pxSummary'), paid: ($('#pxPaid', root) || {}).checked };
     root.innerHTML = `<h1 style="margin:18px 0 10px">Proxy</h1>${meCard()}${logCard()}${listCard()}`;
     $('#pxName', root).value = keep.name; $('#pxDeadline', root).value = keep.deadline; $('#pxSummary', root).value = keep.summary; $('#pxPaid', root).checked = !!keep.paid;

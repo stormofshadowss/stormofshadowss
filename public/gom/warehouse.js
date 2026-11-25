@@ -59,6 +59,10 @@
       ${preview.note ? `<p class="sub" style="margin-top:6px">${esc(preview.note)}</p>` : ''}`;
   }
 
+  // A box that is EN ROUTE folds to one line — its number and the group orders its items are from (e.g. "Box #21 — This & That Merch, Ateez Golden Hour Part 6") — and opens for everything inside.
+  const boxOpen = new Set();
+  const foldBox = (b) => { const names = [...new Set(b.items.map((i) => i.orderTitle).filter(Boolean))], open = boxOpen.has(b.id) || !!search;
+    return `<details class="box-fold" data-box-fold="${b.id}" ${open ? 'open' : ''}><summary><strong>Box #${b.id}</strong> <span class="pill info">En route to GOM</span> <span class="sub" data-box-orders>— ${names.length ? names.map(esc).join(', ') : 'no items'} · ${b.items.length} item${b.items.length === 1 ? '' : 's'}</span></summary>${boxCard(b)}</details>`; };
   function boxCard(b) {
     const [cls, label] = STATUS[b.status];
     return `<div class="card" data-box="${b.id}" style="background:var(--paper)"><div class="row"><div><strong>Box #${b.id}</strong> <span class="pill ${cls}">${label}</span>
@@ -80,11 +84,12 @@
     const active = boxes.filter((b) => !b.archived), done = boxes.filter((b) => b.archived);
     return `<div class="card"><div class="row"><h2 style="margin:0">Boxes</h2><input id="boxSearch" placeholder="Search box #, tracking, person or item" value="${esc(search)}" style="max-width:280px"></div>
       ${boxes.length ? '' : `<p class="muted" style="margin-top:10px">${search ? 'No boxes match that search.' : 'No boxes yet — create one above.'}</p>`}
-      <div style="margin-top:10px">${active.map(boxCard).join('')}</div>
+      <div style="margin-top:10px">${active.map((b) => (b.status === 'enroute' ? foldBox(b) : boxCard(b))).join('')}</div>
       ${done.length ? `<details style="margin-top:10px"><summary>Archived boxes (${done.length}) — fully checked and ready, kept for reference</summary>${done.map(boxCard).join('')}</details>` : ''}</div>`;
   }
 
   function draw() {
+    root.querySelectorAll('details[data-box-fold]').forEach((d) => { const id = Number(d.dataset.boxFold); if (d.open) boxOpen.add(id); else if (!search) boxOpen.delete(id); });          // which en-route boxes were open, across redraws
     const keep = { ems: val('boxEms'), due: val('boxDue'), customs: val('boxCustoms'), weight: val('boxWeight'), track: val('boxTracking'), q: search };
     root.innerHTML = `<h1 style="margin:18px 0 10px">Warehouse</h1>${GOM.whSwitch ? GOM.whSwitch('boxes') : ''}${candidatesCard()}${boxesCard()}`;
     $('#boxEms', root).value = keep.ems; $('#boxDue', root).value = keep.due || GOM.inDays(14); $('#boxCustoms', root).value = keep.customs; $('#boxWeight', root).value = keep.weight; $('#boxTracking', root).value = keep.track;
