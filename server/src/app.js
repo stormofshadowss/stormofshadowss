@@ -13,6 +13,7 @@ import { attachAccount } from './auth.js';
 import authRoutes from './routes/auth.js';
 import handleRoutes from './routes/handles.js';
 import adminAuthRoutes from './routes/adminAuth.js';
+import joinerPasswordRoutes from './routes/joiner-password.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = process.env.PUBLIC_DIR || path.resolve(here, '../../public');
@@ -54,9 +55,13 @@ export function createApp({ cfg, pool, mailer, extraRoutes = [] }) {
 
   const notifier = createNotifier({ pool, mailer, cfg });
   app.locals.notifier = notifier;
+  // After ANY successful change the GOM makes, check whether claims have just become "ready to pack / on hand" and tell their owners who have an unpacked shipping request (notifier.itemsReady).
+  // Every claim is considered only once, so this is cheap and can never send twice — and no way of making a claim ready can be missed.
+  app.use('/api/admin', (req, res, next) => { if (req.method !== 'GET' && req.method !== 'HEAD') res.on('finish', () => { if (res.statusCode < 300) notifier.itemsReady(); }); next(); });
   const ctx = { cfg, pool, mailer, notifier };
   app.get('/healthz', async (req, res, next) => { try { await pool.query('SELECT 1'); res.json({ ok: true }); } catch (e) { next(e); } });
   app.use(authRoutes(ctx));
+  app.use(joinerPasswordRoutes(ctx));
   app.use(adminAuthRoutes(ctx));
   app.use('/api', handleRoutes(ctx));
   for (const mount of extraRoutes) mount(app, ctx);

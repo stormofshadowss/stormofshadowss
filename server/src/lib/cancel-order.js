@@ -9,6 +9,9 @@ const ACTIVE_PARCEL = "('requested','packed','shipped')";
 // What cancelling a whole group order (`orderId`) or one item (`itemId`) would do — shown to the GOM before anything happens, and re-checked (with everything locked) when they confirm.
 // Every claim still alive on it (unconfirmed or confirmed, but NOT ones already received — the person has those) is cancelled; what was paid goes back to the person as credit (a blocked handle's is forfeited, as always).
 // All-or-nothing: if any of those claims is inside a parcel or a warehouse box, NOTHING is cancelled and the plan says which.
+// How long a cancelled group order / item stays at the top of the joiner's My orders (unless they say "Got it").
+export const CANCEL_NOTICE_DAYS = 30;
+
 export async function cancelPlan(conn, { orderId = null, itemId = null, lock = false }) {
   let kind, id, title, itemIds;
   if (itemId) {
@@ -36,7 +39,7 @@ export async function cancelPlan(conn, { orderId = null, itemId = null, lock = f
     if (fresh.cancelled_at || fresh.go) throw conflict(`That ${kind === 'order' ? 'group order' : 'item'} has already been cancelled.`, 'already_cancelled');
   }
   const [claims] = await conn.query(
-    `SELECT c.id, c.joiner_id AS joinerId, j.instagram_handle AS handle, j.is_blocked AS blocked, c.status, c.label, c.box_id AS boxId,
+    `SELECT c.id, c.joiner_id AS joinerId, c.item_id AS itemId, j.instagram_handle AS handle, j.is_blocked AS blocked, c.status, c.label, c.box_id AS boxId,
             (SELECT COALESCE(SUM(paid), 0) FROM claim_costs WHERE claim_id = c.id) AS paid,
             (SELECT pi.parcel_id FROM parcel_items pi JOIN parcels p ON p.id = pi.parcel_id WHERE pi.claim_id = c.id AND p.status IN ${ACTIVE_PARCEL} LIMIT 1) AS parcelId
        FROM claims c JOIN joiners j ON j.id = c.joiner_id WHERE c.item_id IN (?) AND c.status IN ('requested', 'confirmed') AND c.pipeline <> 'completed' ORDER BY c.id`, [ids]);
@@ -54,18 +57,26 @@ export async function cancelPlan(conn, { orderId = null, itemId = null, lock = f
   };
 }
 
-// Does it. The GOM must have typed the exact name (so a stray click can't do this). No emails are sent — the GOM tells people themselves.
+// Does it. The GOM must have typed the exact name (so a stray click can't do this). Each person with a claim on it gets a NOTICE at the top of My orders (cancel_notices) — and an email if they have switched that kind on (it is opt-in).
 export async function cancelNow(conn, { orderId = null, itemId = null, confirm, adminId }) {
   const plan = await cancelPlan(conn, { orderId, itemId, lock: true });
   if (normal(confirm) !== normal(plan.title)) throw bad(`To confirm, type the ${plan.kind === 'order' ? 'order' : 'item'} name exactly: ${plan.title}`, 'confirm_mismatch');
   if (plan.blockers.length) throw conflict(`Nothing was cancelled: ${plan.blockers.slice(0, 3).map((b) => `“${b.label}” (@${b.handle}) — ${b.reason}`).join('; ')}${plan.blockers.length > 3 ? `; and ${plan.blockers.length - 3} more` : ''}.`, 'cannot_cancel');
-  let credit = 0, forfeited = 0;
+  let credit = 0, forfeited = 0; const noticeIds = [];
+  const [titles] = await conn.query('SELECT i.id, i.title, go.id AS orderId, go.title AS orderTitle FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id IN (?)', [plan.itemIds.length ? plan.itemIds : [0]]);
+  const info = new Map(titles.map((t) => [t.id, t]));
   for (const c of plan.claims) {
     const r = await cancelClaim(conn, c.id, `Cancelled by the GOM (${plan.kind === 'order' ? 'the group order' : 'the item'} could not go ahead)`, { fillGaps: false });          // the whole item / order is being cancelled: nobody moves
     credit = round2(credit + r.refunded); forfeited = round2(forfeited + r.forfeited);
+    if (r.cancelled) {                                                                                                   // tell the person: a notice on their My orders page for a month
+      const t = info.get(c.itemId);
+      // What they had paid towards THIS claim before anything was cancelled (from the plan) — not what each cancellation happened to move: credit from one claim is reused by the next one in the loop, which would count it twice.
+      const paid = round2(c.paid), [ins] = await conn.query('INSERT INTO cancel_notices (joiner_id, claim_id, kind, order_id, order_title, item_id, item_title, label, refunded, forfeited, cancelled_at) VALUES (?,?,?,?,?,?,?,?,?,?,NOW(3))', [c.joinerId, c.id, plan.kind, t.orderId, t.orderTitle, c.itemId, t.title, c.label, c.blocked ? 0 : paid, c.blocked ? paid : 0]);
+      noticeIds.push(ins.insertId);
+    }
   }
   await conn.query('UPDATE items SET cancelled_at = NOW(3) WHERE id IN (?)', [plan.itemIds.length ? plan.itemIds : [0]]);
   await conn.query('UPDATE fixed_claims SET ended_at = NOW(3) WHERE item_id IN (?) AND ended_at IS NULL', [plan.itemIds.length ? plan.itemIds : [0]]);   // standing claims on it end too
   if (plan.kind === 'order') await conn.query("UPDATE group_orders SET status = 'closed', cancelled_at = NOW(3) WHERE id = ?", [plan.id]);
-  return { kind: plan.kind, id: plan.id, title: plan.title, claims: plan.claims.length, people: plan.summary.people, credit, forfeited };
+  return { kind: plan.kind, id: plan.id, title: plan.title, claims: plan.claims.length, people: plan.summary.people, credit, forfeited, noticeIds };
 }

@@ -58,8 +58,9 @@ app.listen(cfg.port, () => console.log(`StormOfShadowss listening on :${cfg.port
 
 // Overdue reminders: check once shortly after start, then every hour. Each overdue claim is only ever reminded once, so checking often is harmless.
 if (cfg.reminders.enabled) {
-  const runReminders = () => app.locals.notifier.sendOverdueReminders().then((r) => { if (r.emails) console.log(`reminders: ${r.emails} email(s) for ${r.claims} overdue claim(s)`); }).catch((e) => console.error('reminders failed:', e.message));
+  const runReminders = () => app.locals.notifier.sendPauseReminders().catch((e) => console.error('pause reminders failed:', e.message)).then(() => app.locals.notifier.sendOverdueReminders()).then((r) => { if (r.emails) console.log(`reminders: ${r.emails} email(s) for ${r.claims} overdue claim(s)`); }).catch((e) => console.error('reminders failed:', e.message));
   setTimeout(runReminders, 60_000).unref();
   setInterval(runReminders, cfg.reminders.everyMinutes * 60_000).unref();
 }
+setInterval(() => app.locals.notifier.itemsReady(), 60_000).unref();                      // a safety net for anything that makes claims ready without going through the GOM screens (imports and so on)
 setInterval(() => cleanupExpired(pool).catch((e) => console.error('cleanup failed', e.message)), 3_600_000).unref();

@@ -35,12 +35,13 @@
     if (SITE.viewAs) { const b = $('.viewas-banner'); if (b) b.textContent = `Read-only view of ${S.me.account.email}${handles.length ? ` (${handles.map((h) => `@${h}`).join(', ')})` : ''} — exactly what they see. Nothing here can be changed.`; }
     if (handles.length > 1) { if (!S.handle || (S.handle !== 'all' && !handles.includes(S.handle))) S.handle = 'all'; }      // several handles: all together, until they choose one
     else S.handle = handles[0] || null;
-    S.summary = S.address = null; S.parcels = []; S.invites = []; S.fixed = { fixed: [], requests: [] };
+    S.summary = S.address = null; S.parcels = []; S.invites = []; S.fixed = { fixed: [], requests: [] }; S.cancelled = []; S.cancelledDays = 30;
     { const nr = await S.api('GET', '/api/my/notifications'); if (nr.ok) S.notify = nr.json; }
     if (S.handle) {
-      const [s, a, p, f] = await Promise.all([S.api('GET', '/api/my/summary'), S.api('GET', '/api/my/address'), S.api('GET', '/api/my/parcels'), S.api('GET', '/api/my/fixed')]);
+      const [s, a, p, f, cn] = await Promise.all([S.api('GET', '/api/my/summary'), S.api('GET', '/api/my/address'), S.api('GET', '/api/my/parcels'), S.api('GET', '/api/my/fixed'), S.api('GET', '/api/my/cancelled')]);
       S.summary = s.ok ? s.json : null; S.address = a.json?.address || null; S.parcels = p.json?.parcels || []; S.invites = p.json?.invites || [];
       if (f.ok) S.fixed = f.json;
+      if (cn.ok) { S.cancelled = cn.json.notices; S.cancelledDays = cn.json.days; }
       if (S.handle === 'all') {                                                                  // fixed claims belong to a handle: gather them from every handle, each tagged
         const fs = await Promise.all(handles.map((h) => api('GET', `/api/my/fixed?handle=${encodeURIComponent(h)}`)));
         S.fixed = { fixed: fs.flatMap((r, i) => (r.json?.fixed || []).map((x) => ({ ...x, handle: handles[i] }))), requests: fs.flatMap((r, i) => (r.json?.requests || []).map((x) => ({ ...x, handle: handles[i] }))) };
@@ -52,9 +53,14 @@
   // ── signed out ──
   function signedOut() {
     view.innerHTML = `<h1 style="margin:18px 0 6px">My orders</h1>
-      <section class="card"><h2>Sign in</h2><p>No password or PIN. Enter your email and we'll send you a one-time link.</p>
+      <section class="card"><h2>Sign in</h2><p>Enter your email and we'll send you a one-time link — no password needed. (You can choose to set a password later, in Settings.)</p>
         <form data-form="signin"><label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email" required placeholder="you@example.com">
         <p class="msg" data-msg hidden></p><button type="submit">Email me a sign-in link</button></form>
+        <p class="sub" style="margin:10px 0 0"><a href="#" data-act="show-password-login">Sign in with a password instead</a></p>
+        <form data-form="pwlogin" hidden style="margin-top:8px"><label for="pwEmail">Email</label><input id="pwEmail" name="email" type="email" autocomplete="username" required placeholder="you@example.com">
+          <label for="pwPass">Password</label><input id="pwPass" name="password" type="password" autocomplete="current-password" required maxlength="200">
+          <p class="msg" data-msg hidden></p><button type="submit">Sign in</button>
+          <p class="sub">Forgotten it? Use the email link above — once you're in you can set a new password in Settings.</p></form>
         <p class="sub">Just claimed something? You'll have been offered to add your email right then — that's the quickest way to link your handle.</p></section>`;
   }
 
@@ -81,7 +87,7 @@
       ${handles.length > 1 ? `<div class="card"><label for="sw">Viewing</label><select id="sw" data-act="switch"><option value="all" ${S.handle === 'all' ? 'selected' : ''}>All my handles</option>${handles.map((h) => `<option value="${esc(h)}" ${h === S.handle ? 'selected' : ''}>@${esc(h)}</option>`).join('')}</select></div>` : ''}
       ${late.length ? `<div class="card overdue-notice" data-overdue-notice role="alert"><strong>You have overdue payments</strong><div>${money(lateTotal)} is overdue across ${late.length} item${late.length === 1 ? '' : 's'} (${lateGos.slice(0, 3).map(esc).join(', ')}${lateGos.length > 3 ? ` and ${lateGos.length - 3} more` : ''}).</div><div class="btn-row" style="margin-top:10px"><a class="pillbtn" href="#/pay">Pay now</a><a class="pillbtn alt" href="#/ongoing">See which items</a></div></div>` : ''}
       ${S.invites.length ? `<div class="card" data-invite-notice style="background:var(--paper)"><strong>${S.invites.length === 1 ? `@${esc(S.invites[0].fromHandle)} has asked` : `${S.invites.length} people have asked`} to ship a parcel together with yours</strong><div class="sub">One parcel, one address — you choose which of your items go in. Nothing happens unless you say yes.</div><a class="pillbtn" href="#/ship" style="margin-top:8px">Have a look</a></div>` : ''}
-      ${shippedBanner()}
+      ${cancelledHtml()}${shippedBanner()}${nudgeHtml()}
       ${sum ? `<div class="card"><h2>What you owe</h2><div class="tiles">${CATS.map(([k, n]) => tile(n, o[k])).join('')}${tile('Total to pay', o.total, 'total')}</div>
         ${S.multi() && sum.handles ? `<table class="grid" data-by-handle style="margin-top:10px"><thead><tr><th>Handle</th><th>Owes</th><th>Credit</th></tr></thead><tbody>${sum.handles.map((h) => `<tr><td>@${esc(h.handle)}</td><td>${money(h.owed)}</td><td>${money(h.credit)}</td></tr>`).join('')}</tbody></table>` : ''}
         ${sum.credit > 0 ? `<p class="sub">${S.multi() ? `You have ${money(sum.credit)} credit across your handles — it's shared: it's used automatically against what you owe, on any of them.` : `You have ${money(sum.credit)} credit on your account — it's used automatically against what you owe.`}</p>` : ''}</div>
@@ -102,6 +108,15 @@
   }
 
   // ── ongoing / completed ──
+  // THE PASSWORD NUDGE on the dashboard, until they set a password or say no thanks (the email link always works either way).
+  const nudgeHtml = () => (S.me.account.passwordNudge ? `<div class="card" data-password-nudge><strong>Want to skip the email next time?</strong> Set a password and you can sign in with just your email and password. The email link will always still work.
+    <div class="btn-row" style="margin-top:8px"><a class="btn" href="#/settings" data-nudge-set>Set a password</a> <button type="button" class="sm secondary" data-act="nudge-off">No thanks</button></div></div>` : '');
+  // GROUP ORDERS AND ITEMS THE GOM HAD TO CANCEL — on the dashboard for a month (or until "Got it"), so people know to buy those things somewhere else, and what happened to their money.
+  const moneyNote = (c) => (c.refunded === null ? " — if you'd paid anything for it, it was credited to your account" : c.refunded > 0 ? ` — ${money(c.refunded)} credited to your account` : c.forfeited > 0 ? ` — ${money(c.forfeited)} paid, not credited` : " — you hadn't paid anything for it");
+  const cancelledHtml = () => (!S.cancelled?.length ? '' : `<div class="card" data-cancelled-notices style="border:2px solid var(--accent)"><h2 style="margin:0 0 4px">Cancelled — you may want to buy these elsewhere</h2>
+    <p class="sub" style="margin:0 0 8px">The GOM had to cancel these, so they won't be coming. This stays here for ${S.cancelledDays} days, or until you press “Got it”.</p>
+    ${S.cancelled.map((g) => `<div class="itemrow" data-cancelled="${esc(g.key)}"><div class="grow"><strong>${g.kind === 'order' ? 'Group order' : 'Item'}: ${esc(g.title)}</strong>${g.kind === 'item' ? ` <span class="sub">in ${esc(g.orderTitle)}</span>` : ''} <span class="sub">· cancelled ${g.daysAgo === 0 ? 'today' : `${g.daysAgo} day${g.daysAgo === 1 ? '' : 's'} ago`}</span>
+      ${g.claims.map((c) => `<div class="sub" data-cancelled-claim>${S.handle === 'all' && c.handle ? `@${esc(c.handle)} · ` : ''}${esc(c.label)}${moneyNote(c)}</div>`).join('')}</div><button type="button" class="sm secondary" data-act="cancel-notice-ok" data-ids="${g.ids.join(',')}">Got it</button></div>`).join('')}</div>`);
   function ordersList(kind) {
     const done = kind === 'completed';
     const claims = S.allClaims().filter((c) => (c.pipeline === 'completed') === done);
@@ -165,11 +180,24 @@
   });
   view.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-act]'); if (!b) return;
+    if (b.dataset.act === 'show-password-login') {                                  // "Sign in with a password instead"
+      e.preventDefault(); const f = $('[data-form="pwlogin"]', view), typed = $('[data-form="signin"]', view)?.elements.email.value; f.hidden = !f.hidden;
+      if (!f.hidden) { if (typed && !f.elements.email.value) f.elements.email.value = typed; (f.elements.email.value ? f.elements.password : f.elements.email).focus(); } return;
+    }
+    if (b.dataset.act === 'nudge-off') {                                                       // "No thanks": the password card isn't shown again
+      const r = await S.api('POST', '/api/my/password/nudge-off', {}); if (!r.ok) return SITE.toast(errText(r), true);
+      S.me.account.passwordNudge = false; return route();
+    }
     if (b.dataset.act === 'logout') { e.preventDefault(); await api('POST', '/api/auth/logout', {}); S.me = null; location.hash = '#/'; return signedOut(); }
     if (b.dataset.act === 'toggle-go') { const k = `${S.listKind}:${b.dataset.go}`, was = b.getAttribute('aria-expanded') === 'true'; S.goChosen.set(k, !was); return ordersList(S.listKind); }
     if (b.dataset.act === 'open-all-go' || b.dataset.act === 'close-all-go') { for (const c of view.querySelectorAll('[data-act="toggle-go"]')) S.goChosen.set(`${S.listKind}:${c.dataset.go}`, b.dataset.act === 'open-all-go'); return ordersList(S.listKind); }
     if (b.dataset.act === 'cancel-ask') { S.cancelOpen = Number(b.dataset.id); return route(); }
     if (b.dataset.act === 'cancel-close') { S.cancelOpen = null; return route(); }
+    if (b.dataset.act === 'cancel-notice-ok') {                                    // "Got it": the notice for this cancellation goes away
+      const ids = b.dataset.ids.split(',').map(Number), r = await S.api('POST', '/api/my/cancelled/dismiss', { ids });
+      if (!r.ok) return SITE.toast(errText(r), true);
+      S.cancelled = S.cancelled.filter((g) => !g.ids.some((i) => ids.includes(i))); return route();
+    }
     if (b.dataset.act === 'cancel-withdraw') {
       if (!(await SITE.confirm('Take back your request to cancel this?\n\nThe item stays in your order as it was.', { ok: 'Yes, take it back', cancel: 'Not yet' }))) return;
       const r = await S.api('DELETE', `/api/my/cancel-requests/${b.dataset.req}`, undefined, S.allClaims().find((c) => c.cancelRequest?.id === Number(b.dataset.req))?.handle);
@@ -188,9 +216,14 @@
   });
   view.addEventListener('submit', async (e) => {
     const form = e.target;
-    if (!['signin', 'handle'].includes(form.dataset.form)) return;
+    if (!['signin', 'pwlogin', 'handle'].includes(form.dataset.form)) return;
     e.preventDefault();
     const msg = $('[data-msg]', form);
+    if (form.dataset.form === 'pwlogin') {                                                     // sign in with email + password (the emailed link is the way back in if they forget it)
+      const r = await api('POST', '/api/auth/password-login', { email: form.elements.email.value, password: form.elements.password.value });
+      if (!r.ok) return S.say(msg, errText(r));
+      form.elements.password.value = ''; return route();
+    }
     if (form.dataset.form === 'signin') {
       const r = await api('POST', '/api/auth/request-link', { email: form.elements.email.value });
       return S.say(msg, r.ok ? r.json.message : errText(r), r.ok);

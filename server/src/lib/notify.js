@@ -1,6 +1,10 @@
 import { LINE_DUE } from './due.js';
-import { offSet } from './notify-events.js';
+import { offSet, NOTIFY_EVENTS } from './notify-events.js';
+import { CANCEL_NOTICE_DAYS } from './cancel-order.js';
 import { round2 } from './money.js';
+import { withTx } from '../db.js';
+import { READY } from './combine.js';
+import { PAUSE_KEEPS_PLACE_DAYS } from './parcels.js';
 
 const pounds = (n) => `£${Number(n).toFixed(2)}`;
 const ukDate = (d) => { const s = d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10); return `${s.slice(8, 10)}/${s.slice(5, 7)}/${s.slice(0, 4)}`; };
@@ -22,9 +26,9 @@ export function createNotifier({ pool, mailer, cfg }) {
 
   // Who to email, if they've turned emails on — and, when `event` is given, haven't switched off that kind of email.
   async function recipient(joinerId, event = null) {
-    const [[r]] = await pool.query('SELECT j.instagram_handle AS handle, a.email, a.notify_off AS off FROM joiners j JOIN accounts a ON a.id = j.account_id WHERE j.id = ? AND a.notify_email = 1', [joinerId]);
+    const [[r]] = await pool.query('SELECT j.instagram_handle AS handle, a.email, a.notify_off AS off, a.notify_optin AS optin FROM joiners j JOIN accounts a ON a.id = j.account_id WHERE j.id = ? AND a.notify_email = 1', [joinerId]);
     if (!r) return null;
-    if (event && offSet(r.off).has(event)) return null;
+    if (event && (NOTIFY_EVENTS.find((e) => e.key === event)?.optIn ? !offSet(r.optin).has(event) : offSet(r.off).has(event))) return null;          // an OPT-IN kind is sent only to people who switched it on
     return { handle: r.handle, email: r.email };
   }
   async function owedNow(joinerId) {
@@ -178,5 +182,56 @@ export function createNotifier({ pool, mailer, cfg }) {
     return { emails, claims };
   }
 
-  return { claimsSecured, claimPriceChanged, paymentDecided, parcelShipped, companionInvited, cancelDecided, sendOverdueReminders, idle: async () => { while (inflight.size) await Promise.allSettled([...inflight]); } };
+  // 8. Claims have become "ready to pack / on hand": tell each person who has a shipping request that HASN'T BEEN PACKED yet, so they can add them. Straight away, ONE email per person per call.
+  // Each claim is considered ONCE (ready_notified_at is set whether or not an email goes), so calling this often is harmless. A claim must be the person's own, confirmed, and not already in a parcel; "has a request" = they own one,
+  // or are a friend who has joined one, that is still 'requested'. Nothing here mentions postage.
+  const itemsReady = safe(async () => {
+    const rows = await withTx(pool, async (conn) => {
+      const [r] = await conn.query("SELECT c.id, c.joiner_id AS joinerId FROM claims c WHERE c.pipeline = ? AND c.status = 'confirmed' AND c.ready_notified_at IS NULL ORDER BY c.joiner_id, c.id FOR UPDATE", [READY]);
+      if (r.length) await conn.query('UPDATE claims SET ready_notified_at = NOW(3) WHERE id IN (?)', [r.map((x) => x.id)]);
+      return r;
+    });
+    for (const joinerId of [...new Set(rows.map((r) => r.joinerId))]) {
+      const to = await recipient(joinerId, 'itemsReady'); if (!to) continue;
+      const [[open]] = await pool.query("SELECT COUNT(*) AS n FROM parcels p WHERE p.status = 'requested' AND (p.joiner_id = ? OR EXISTS (SELECT 1 FROM parcel_companions pc WHERE pc.parcel_id = p.id AND pc.joiner_id = ? AND pc.status = 'accepted'))", [joinerId, joinerId]); if (!Number(open.n)) continue;
+      const [free] = await pool.query("SELECT c.id, c.label FROM claims c WHERE c.id IN (?) AND NOT EXISTS (SELECT 1 FROM parcel_items pi JOIN parcels p ON p.id = pi.parcel_id WHERE pi.claim_id = c.id AND p.status IN ('requested', 'packed', 'shipped')) ORDER BY c.id", [rows.filter((r) => r.joinerId === joinerId).map((r) => r.id)]);
+      if (!free.length) continue;
+      const lines = free.map((c) => `  • ${c.label}`).join('\n'), many = free.length > 1;
+      await deliver(to.email, `More of your items have arrived (@${to.handle})`,
+        `Hi @${to.handle},\n\n${many ? `${free.length} more of your items are` : 'Another of your items is'} now ready with the GOM:\n\n${lines}\n\nYour shipping request hasn't been packed yet, so you can add ${many ? 'them' : 'it'} to it: ${myOrders}#/ship\n\nIf you'd rather ${many ? 'they' : 'it'} went in a later parcel, you don't need to do anything.`);
+    }
+  });
+
+  // 9. A shipping request paused for PAUSE_KEEPS_PLACE_DAYS (30) days or more: ONE reminder (pause_reminded_at is stamped first, so it can't go twice; it is cleared each time the request is paused again). It says that resuming now puts it
+  // at the END of the queue (a request only keeps its place if resumed within those days), and that there's no rush. Called on a timer with the overdue reminders; returns what was sent.
+  async function sendPauseReminders() {
+    const [rows] = await pool.query("SELECT p.id, p.joiner_id AS joinerId, TIMESTAMPDIFF(DAY, p.paused_at, NOW(3)) AS days FROM parcels p WHERE p.status = 'requested' AND p.paused_at IS NOT NULL AND p.pause_reminded_at IS NULL AND TIMESTAMPDIFF(DAY, p.paused_at, NOW(3)) >= ? ORDER BY p.id", [PAUSE_KEEPS_PLACE_DAYS]);
+    let emails = 0;
+    for (const r of rows) {
+      try {
+        const [m] = await pool.query('UPDATE parcels SET pause_reminded_at = NOW(3) WHERE id = ? AND pause_reminded_at IS NULL', [r.id]); if (m.affectedRows !== 1) continue;
+        const to = await recipient(r.joinerId, 'pauseReminder'); if (!to) continue;
+        await deliver(to.email, `Your shipping request is still paused (@${to.handle})`,
+          `Hi @${to.handle},\n\nYour shipping request (parcel #${r.id}) has been paused for ${r.days} days.\n\nWhen you're ready, you can resume it from your shipping page: ${myOrders}#/ship\n\nA paused request keeps its place in the queue for ${PAUSE_KEEPS_PLACE_DAYS} days. It has now been longer than that, so if you resume it now it will join the end of the queue.\n\nIf you're still waiting for more items there's no rush — it stays paused until you resume it, and you can still add items to it.`);
+        emails += 1;
+      } catch (e) { console.error('pause reminder failed:', e.message); }
+    }
+    return { emails, parcels: rows.length };
+  }
+
+  // 10. The GOM cancelled a whole group order or one item ("could not go ahead"): ONE email per affected person, listing their items and what happened to their money — only to people who have switched THIS kind on
+  // (it is opt-in: off unless they ask). The ids are the cancel_notices rows made by cancelNow. The same thing shows at the top of their My orders for CANCEL_NOTICE_DAYS days whether or not they get the email.
+  const orderCancelled = safe(async (noticeIds) => {
+    if (!noticeIds?.length) return;
+    const [rows] = await pool.query('SELECT id, joiner_id AS joinerId, kind, order_title AS orderTitle, item_title AS itemTitle, label, refunded, forfeited FROM cancel_notices WHERE id IN (?) ORDER BY id', [noticeIds]);
+    for (const joinerId of [...new Set(rows.map((r) => r.joinerId))]) {
+      const to = await recipient(joinerId, 'orderCancelled'); if (!to) continue;
+      const mine = rows.filter((r) => r.joinerId === joinerId), first = mine[0], order = first.kind === 'order', many = mine.length > 1;
+      const money = (r) => (r.refunded === null ? '' : Number(r.refunded) > 0 ? ` — ${pounds(r.refunded)} credited to your account` : Number(r.forfeited) > 0 ? ` — ${pounds(r.forfeited)} paid, not credited` : " — you hadn't paid anything yet");
+      await deliver(to.email, `${order ? 'A group order you joined' : 'An item you claimed'} was cancelled (@${to.handle})`,
+        `Hi @${to.handle},\n\nThe GOM has had to cancel ${order ? 'the group order' : 'the item'} “${order ? first.orderTitle : first.itemTitle}” — it couldn't go ahead.\n\nYour ${many ? 'items' : 'item'} on it:\n\n${mine.map((r) => `  • ${r.label}${money(r)}`).join('\n')}\n\nYou may want to buy ${many ? 'them' : 'it'} somewhere else. This will also show at the top of My orders for the next ${CANCEL_NOTICE_DAYS} days: ${myOrders}`);
+    }
+  });
+
+  return { claimsSecured, claimPriceChanged, paymentDecided, itemsReady, sendPauseReminders, orderCancelled, parcelShipped, companionInvited, cancelDecided, sendOverdueReminders, idle: async () => { while (inflight.size) await Promise.allSettled([...inflight]); } };
 }

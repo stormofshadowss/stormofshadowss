@@ -114,7 +114,8 @@ export default function authRoutes({ cfg, pool, mailer }) {
     const [pending] = await pool.query(
       `SELECT l.id, j.instagram_handle AS handle FROM handle_link_requests l JOIN joiners j ON j.id = l.joiner_id
         WHERE l.account_id = ? AND l.status = 'pending' ORDER BY l.id`, [req.account.id]);
-    res.json({ account: req.account, handles, pending });
+    const [[pw]] = await pool.query('SELECT password_hash IS NOT NULL AS hasPassword, password_set_at AS setAt, password_nudge_off AS nudgeOff FROM accounts WHERE id = ?', [req.account.id]);
+    res.json({ account: { ...req.account, hasPassword: !!pw.hasPassword, passwordSetAt: pw.setAt ? new Date(pw.setAt).toISOString() : null, passwordNudge: !pw.hasPassword && !pw.nudgeOff && !req.account.isAdmin, needsCurrentPassword: !!pw.hasPassword && req.sessionVia === 'password' }, handles, pending });          // passwordNudge: show the "Want to skip the email next time?" card
   }));
 
   return r;

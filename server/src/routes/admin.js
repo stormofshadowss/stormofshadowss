@@ -177,16 +177,16 @@ export function adminRoutes(app, { pool, notifier }) {
 
   // ── packing queue ──
   app.get('/api/admin/packing', admin, wrap(async (req, res) => {
-    const status = ['requested', 'packed', 'shipped', 'received'].includes(req.query.status) ? req.query.status : 'requested';
+    const status = ['requested', 'paused', 'packed', 'shipped', 'received'].includes(req.query.status) ? req.query.status : 'requested';          // 'paused' = requests the joiner has parked (not in the queue)
     // ?q= searches EVERY parcel (whatever its status): by parcel number, the person's handle, or the tracking number
     const q = String(req.query.q || '').trim().replace(/^@/, '').slice(0, 40), like = `%${q.replace(/[\\%_]/g, '\\$&')}%`;
     const [parcels] = await pool.query(
       `SELECT p.id, p.joiner_id AS joinerId, j.instagram_handle AS handle, (j.verified_at IS NOT NULL) AS handleVerified, p.method, p.tracking_no AS trackingNo, p.declared_value AS declaredValue, p.notes, p.bias, p.lomo_name AS lomoName, p.lomo_source AS lomoSource, p.status,
-              p.requested_at, p.doms_total AS domsTotal, p.packaging_total AS packagingTotal, p.packed_date AS packedDate, p.shipped_date AS shippedDate, p.received_date AS receivedDate,
+              p.requested_at, p.paused_at, TIMESTAMPDIFF(DAY, p.paused_at, NOW(3)) AS pausedDays, p.doms_total AS domsTotal, p.packaging_total AS packagingTotal, p.packed_date AS packedDate, p.shipped_date AS shippedDate, p.received_date AS receivedDate,
               p.address_checked_at AS addressCheckedAt, p.lomo_checked_at AS lomoCheckedAt, p.bias_checked_at AS biasCheckedAt, p.fee_split AS feeSplitSetting, p.weight_g AS weightG, p.fees_check_needed AS feesCheckNeeded,
               ad.full_name AS deliveryName, ad.address AS deliveryAddress, ad.phone AS deliveryPhone, ad.email AS deliveryEmail
          FROM parcels p JOIN joiners j ON j.id = p.joiner_id LEFT JOIN addresses ad ON ad.joiner_id = j.id
-        WHERE ${q ? "p.status <> 'cancelled' AND (p.id = ? OR j.instagram_handle LIKE ? OR p.tracking_no LIKE ?)" : 'p.status = ?'} ORDER BY ${q ? '(p.id = ?) DESC, p.id DESC' : 'p.requested_at, p.id'}`, q ? [Number(q) || 0, like, like, Number(q) || 0] : [status]);   // a search puts the exact parcel number first
+        WHERE ${q ? "p.status <> 'cancelled' AND (p.id = ? OR j.instagram_handle LIKE ? OR p.tracking_no LIKE ?)" : status === 'paused' ? "p.status = 'requested' AND p.paused_at IS NOT NULL" : status === 'requested' ? 'p.status = ? AND p.paused_at IS NULL' : 'p.status = ?'} ORDER BY ${q ? '(p.id = ?) DESC, p.id DESC' : 'p.requested_at, p.id'}`, q ? [Number(q) || 0, like, like, Number(q) || 0] : status === 'paused' ? [] : [status]);   // a search puts the exact parcel number first
     const ids = parcels.map((p) => p.id);
     const items = ids.length ? (await pool.query(
       'SELECT pi.parcel_id, c.id AS claimId, c.joiner_id AS ownerId, c.label, pi.packed_at AS packedAt, pi.added_at AS addedAt, jc.instagram_handle AS owner, pi.doms_share AS doms, pi.packaging_share AS packaging, COALESCE(go.title, \'Shop (on hand)\') AS orderTitle, im.filename AS imgFile, im.width AS imgW, im.height AS imgH FROM parcel_items pi JOIN claims c ON c.id = pi.claim_id JOIN joiners jc ON jc.id = c.joiner_id LEFT JOIN items it ON it.id = c.item_id LEFT JOIN group_orders go ON go.id = c.order_id LEFT JOIN leftover_items lo ON lo.id = c.leftover_item_id LEFT JOIN images im ON im.id = COALESCE(it.image_id, lo.image_id) WHERE pi.parcel_id IN (?) ORDER BY c.id', [ids]))[0] : [];
@@ -233,18 +233,21 @@ export function adminRoutes(app, { pool, notifier }) {
       } else { p.people = []; p.feeSplit = null; }
       for (const k of ['feeSplitSetting', 'weightG', 'joinerId']) delete p[k];
       p.requestedAt = p.requested_at; delete p.requested_at;
+      p.paused = !!p.paused_at; p.pausedAt = p.paused_at ? new Date(p.paused_at).toISOString() : null; delete p.paused_at; p.pausedDays = p.paused ? Number(p.pausedDays) : null;
       p.trackingUrl = trackingUrl(p.method, p.trackingNo);
       delete p.addressCheckedAt; delete p.lomoCheckedAt; delete p.biasCheckedAt;
     }
-    res.json({ parcels });
+    const [[pc]] = await pool.query("SELECT COUNT(*) AS n FROM parcels WHERE status = 'requested' AND paused_at IS NOT NULL");
+    res.json({ parcels, pausedCount: Number(pc.n) });
   }));
 
   const parcelAction = (name, from, apply) => app.post(`/api/admin/parcels/:id/${name}`, admin, wrap(async (req, res) => {
     const id = Number(req.params.id);
     await withTx(pool, async (conn) => {
-      const [[p]] = await conn.query('SELECT id, status FROM parcels WHERE id = ? FOR UPDATE', [id]);
+      const [[p]] = await conn.query('SELECT id, status, paused_at FROM parcels WHERE id = ? FOR UPDATE', [id]);
       if (!p) throw notFound('No such parcel');
       if (!from.includes(p.status)) throw conflict(`That parcel is ${p.status}, so it can't be marked ${name}`, 'bad_state');
+      if (name === 'packed' && p.paused_at) throw conflict("This request is paused — they're waiting for more items — so it can't be packed until they resume it.", 'paused');
       await apply(conn, id, req);
       await audit(conn, req.account.id, `parcel.${name}`, 'parcel', id);
     });
@@ -308,7 +311,7 @@ export function adminRoutes(app, { pool, notifier }) {
       `SELECT o.id, j.instagram_handle AS handle, o.method, o.requested_at AS requestedAt,
               (SELECT GROUP_CONCAT(c.label ORDER BY c.id SEPARATOR ' | ') FROM parcel_items pi JOIN claims c ON c.id = pi.claim_id WHERE pi.parcel_id = o.id) AS labels
          FROM parcels o JOIN joiners j ON j.id = o.joiner_id
-        WHERE o.status = 'requested' AND o.id <> ? AND o.joiner_id <> ? AND LOWER(o.method) = LOWER(?) AND o.declared_value <=> ? AND COALESCE(o.doms_total, 0) = 0 AND COALESCE(o.packaging_total, 0) = 0
+        WHERE o.status = 'requested' AND o.paused_at IS NULL AND o.id <> ? AND o.joiner_id <> ? AND LOWER(o.method) = LOWER(?) AND o.declared_value <=> ? AND COALESCE(o.doms_total, 0) = 0 AND COALESCE(o.packaging_total, 0) = 0
           AND NOT EXISTS (SELECT 1 FROM parcel_companions pc WHERE pc.parcel_id = o.id)
           AND o.joiner_id NOT IN (SELECT joiner_id FROM parcel_companions WHERE parcel_id = ?) ORDER BY o.requested_at, o.id`, [id, p.joiner_id, p.method, p.declared_value, id]);
     const [[people]] = await pool.query("SELECT 1 + COUNT(*) AS n FROM parcel_companions WHERE parcel_id = ? AND status <> 'declined'", [id]);

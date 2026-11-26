@@ -137,6 +137,7 @@ export async function combineParcels(conn, { parcelId, withParcelId, adminId }) 
   const P = rows.find((r) => r.id === parcelId), F = rows.find((r) => r.id === withParcelId);
   if (!P || !F) throw notFound('No such parcel');
   if (P.status !== 'requested' || F.status !== 'requested') throw conflict('Only parcels still waiting in the queue can be combined.', 'bad_state');
+  if (P.paused_at || F.paused_at) throw conflict("A paused request can't be combined — it has to be resumed first.", 'paused');
   if (P.joiner_id === F.joiner_id) throw bad('Both parcels belong to the same person.');
   for (const id of [P.joiner_id, F.joiner_id].sort((a, b) => a - b)) await lockJoiner(conn, id);
   const [[theirs]] = await conn.query('SELECT COUNT(*) AS n FROM parcel_companions WHERE parcel_id = ?', [F.id]);

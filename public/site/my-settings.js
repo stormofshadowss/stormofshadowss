@@ -1,12 +1,12 @@
 // "My settings": the Instagram handles on the account (add or remove), the sign-in email, saved shipping defaults, a way into the email choices, and deleting the account.
 // Registers itself as SITE.views.settings (my.js routes to it).
 (function () {
-  const { esc, money, api, errText, normalizeHandle, $ } = SITE;
+  const { esc, money, api, errText, normalizeHandle, $, fmtDate } = SITE;
 
   SITE.views.settings = async (view) => {
     const S = SITE.my;
     const [chk, dr] = await Promise.all([api('GET', '/api/me/delete-check'), S.handle ? S.api('GET', '/api/my/defaults') : Promise.resolve(null)]);
-    const handles = S.me.handles.map((h) => h.handle), pending = S.me.pending;
+    const handles = S.me.handles.map((h) => h.handle), pending = S.me.pending, acc = S.me.account;
     const del = chk.ok ? chk.json : { canDelete: true, blockers: [], warnings: { credit: 0, inFlight: 0 } };
     const defs = dr?.ok ? dr.json : { bias: '', lomoName: '' };
     const updated = new URLSearchParams(location.search).get('updated') === 'email';       // arrived here from the "confirm your new email" link
@@ -31,6 +31,22 @@
           <p class="msg" data-msg hidden></p><button type="submit">Send a confirmation link</button></form>
         <p class="sub">We email a link to the <strong>new</strong> address, and nothing changes until you open it there. You'll be signed out on your other devices.</p></div>
 
+      <div class="card" id="passwordCard"><h2>Sign in with a password <span class="sub">(optional)</span></h2>
+        ${acc.hasPassword ? `<p>A password is set${acc.passwordSetAt ? ` (since ${esc(fmtDate(acc.passwordSetAt))})` : ''}. You can sign in with your email and password, or use an emailed link any time.</p>
+          <form data-form="pw-change">${acc.needsCurrentPassword ? '<label for="pwCur">Your current password</label><input id="pwCur" name="current" type="password" autocomplete="current-password" required maxlength="200" style="max-width:360px">' : ''}
+            <label for="pwNew">New password</label><input id="pwNew" name="password" type="password" autocomplete="new-password" required maxlength="200" style="max-width:360px">
+            <label class="chk"><input type="checkbox" data-act="show-pw"> Show it</label>
+            <p class="msg" data-msg hidden></p><button type="submit">Change password</button></form>
+          <form data-form="pw-remove" style="margin-top:10px">${acc.needsCurrentPassword ? '<label for="pwCur2">Your current password</label><input id="pwCur2" name="current" type="password" autocomplete="current-password" required maxlength="200" style="max-width:360px">' : ''}
+            <p class="msg" data-msg hidden></p><button type="submit" class="secondary">Remove my password</button></form>
+          <p class="sub">Forgotten it? Sign out and choose “Email me a sign-in link” — once you're in you can set a new one here.</p>`
+        : `<p>Skip the email next time: choose a password and you can sign in with just your email and password. The emailed link will always still work.</p>
+          <form data-form="pw-set"><label for="pwNew">Choose a password</label><input id="pwNew" name="password" type="password" autocomplete="new-password" required maxlength="200" style="max-width:360px">
+            <label class="chk"><input type="checkbox" data-act="show-pw"> Show it</label>
+            <p class="sub">At least 10 characters, and not a common one. A few random words strung together works well.</p>
+            <p class="msg" data-msg hidden></p><button type="submit">Set password</button></form>`}
+        <p class="sub">We'll email you whenever your password is set, changed or removed.</p></div>
+
       ${S.handle ? `<div class="card" id="defaultsCard"><h2>Shipping defaults${handles.length > 1 ? ` for @${esc(S.one())}` : ''}</h2>
         <p class="sub" style="margin-top:0">We'll fill these in when you ask for shipping. You can still change them each time.</p>
         <form data-form="defaults"><div class="formgrid"><div><label for="defBias">Your bias</label><input id="defBias" name="bias" maxlength="80" value="${esc(defs.bias)}" placeholder="e.g. Hyunjin"></div>
@@ -52,6 +68,7 @@
 
     view.onclick = async (e) => {
       const b = e.target.closest('[data-act]'); if (!b) return;
+      if (b.dataset.act === 'show-pw') { const f = b.closest('form'); f.elements.password.type = b.checked ? 'text' : 'password'; return; }
       if (b.dataset.act === 'remove-handle') {
         const h = b.dataset.handle;
         if (!(await SITE.confirm(`Remove @${h} from your account?\n\nIt will stop showing in your orders here. If you ever want it back you can link it again.`, { ok: 'Remove it', cancel: 'Keep it' }))) return;
@@ -81,6 +98,16 @@
       } else if (f.dataset.form === 'email') {
         const r = await api('POST', '/api/my/email/change', { email: f.elements.email.value });
         S.say(msg, r.ok ? r.json.message : errText(r), r.ok);
+      } else if (f.dataset.form === 'pw-set' || f.dataset.form === 'pw-change') {                 // set or change the optional password
+        const r = await api('PUT', '/api/my/password', { newPassword: f.elements.password.value, ...(f.elements.current ? { currentPassword: f.elements.current.value } : {}) });
+        if (!r.ok) return S.say(msg, errText(r));
+        const was = f.dataset.form; await S.reload(); await SITE.views.settings(view);
+        S.say($('#passwordCard [data-msg]', view), was === 'pw-set' ? 'Password set — you can now sign in with your email and password.' : 'Password changed.', true);
+      } else if (f.dataset.form === 'pw-remove') {
+        if (!(await SITE.confirm('Remove your password?\n\nYou can still sign in with an emailed link any time.', { ok: 'Remove it', cancel: 'Keep it' }))) return;
+        const r = await api('DELETE', '/api/my/password', f.elements.current ? { currentPassword: f.elements.current.value } : {});
+        if (!r.ok) return S.say(msg, errText(r));
+        await S.reload(); await SITE.views.settings(view); S.say($('#passwordCard [data-msg]', view), 'Password removed. You sign in with an emailed link.', true);
       } else if (f.dataset.form === 'defaults') {
         const r = await S.api('PUT', '/api/my/defaults', { handle: S.one(), bias: f.elements.bias.value, lomoName: f.elements.lomoName.value });
         S.say(msg, r.ok ? 'Saved.' : errText(r), r.ok);

@@ -216,7 +216,7 @@ test('titles with HTML are shown as text', async () => {
 // ───────────── My orders (sign-in + summary) ─────────────
 test('My orders when signed out: a sign-in form that explains itself', async () => {
   const p = await openPage(app, '/my.html');
-  assert.match(p.text(p.q('#view')), /Sign in.*No password or PIN.*one-time link/);
+  assert.match(p.text(p.q('#view')), /Sign in.*one-time link — no password needed.*Settings/);
   p.q('#email').value = 'visitor@x.com'; await p.submit(p.q('form[data-form="signin"]'));
   assert.match(p.text(p.q('[data-msg]')), /sign-in link is on its way/);
   assert.equal(app.mailer.outbox.filter((m) => m.to === 'visitor@x.com').length, 1);

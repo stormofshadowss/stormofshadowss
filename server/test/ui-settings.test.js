@@ -115,14 +115,14 @@ test('with two handles the defaults are per handle, and the heading says which',
 test('CHOOSING WHICH EMAILS: switching emails on enables the list; each kind saves on its own tick; switching off greys them out but remembers; the home card reflects it', async () => {
   const p = await person(); const pg = await page(p, '#/notifications');
   const boxes = () => pg.qa('input[data-event]');
-  assert.equal(boxes().length, 7); assert.ok(boxes().every((b) => b.disabled && b.checked)); assert.match(text(pg, '[data-kinds-off]'), /Turn on order emails above to choose which ones/);
+  assert.equal(boxes().length, 10, 'one box for each kind of email'); assert.ok(boxes().every((b) => b.disabled)); assert.deepEqual(boxes().filter((b) => !b.checked).map((b) => b.dataset.event), ['orderCancelled'], 'all ticked except the opt-in one'); assert.match(text(pg, '[data-kinds-off]'), /Turn on order emails above to choose which ones/);
   await pg.click(pg.q('#notifyToggle'));
-  assert.match(toast(pg), /Email notifications turned on/); assert.ok(boxes().every((b) => !b.disabled && b.checked), 'now they can be chosen');
+  assert.match(toast(pg), /Email notifications turned on/); assert.ok(boxes().every((b) => !b.disabled), 'now they can be chosen'); assert.deepEqual(boxes().filter((b) => !b.checked).map((b) => b.dataset.event), ['orderCancelled'], 'the opt-in kind is still unticked');
   await pg.click(pg.q('input[data-event="parcelShipped"]')); await pg.click(pg.q('input[data-event="overdue"]'));
-  assert.deepEqual((await api('GET', '/api/my/notifications', undefined, p.cookie)).json.events.filter((e) => !e.enabled).map((e) => e.key), ['parcelShipped', 'overdue'], 'saved');
+  assert.deepEqual((await api('GET', '/api/my/notifications', undefined, p.cookie)).json.events.filter((e) => !e.enabled).map((e) => e.key), ['parcelShipped', 'overdue', 'orderCancelled'], 'saved');
   await pg.click(pg.q('#notifyToggle'));
   assert.ok(boxes().every((b) => b.disabled), 'off: greyed out');
-  assert.deepEqual(boxes().filter((b) => !b.checked).map((b) => b.dataset.event), ['parcelShipped', 'overdue'], 'but your choices are remembered');
+  assert.deepEqual(boxes().filter((b) => !b.checked).map((b) => b.dataset.event), ['parcelShipped', 'overdue', 'orderCancelled'], 'but your choices are remembered');
   await go(pg, '#/'); assert.match(text(pg, 'a.gocard[href="#/notifications"]'), /Email notifications.*off/);
   await go(pg, '#/settings'); assert.match(text(pg, '#emailsCard'), /Order emails are off\./); assert.ok(pg.q('#emailsCard a[href="#/notifications"]'));
   assert.deepEqual(pg.errors, []); pg.close();

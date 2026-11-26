@@ -1,5 +1,6 @@
 import { storageDeadlineOf, storageStatusOf } from '../lib/storage.js';
-import { NOTIFY_EVENTS, EVENT_KEYS, offSet, offString } from '../lib/notify-events.js';
+import { NOTIFY_EVENTS, EVENT_KEYS, offSet, offString, optInString } from '../lib/notify-events.js';
+import { CANCEL_NOTICE_DAYS } from '../lib/cancel-order.js';
 import { z } from 'zod';
 import { randomBytes } from 'node:crypto';
 import { wrap } from '../lib/http.js';
@@ -9,7 +10,7 @@ import { shareAddress } from '../lib/address-share.js';
 import { bad, conflict, forbidden, notFound, HttpError } from '../errors.js';
 import { resolveJoiner } from '../lib/joiner.js';
 import { owedInScope, owingPlan, lockJoiner, creditBalance } from '../lib/ledger.js';
-import { queuePosition, markParcelReceived, applyFee, feeDueOf } from '../lib/parcels.js';
+import { queuePosition, markParcelReceived, applyFee, feeDueOf, PAUSE_KEEPS_PLACE_DAYS } from '../lib/parcels.js';
 import { trackingUrl } from '../lib/tracking.js';
 import { validateShippable, inviteCompanions, acceptCompanion, declineCompanion, withdrawInvitation, leaveParcel } from '../lib/combine.js';
 import { feeModeOf } from '../lib/parcels.js';
@@ -320,17 +321,71 @@ export function meRoutes(app, { pool }) {
       }
       if (feesResplit) await conn.query('UPDATE parcels SET fees_check_needed = 1 WHERE id = ?', [parcelId]);
       await audit(conn, req.account.id, 'parcel.add_items', 'parcel', parcelId, { claimIds: ids, feesResplit, as: ownerIsMine ? 'owner' : 'friend' });
-      const [[parcel]] = await conn.query('SELECT id, status, requested_at FROM parcels WHERE id = ?', [parcelId]);
-      return { ok: true, added: ids.length, feesResplit, queuePosition: await queuePosition(conn, parcel) };
+      const [[parcel]] = await conn.query('SELECT id, status, requested_at, paused_at FROM parcels WHERE id = ?', [parcelId]);
+      return { ok: true, added: ids.length, feesResplit, queuePosition: await queuePosition(conn, parcel) };          // (a paused request has no place in the queue)
     });
     res.status(201).json(out);
   }));
 
   // Your parcels: the ones you asked for AND the ones you share with friends, plus any invitations to share someone else's.
+  // PAUSE a shipping request that hasn't been packed (they are waiting for more items): it leaves the packing queue, its items stay. Only the person it is posted to. RESUME it: within PAUSE_KEEPS_PLACE_DAYS it keeps its
+  // original place in the queue; after that it goes to the end. (The 'add items' feature keeps working while it is paused.)
+  const ownerOnly = async (conn, req, parcelId) => {
+    const handleIds = new Set((await accountHandles(req.account.id)).map((h) => h.id));
+    const [[p]] = await conn.query('SELECT id, joiner_id, status, paused_at FROM parcels WHERE id = ? FOR UPDATE', [parcelId]);
+    if (!p) throw notFound('No such parcel');
+    if (!handleIds.has(p.joiner_id)) {
+      const [[c]] = await conn.query("SELECT COUNT(*) AS n FROM parcel_companions WHERE parcel_id = ? AND status = 'accepted' AND joiner_id IN (?)", [parcelId, [...handleIds]]);
+      if (Number(c.n)) throw forbidden('Only the person this parcel is being posted to can pause or resume it.'); throw notFound('No such parcel');
+    }
+    return p;
+  };
+  app.post('/api/my/parcels/:id/pause', auth, wrap(async (req, res) => {
+    const id = Number(req.params.id);
+    await withTx(pool, async (conn) => {
+      const p = await ownerOnly(conn, req, id);
+      if (p.status !== 'requested') throw conflict(p.status === 'cancelled' ? "This request was cancelled, so it can't be paused." : "This request has already been packed, so it can't be paused.", 'parcel_not_open');
+      if (p.paused_at) throw conflict('This request is already paused.', 'already_paused');
+      await conn.query('UPDATE parcels SET paused_at = NOW(3), pause_reminded_at = NULL WHERE id = ?', [id]);
+      await audit(conn, req.account.id, 'parcel.pause', 'parcel', id);
+    });
+    res.json({ ok: true });
+  }));
+  app.post('/api/my/parcels/:id/resume', auth, wrap(async (req, res) => {
+    const id = Number(req.params.id); let keptPlace = true;
+    await withTx(pool, async (conn) => {
+      const p = await ownerOnly(conn, req, id);
+      if (!p.paused_at) throw conflict("This request isn't paused.", 'not_paused');
+      const [[d]] = await conn.query('SELECT TIMESTAMPDIFF(DAY, paused_at, NOW(3)) AS days FROM parcels WHERE id = ?', [id]); keptPlace = Number(d.days) < PAUSE_KEEPS_PLACE_DAYS;
+      await conn.query(`UPDATE parcels SET paused_at = NULL, pause_reminded_at = NULL${keptPlace ? '' : ', requested_at = NOW(3)'} WHERE id = ?`, [id]);          // paused for a month or more: it goes to the end of the queue
+      await audit(conn, req.account.id, 'parcel.resume', 'parcel', id, { keptPlace });
+    });
+    const [[q]] = await pool.query('SELECT id, status, requested_at, paused_at FROM parcels WHERE id = ?', [id]);
+    res.json({ ok: true, keptPlace, queuePosition: await queuePosition(pool, q) });
+  }));
+
+  // CANCELLED ORDERS AND ITEMS — the ones the GOM cancelled ("could not go ahead"): shown at the top of My orders for CANCEL_NOTICE_DAYS days, unless the person says "Got it". One notice per cancelled claim; grouped here by what was cancelled.
+  app.get('/api/my/cancelled', auth, wrap(async (req, res) => {
+    const scope = await scopeOf(req), ids = scope.joiners.map((j) => j.id); if (!ids.length) return res.json({ notices: [], days: CANCEL_NOTICE_DAYS });
+    const [rows] = await pool.query(`SELECT n.id, n.kind, n.order_id AS orderId, n.order_title AS orderTitle, n.item_id AS itemId, n.item_title AS itemTitle, n.label, n.refunded, n.forfeited, n.cancelled_at AS cancelledAt, TIMESTAMPDIFF(DAY, n.cancelled_at, NOW(3)) AS daysAgo, j.instagram_handle AS handle
+                                       FROM cancel_notices n JOIN joiners j ON j.id = n.joiner_id WHERE n.joiner_id IN (?) AND n.dismissed_at IS NULL AND n.cancelled_at >= NOW(3) - INTERVAL ? DAY ORDER BY n.cancelled_at DESC, n.id`, [ids, CANCEL_NOTICE_DAYS]);
+    const groups = new Map();
+    for (const r of rows) {
+      const key = `${r.kind}:${r.kind === 'order' ? r.orderId : r.itemId}`; if (!groups.has(key)) groups.set(key, { key, kind: r.kind, title: r.kind === 'order' ? r.orderTitle : r.itemTitle, orderTitle: r.orderTitle, cancelledAt: new Date(r.cancelledAt).toISOString(), daysAgo: Number(r.daysAgo), ids: [], claims: [] });
+      const g = groups.get(key); g.ids.push(r.id); g.claims.push({ id: r.id, label: r.label, handle: r.handle, refunded: r.refunded === null ? null : Number(r.refunded), forfeited: r.forfeited === null ? null : Number(r.forfeited) });
+    }
+    res.json({ notices: [...groups.values()], days: CANCEL_NOTICE_DAYS });
+  }));
+  app.post('/api/my/cancelled/dismiss', auth, wrap(async (req, res) => {
+    const b = z.object({ ids: z.array(z.number().int().positive()).min(1).max(200) }).parse(req.body); const scope = await scopeOf(req), mine = scope.joiners.map((j) => j.id);
+    const [r] = mine.length ? await pool.query('UPDATE cancel_notices SET dismissed_at = NOW(3) WHERE id IN (?) AND joiner_id IN (?) AND dismissed_at IS NULL', [b.ids, mine]) : [{ affectedRows: 0 }];          // only their own
+    res.json({ ok: true, dismissed: r.affectedRows });
+  }));
+
   app.get('/api/my/parcels', auth, wrap(async (req, res) => {
     const scope = await scopeOf(req), mine_ids = new Set(scope.joiners.map((j) => j.id)), idList = [...mine_ids];
     const [parcels] = await pool.query(
-      `SELECT p.id, p.joiner_id AS ownerId, jo.instagram_handle AS ownerHandle, p.method, CASE WHEN p.status IN ('shipped', 'received') THEN p.tracking_no END AS trackingNo, p.status, p.requested_at, p.lomo_name AS ownLomoName, p.lomo_source AS ownLomoSource, p.fee_split,
+      `SELECT p.id, p.joiner_id AS ownerId, jo.instagram_handle AS ownerHandle, p.method, CASE WHEN p.status IN ('shipped', 'received') THEN p.tracking_no END AS trackingNo, p.status, p.requested_at, p.paused_at, TIMESTAMPDIFF(DAY, p.paused_at, NOW(3)) AS pausedDays, p.lomo_name AS ownLomoName, p.lomo_source AS ownLomoSource, p.fee_split,
               p.doms_total AS domsTotal, p.packaging_total AS packagingTotal, p.packed_date AS packedDate, p.shipped_date AS shippedDate, p.received_date AS receivedDate
          FROM parcels p JOIN joiners jo ON jo.id = p.joiner_id
         WHERE p.status <> 'cancelled' AND (p.joiner_id IN (?) OR EXISTS (SELECT 1 FROM parcel_companions pc WHERE pc.parcel_id = p.id AND pc.joiner_id IN (?) AND pc.status = 'accepted')) ORDER BY p.id DESC`, [idList, idList]);
@@ -342,6 +397,8 @@ export function meRoutes(app, { pool }) {
     for (const p of parcels) {
       const mine = mine_ids.has(p.ownerId), all = items.filter((i) => i.parcel_id === p.id), cs = comps.filter((c) => c.parcelId === p.id);
       p.queuePosition = await queuePosition(pool, p); p.trackingUrl = trackingUrl(p.method, p.trackingNo);
+      p.paused = !!p.paused_at; p.pausedAt = p.paused_at ? new Date(p.paused_at).toISOString() : null; delete p.paused_at; p.pausedDays = p.paused ? Number(p.pausedDays) : null;
+      p.canPause = mine && p.status === 'requested' && !p.paused; p.canResume = mine && p.paused; p.resumeKeepsPlace = p.paused ? p.pausedDays < PAUSE_KEEPS_PLACE_DAYS : null; p.keepsPlaceDays = PAUSE_KEEPS_PLACE_DAYS;          // only the person it's posted to can pause or resume it
       p.canAddItems = (mine || cs.some((c) => mine_ids.has(c.joinerId) && c.status === 'accepted')) && p.status === 'requested';      // more of your items can be added until it is packed — by the person it's posted to, or a friend who has joined it
       p.items = all.map((i) => ({ claimId: i.claimId, label: i.label, mine: mine_ids.has(i.ownerId), owner: i.owner }));
       p.myDoms = Math.round(all.filter((i) => mine_ids.has(i.ownerId)).reduce((s, i) => s + Number(i.doms), 0) * 100) / 100;
@@ -412,22 +469,22 @@ export function meRoutes(app, { pool }) {
   }));
 
   // Email notifications are OFF until the person turns them on. One setting per account (all the handles linked to it).
-  const eventsOut = (offStr) => { const off = offSet(offStr); return NOTIFY_EVENTS.map((e) => ({ ...e, enabled: !off.has(e.key) })); };
+  const eventsOut = (offStr, optStr) => { const off = offSet(offStr), opt = offSet(optStr); return NOTIFY_EVENTS.map((e) => ({ ...e, enabled: e.optIn ? opt.has(e.key) : !off.has(e.key) })); };          // an opt-in kind is on only if they switched it on
   app.get('/api/my/notifications', auth, wrap(async (req, res) => {
-    const [[a]] = await pool.query('SELECT email, notify_email, notify_off FROM accounts WHERE id = ?', [req.account.id]);
-    res.json({ enabled: !!a.notify_email, email: a.email, events: eventsOut(a.notify_off) });
+    const [[a]] = await pool.query('SELECT email, notify_email, notify_off, notify_optin FROM accounts WHERE id = ?', [req.account.id]);
+    res.json({ enabled: !!a.notify_email, email: a.email, events: eventsOut(a.notify_off, a.notify_optin) });
   }));
   // `enabled` is the master switch; `events` switches individual kinds of email on/off ({ parcelShipped: false }). Either or both can be sent.
   app.put('/api/my/notifications', auth, wrap(async (req, res) => {
     const b = z.object({ enabled: z.boolean().optional(), events: z.record(z.string(), z.boolean()).optional() }).refine((x) => x.enabled !== undefined || x.events, 'Nothing to change').parse(req.body);
     for (const k of Object.keys(b.events || {})) if (!EVENT_KEYS.includes(k)) throw bad(`Unknown kind of email: ${k}`, 'unknown_event');
     await withTx(pool, async (conn) => {
-      const [[a]] = await conn.query('SELECT notify_off FROM accounts WHERE id = ? FOR UPDATE', [req.account.id]);
-      const off = offSet(a.notify_off);
-      for (const [k, on] of Object.entries(b.events || {})) on ? off.delete(k) : off.add(k);
-      await conn.query('UPDATE accounts SET notify_email = COALESCE(?, notify_email), notify_off = ? WHERE id = ?', [b.enabled === undefined ? null : (b.enabled ? 1 : 0), offString(off), req.account.id]);
+      const [[a]] = await conn.query('SELECT notify_off, notify_optin FROM accounts WHERE id = ? FOR UPDATE', [req.account.id]);
+      const off = offSet(a.notify_off), opt = offSet(a.notify_optin);
+      for (const [k, on] of Object.entries(b.events || {})) { if (NOTIFY_EVENTS.find((e) => e.key === k).optIn) (on ? opt.add(k) : opt.delete(k)); else (on ? off.delete(k) : off.add(k)); }
+      await conn.query('UPDATE accounts SET notify_email = COALESCE(?, notify_email), notify_off = ?, notify_optin = ? WHERE id = ?', [b.enabled === undefined ? null : (b.enabled ? 1 : 0), offString(off), optInString(opt), req.account.id]);
     });
-    const [[a]] = await pool.query('SELECT notify_email, notify_off FROM accounts WHERE id = ?', [req.account.id]);
-    res.json({ ok: true, enabled: !!a.notify_email, events: eventsOut(a.notify_off) });
+    const [[a]] = await pool.query('SELECT notify_email, notify_off, notify_optin FROM accounts WHERE id = ?', [req.account.id]);
+    res.json({ ok: true, enabled: !!a.notify_email, events: eventsOut(a.notify_off, a.notify_optin) });
   }));
 }

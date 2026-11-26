@@ -3,12 +3,15 @@ import { round2, splitAmount } from './money.js';
 import { lockJoiner, sweepCredit, reduceCost } from './ledger.js';
 import { SIZE_WEIGHTS } from './box.js';
 
-// 1-based place in the packing queue: oldest request first, ties broken by id.
+// A paused request keeps its place in the queue if it is resumed within this many days; after that it goes to the end. It is also when the reminder email is sent.
+export const PAUSE_KEEPS_PLACE_DAYS = 30;
+
+// 1-based place in the packing queue: oldest request first, ties broken by id. A PAUSED request is not in the queue (no place, and it doesn't count for the people behind it).
 export async function queuePosition(conn, parcel) {
-  if (parcel.status !== 'requested') return null;
+  if (parcel.status !== 'requested' || parcel.paused_at) return null;
   const [[r]] = await conn.query(
     `SELECT COUNT(*) AS ahead FROM parcels
-      WHERE status = 'requested' AND (requested_at < ? OR (requested_at = ? AND id < ?))`,
+      WHERE status = 'requested' AND paused_at IS NULL AND (requested_at < ? OR (requested_at = ? AND id < ?))`,
     [parcel.requested_at, parcel.requested_at, parcel.id]);
   return r.ahead + 1;
 }

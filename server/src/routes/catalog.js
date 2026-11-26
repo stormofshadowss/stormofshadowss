@@ -156,7 +156,8 @@ export function catalogRoutes(app, { pool, cfg }) {
       await audit(conn, req.account.id, `${what}.cancel`, what, id, { claims: r.claims, people: r.people, credit: r.credit, forfeited: r.forfeited });
       return r;
     });
-    res.json({ ok: true, ...out });
+    const { noticeIds, ...rest } = out; req.app.locals.notifier.orderCancelled(noticeIds);                       // an email to those who have switched that kind on
+    res.json({ ok: true, ...rest });
   });
   app.post('/api/admin/orders/:id/cancel', requireAdmin, doCancel('order'));
   app.post('/api/admin/items/:id/cancel', requireAdmin, doCancel('item'));

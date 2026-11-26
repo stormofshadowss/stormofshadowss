@@ -42,6 +42,7 @@ export function loadConfig(overrides = {}) {
       claimsPer10MinPerIp: Number(e.RATE_CLAIMS_PER_10MIN || 60),
       apiPerMinutePerIp: Number(e.RATE_API_PER_MIN || 600),
       adminLoginPer15MinPerIp: Number(e.RATE_ADMIN_LOGIN_PER_15MIN || 20),
+      joinerLoginPer15MinPerIp: Number(e.RATE_JOINER_LOGIN_PER_15MIN || 30),          // joiners' password sign-in (a household or a phone network can share one address, so this is a little looser than the admin's)
     },
     mail: {
       // smtp = send for real · console = print links to the container log · memory = tests

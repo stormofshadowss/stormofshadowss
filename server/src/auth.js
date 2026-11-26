@@ -60,14 +60,14 @@ export async function startAdminSession(pool, cfg, accountId, req) {
   return token;
 }
 
-export async function startSession(pool, cfg, email, req) {
+export async function startSession(pool, cfg, email, req, via = 'link') {
   const [acc] = await pool.query(
     'INSERT INTO accounts (email, last_login_at) VALUES (?, NOW(3)) ON DUPLICATE KEY UPDATE last_login_at = NOW(3), id = LAST_INSERT_ID(id)', [email]);
   const accountId = acc.insertId;
   const token = newToken();
   await pool.query(
-    'INSERT INTO sessions (account_id, token_hash, user_agent, ip, expires_at) VALUES (?, ?, ?, ?, NOW(3) + INTERVAL ? DAY)',
-    [accountId, sha256(token), String(req.get('user-agent') || '').slice(0, 255), req.ip || null, cfg.sessionDays]);
+    'INSERT INTO sessions (account_id, token_hash, user_agent, ip, expires_at, via) VALUES (?, ?, ?, ?, NOW(3) + INTERVAL ? DAY, ?)',
+    [accountId, sha256(token), String(req.get('user-agent') || '').slice(0, 255), req.ip || null, cfg.sessionDays, via]);
   return { token, accountId };
 }
 
@@ -83,12 +83,12 @@ export function attachAccount(pool, cfg) {
       const token = parseCookies(req.headers.cookie)[COOKIE];
       if (token) {
         const [rows] = await pool.query(
-          `SELECT s.id AS sid, s.last_seen_at, a.id, a.email, a.is_admin, a.username FROM sessions s
+          `SELECT s.id AS sid, s.last_seen_at, s.via, a.id, a.email, a.is_admin, a.username FROM sessions s
              JOIN accounts a ON a.id = s.account_id
             WHERE s.token_hash = ? AND s.expires_at > NOW(3)`, [sha256(token)]);
         if (rows[0]) {
           req.account = { id: rows[0].id, email: rows[0].email, isAdmin: !!rows[0].is_admin, username: rows[0].username || null };
-          req.sessionId = rows[0].sid;
+          req.sessionId = rows[0].sid; req.sessionVia = rows[0].via;
           pool.query('UPDATE sessions SET last_seen_at = NOW(3) WHERE id = ? AND last_seen_at < NOW(3) - INTERVAL 1 HOUR', [rows[0].sid]).catch(() => {});
         }
       }

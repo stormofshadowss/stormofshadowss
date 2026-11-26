@@ -26,7 +26,7 @@
 
   // ── request shipping + your parcels ──
   const STATUS = {
-    requested: (p) => `In the queue — number ${p.queuePosition}`, packed: () => 'Packed', shipped: () => 'On its way',
+    requested: (p) => (p.paused ? 'Paused — not in the queue' : `In the queue — number ${p.queuePosition}`), packed: () => 'Packed', shipped: () => 'On its way',
     received: (p) => `Received ${fmtDate(p.receivedDate)}`,
   };
   // What this parcel looks like when it's shared with friends (one parcel, one address; fees split between everyone).
@@ -66,6 +66,14 @@
       <p class="sub" style="margin:0 0 6px">You've already asked for ${open.length === 1 ? 'a parcel' : 'parcels'} to be packed. Got more ready? Add ${ready.length === 1 ? 'it' : 'them'} here <strong>instead of requesting a new package</strong> — it saves postage, and you can add right up until it's packed.</p>
       ${open.map((p) => `<div data-add-parcel="${p.id}" style="margin-top:12px"><strong>Parcel #${p.id}</strong> <span class="pill">${STATUS[p.status](p)}</span>${addMoreHtml(S, p)}</div>`).join('')}</div>`;
   };
+  // PAUSE a request you're waiting to add more items to (it leaves the queue, its items stay); RESUME it when you're ready. Only the person it's posted to; a friend who joined it just sees that it's paused.
+  const pauseHtml = (p) => {
+    const days = p.pausedDays === 0 ? 'today' : `${p.pausedDays} day${p.pausedDays === 1 ? '' : 's'} ago`, keep = p.keepsPlaceDays || 30;
+    if (p.canResume) return `<div class="sub" data-paused-note style="margin-top:6px">Paused since ${days} — it isn't being packed. You can still add items to it. ${p.resumeKeepsPlace ? `Resume it within ${keep} days to keep its place in the queue.` : `It has been paused for ${keep} days or more, so if you resume it now it will join the end of the queue.`} <button type="button" class="sm" data-act="resume" data-id="${p.id}" data-keeps="${p.resumeKeepsPlace ? 1 : 0}">Resume</button></div>`;
+    if (p.paused) return `<div class="sub" data-paused-note style="margin-top:6px">@${esc(p.recipient)} has paused this parcel — it'll go back in the queue when they resume it.</div>`;
+    if (p.canPause) return `<div style="margin-top:6px"><button type="button" class="sm secondary" data-act="pause" data-id="${p.id}" data-days="${keep}">Pause this request</button> <span class="sub">Waiting for more items? Pause it and it won't be packed until you resume it.</span></div>`;
+    return '';
+  };
   const parcelsHtml = (S) => S.parcels.length ? `<div class="card"><h2>Your parcels</h2>${S.parcels.map((p) => {
     const active = p.shared?.active, mineItems = p.items.filter((i) => i.mine);
     const owners = [...new Set(p.items.filter((i) => !i.mine).map((i) => i.owner))];
@@ -75,7 +83,7 @@
       <div class="sub">${active ? `Your items: ${mineItems.map((i) => esc(i.label)).join(', ')}${owners.map((o) => ` · @${esc(o)}'s items: ${p.items.filter((i) => i.owner === o).map((i) => esc(i.label)).join(', ')}`).join('')}` : p.items.map((i) => esc(i.label)).join(', ')} · ${esc(p.method)}</div>
       ${feeBits.length ? `<div class="sub" data-fees>${active ? 'Your share — ' : ''}${feeBits.join(' · ')}${active ? ` <span class="muted">(${splitWords(p)})</span>` : ''}</div>` : ''}
       ${p.trackingNo ? `<div class="sub" data-tracking>Tracking: <strong data-tracking-no>${esc(p.trackingNo)}</strong> <button type="button" class="sm secondary" data-act="copy-tracking" data-no="${esc(p.trackingNo)}">Copy</button>${p.trackingUrl ? ` <a href="${esc(p.trackingUrl)}" target="_blank" rel="noopener noreferrer">Track it ↗</a>` : ''}</div>` : ''}
-      ${p.lomoName ? `<div class="sub">Personalised Lomo: ${esc(p.lomoName)}</div>` : ''}${shareHtml(p)}</div>
+      ${p.lomoName ? `<div class="sub">Personalised Lomo: ${esc(p.lomoName)}</div>` : ''}${shareHtml(p)}${pauseHtml(p)}</div>
       ${p.status === 'shipped' && p.canConfirm ? `<button data-act="received" data-id="${p.id}">It's arrived${active ? ' — confirms it for everyone' : ' — mark as received'}</button>` : ''}</div>`;
   }).join('')}</div>` : '';
 
@@ -134,16 +142,18 @@
       if (sel) { for (const c of sel.closest('form').querySelectorAll('input[name="claim"]')) c.checked = sel.dataset.act === 'ship-all'; return; }
       const copy = e.target.closest('[data-act="copy-tracking"]');
       if (copy) { try { await navigator.clipboard.writeText(copy.dataset.no); SITE.toast('Tracking number copied.'); } catch { SITE.toast(`Tracking number: ${copy.dataset.no}`); } return; }
-      const b = e.target.closest('[data-act]'); if (!b || !['decline', 'withdraw', 'leave'].includes(b.dataset.act)) return;
+      const b = e.target.closest('[data-act]'); if (!b || !['decline', 'withdraw', 'leave', 'pause', 'resume'].includes(b.dataset.act)) return;
       const id = b.dataset.id, ask = {
         decline: [`Say no to sharing with @${b.dataset.from}?\n\nTheir parcel will be posted on its own.`, 'No thanks', 'POST', `/api/my/parcels/${id}/companion/decline`, 'You said no.'],
         withdraw: [`Take this back?\n\n@${b.dataset.friend} won't be asked to share this parcel any more.`, 'Yes, take it back', 'DELETE', `/api/my/parcels/${id}/companion?friend=${encodeURIComponent(b.dataset.friend)}`, 'Done.'],
         leave: ['Take your items out of this parcel?\n\nThey go back to "ready to ship", and the parcel is posted without them.', 'Take them out', 'POST', `/api/my/parcels/${id}/companion/leave`, 'Your items are out of the parcel.'],
+        pause: [`Pause this request?\n\nIt leaves the queue, so it won't be packed — but your items stay on it and you can still add more. Resume it whenever you're ready: within ${b.dataset.days || 30} days it keeps its place in the queue, after that it goes to the end.`, 'Pause it', 'POST', `/api/my/parcels/${id}/pause`, 'Paused. Resume it whenever you like.'],
+        resume: [b.dataset.keeps === '1' ? 'Resume this request?\n\nIt goes back to its original place in the queue.' : 'Resume this request?\n\nIt has been paused for a long time, so it will join the end of the queue.', 'Resume it', 'POST', `/api/my/parcels/${id}/resume`, (j) => (j.keptPlace ? `Back in the queue — number ${j.queuePosition}, its original place.` : `Back in the queue — number ${j.queuePosition}, at the end.`)],
       }[b.dataset.act];
       if (!(await SITE.confirm(ask[0], { ok: ask[1], cancel: 'Not yet' }))) return;
       const r = await S.api(ask[2], ask[3], ask[2] === 'POST' ? {} : undefined);
       if (!r.ok) return SITE.toast(errText(r), true);
-      await S.reload(); await SITE.views.ship(view); SITE.toast(ask[4]);
+      await S.reload(); await SITE.views.ship(view); SITE.toast(typeof ask[4] === 'function' ? ask[4](r.json) : ask[4]);
     };
     view.onsubmit = async (e) => {
       if (e.target.dataset.form === 'add-items') {                        // add more of your ready items to a request that isn't packed yet

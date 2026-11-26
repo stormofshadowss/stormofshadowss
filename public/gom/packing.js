@@ -1,7 +1,7 @@
 // Packing tab: the first-come-first-served queue, with everything you need to pack and post each parcel.
 (function () {
   const { esc, money, fmtDate, api, errText, $, $$ } = GOM;
-  const STATES = [['requested', 'Queue'], ['packed', 'Packed'], ['shipped', 'Shipped'], ['received', 'Received']];
+  const STATES = [['requested', 'Queue'], ['paused', 'Paused'], ['packed', 'Packed'], ['shipped', 'Shipped'], ['received', 'Received']];          // Paused: requests the joiner has parked while they wait for more items
   let root = null, parcels = [], counts = {}, status = 'requested';
   // "Show group order names": two group orders can have an item with the same name, and the group order says which stock to pick from. Hidden unless you tick it; remembered on this device.
   const KEY = 'sos_pack_order_names';
@@ -26,7 +26,7 @@
   const checkTotal = (p) => p.items.length + (p.lomoName ? 1 : 0) + (p.bias ? 1 : 0) + friends(p).reduce((n, f) => n + (f.lomoName ? 1 : 0) + (f.bias ? 1 : 0), 0);
   const checkDone = (p) => p.items.filter((i) => i.packed).length + (p.lomoName && p.lomoChecked ? 1 : 0) + (p.bias && p.biasChecked ? 1 : 0)
     + friends(p).reduce((n, f) => n + (f.lomoName && f.lomoChecked ? 1 : 0) + (f.bias && f.biasChecked ? 1 : 0), 0);
-  const allTicked = (p) => checkDone(p) === checkTotal(p) && !waiting(p).length;
+  const allTicked = (p) => checkDone(p) === checkTotal(p) && !waiting(p).length && !p.paused;          // a PAUSED request can never be packed, whatever is ticked
   const tag = (p, i) => (friends(p).length ? ` <span class="sub">@${esc(i.owner)}</span>` : '') + (i.addedLater ? ' <span class="pill warn" data-added-later title="The person added this after asking for the parcel">added later</span>' : '');
   const fromOrder = (i) => (showOrders ? `<div class="sub" data-order-name style="margin:0 0 2px 26px">from ${esc(i.orderTitle || 'Shop (on hand)')}</div>` : '');
   const splitWords = (p) => (p.feeSplit?.mode === 'weight' ? "by the weight of each person's items" : 'equally per person');
@@ -61,8 +61,9 @@
     const fr = friends(p), wt = waiting(p), dc = declined(p);
     const friendBits = fr.map((c) => `<div data-friend-details style="margin-top:6px"><strong>@${esc(c.handle)}'s details:</strong> ${[c.bias && `bias ${esc(c.bias)}`, c.lomoName && `Lomo ${esc(c.lomoName)} (${c.lomoSource === 'custom' ? 'a name they chose' : 'their delivery name'})`, c.notes && `notes: ${esc(c.notes)}`].filter(Boolean).join(' · ') || 'nothing extra'}</div>`).join('');
     return `<div class="card" data-parcel="${p.id}">
-      <div class="row"><div><strong>${p.status === 'requested' ? `#${p.queuePosition} in the queue · ` : ''}Parcel ${p.id} — @${esc(p.handle)}</strong>${fr.length ? ` <span class="pill" data-shared-pill>shared with ${fr.map((f) => `@${esc(f.handle)}`).join(', ')}</span>` : ''}${wt.length ? ` <span class="pill warn" data-invited-pill>invited ${wt.map((f) => `@${esc(f.handle)}`).join(', ')}</span>` : ''}
+      <div class="row"><div><strong>${p.status === 'requested' && !p.paused ? `#${p.queuePosition} in the queue · ` : ''}Parcel ${p.id} — @${esc(p.handle)}</strong>${p.paused ? ` <span class="pill warn" data-paused-pill>Paused${p.pausedDays ? ` ${p.pausedDays} day${p.pausedDays === 1 ? '' : 's'}` : ' today'}</span>` : ''}${fr.length ? ` <span class="pill" data-shared-pill>shared with ${fr.map((f) => `@${esc(f.handle)}`).join(', ')}</span>` : ''}${wt.length ? ` <span class="pill warn" data-invited-pill>invited ${wt.map((f) => `@${esc(f.handle)}`).join(', ')}</span>` : ''}
         ${p.handleVerified ? '' : ` <span class="pill warn">not checked yet</span> <button class="sm secondary" data-act="verify" data-handle="${esc(p.handle)}">Mark as checked</button>`}
+        ${p.paused ? '<div class="sub" data-paused-note style="margin-top:4px"><strong>Paused by the joiner</strong> — they are waiting for more items. It is not in the queue and can\'t be packed until they resume it. They can still add items.</div>' : ''}
         <div class="sub">Requested ${when(p.requestedAt)} · ${esc(p.method)}${p.declaredValue ? ` · declared ${p.declaredValue === 'true' ? 'true value' : 'reduced value'}` : ''}</div>
         ${owingBanner(p)}
         ${fr.length ? `<div class="sub" data-share-line>One parcel to @${esc(p.handle)}'s address, with ${fr.map((f) => `@${esc(f.handle)}'s`).join(' and ')} items${fr.length === 1 ? ` (${HOW[fr[0].how]})` : ''}. Postage and packaging are split ${splitWords(p)}.</div>` : ''}
@@ -120,7 +121,7 @@
         <p class="msg" data-msg hidden></p></form>
         ${splitBox}
         <div class="btn-row" style="align-items:center"><button data-act="packed" data-id="${p.id}" ${allTicked(p) ? '' : 'disabled'}>Mark packed</button><button class="secondary" data-act="cancel" data-id="${p.id}">Cancel parcel</button>${share}
-          <span class="sub" data-pack-hint ${allTicked(p) ? 'hidden' : ''}>${waiting(p).length ? `Waiting for ${names(waiting(p).map((f) => f.handle))} to answer the invitation${waiting(p).length === 1 ? '' : 's'} before this can be packed.` : 'Tick everything on the checklist to enable Mark packed.'}</span></div>`;
+          <span class="sub" data-pack-hint ${allTicked(p) ? 'hidden' : ''}>${p.paused ? 'This request is paused — it can\'t be packed until the joiner resumes it.' : waiting(p).length ? `Waiting for ${names(waiting(p).map((f) => f.handle))} to answer the invitation${waiting(p).length === 1 ? '' : 's'} before this can be packed.` : 'Tick everything on the checklist to enable Mark packed.'}</span></div>`;
     }
     const next = { packed: ['shipped', 'Mark shipped'], shipped: ['received', 'Mark received (on their behalf)'] }[p.status];
     // One tracking number per parcel: typed here when you mark it shipped (it goes with the button), or added / fixed afterwards. Joiners see it once it is shipped; nothing is emailed.
@@ -133,7 +134,7 @@
     root.innerHTML = `<h1 style="margin:18px 0 10px">Packing</h1>
       <div class="btn-row" style="margin:0 0 12px; align-items:center">${STATES.map(([s, l]) => `<button class="sm ${status === s ? '' : 'secondary'}" data-act="status" data-status="${s}">${l} (${counts[s] ?? 0})</button>`).join('')}<label class="chk" style="margin:0 0 0 auto" title="Shows which group order each item comes from — handy when two group orders have an item with the same name"><input type="checkbox" data-act="toggle-orders" ${showOrders ? 'checked' : ''}> Show group order names</label></div>
       <div class="btn-row" style="margin:0 0 12px; align-items:center"><input id="packSearch" type="search" placeholder="Search parcel #, person or tracking number" value="${esc(search)}" style="max-width:320px">${search ? '<span class="sub" data-search-note>Every parcel matching your search, whatever its status.</span>' : ''}</div>
-      ${parcels.length ? parcels.map(card).join('') : `<div class="card"><p class="muted">${search ? 'No parcel matches that.' : status === 'requested' ? 'The queue is empty.' : 'Nothing here.'}</p></div>`}`;
+      ${parcels.length ? parcels.map(card).join('') : `<div class="card"><p class="muted">${search ? 'No parcel matches that.' : status === 'requested' ? 'The queue is empty.' : status === 'paused' ? 'No requests are paused right now.' : 'Nothing here.'}</p></div>`}`;
   }
 
   // Reads the two fee boxes of a parcel's form. blank = left alone; returns { values, error }.

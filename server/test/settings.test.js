@@ -146,14 +146,14 @@ test('SHIPPING DEFAULTS: saved per handle, trimmed, cleared by saving blanks, an
 // ───────────── choosing which emails to get ─────────────
 test('CHOOSING WHICH EMAILS: every kind is listed and on by default; each can be switched off on its own; the master switch keeps your choices; nonsense is refused', async () => {
   const p = await person(); const get = async () => (await api('GET', '/api/my/notifications', undefined, p.cookie)).json;
-  const g = await get(); assert.deepEqual(g.events.map((e) => e.key), EVENT_KEYS); assert.deepEqual(g.events.map((e) => e.label), NOTIFY_EVENTS.map((e) => e.label)); assert.ok(g.events.every((e) => e.enabled));
+  const g = await get(); assert.deepEqual(g.events.map((e) => e.key), EVENT_KEYS); assert.deepEqual(g.events.map((e) => e.label), NOTIFY_EVENTS.map((e) => e.label)); assert.deepEqual(g.events.filter((e) => !e.enabled).map((e) => e.key), ['orderCancelled'], 'every kind is on — except the opt-in one, which is off until they ask'); assert.deepEqual(g.events.filter((e) => e.optIn).map((e) => e.key), ['orderCancelled']);
   await api('PUT', '/api/my/notifications', { enabled: true }, p.cookie);
   const off = await api('PUT', '/api/my/notifications', { events: { parcelShipped: false, overdue: false } }, p.cookie);
-  assert.deepEqual([off.status, off.json.enabled, off.json.events.filter((e) => !e.enabled).map((e) => e.key)], [200, true, ['parcelShipped', 'overdue']]);
+  assert.deepEqual([off.status, off.json.enabled, off.json.events.filter((e) => !e.enabled).map((e) => e.key)], [200, true, ['parcelShipped', 'overdue', 'orderCancelled']]);
   await api('PUT', '/api/my/notifications', { events: { parcelShipped: true } }, p.cookie);
-  assert.deepEqual((await get()).events.filter((e) => !e.enabled).map((e) => e.key), ['overdue']);
+  assert.deepEqual((await get()).events.filter((e) => !e.enabled).map((e) => e.key), ['overdue', 'orderCancelled']);
   const master = await api('PUT', '/api/my/notifications', { enabled: false }, p.cookie); assert.equal(master.json.enabled, false);
-  assert.deepEqual((await get()).events.filter((e) => !e.enabled).map((e) => e.key), ['overdue'], 'turning everything off and on again remembers the individual choices');
+  assert.deepEqual((await get()).events.filter((e) => !e.enabled).map((e) => e.key), ['overdue', 'orderCancelled'], 'turning everything off and on again remembers the individual choices');
   const unknown = await api('PUT', '/api/my/notifications', { events: { nonsense: false } }, p.cookie); assert.equal(unknown.status, 400); assert.equal(unknown.json.code, 'unknown_event');
   assert.equal((await api('PUT', '/api/my/notifications', {}, p.cookie)).status, 400); assert.equal((await api('PUT', '/api/my/notifications', { events: { overdue: 'no' } }, p.cookie)).status, 400);
   assert.equal((await app.api('PUT', '/api/my/notifications', { events: { overdue: false } })).status, 401);
@@ -181,10 +181,10 @@ test('EACH KIND OF EMAIL RESPECTS ITS SWITCH: confirmed claims, payment decision
 test('STRUCTURE: every email the system sends names its kind from the registry, and every kind in the registry is actually used — so a switch can never be a dead switch', () => {
   const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../src/lib/notify.js'), 'utf8');
   const calls = [...src.matchAll(/recipient\(([^)]*)\)/g)].map((m) => m[1]).filter((a) => a !== 'joinerId, event = null');
-  assert.equal(calls.length, 7, 'seven places send a kind of email');
+  assert.equal(calls.length, 10, 'ten places send a kind of email');
   const used = calls.map((a) => /'([A-Za-z]+)'/.exec(a)?.[1]);
   assert.ok(used.every((k) => EVENT_KEYS.includes(k)), `every call names a registered kind: ${used}`);
   assert.deepEqual([...new Set(used)].sort(), [...EVENT_KEYS].sort(), 'and every registered kind is used');
   const others = fs.readdirSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../src/routes')).map((f) => [f, fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../src/routes', f), 'utf8')]).filter(([, s]) => /mailer\.send/.test(s)).map(([f]) => f).sort();
-  assert.deepEqual(others, ['auth.js', 'invites.js', 'settings.js'], 'the only other emails are sign-in links, claim-your-orders links and the email-change link — never switchable');
+  assert.deepEqual(others, ['auth.js', 'invites.js', 'joiner-password.js', 'settings.js'], 'the only other emails are sign-in links, claim-your-orders links, the email-change link and the password-changed notice — never switchable');
 });
