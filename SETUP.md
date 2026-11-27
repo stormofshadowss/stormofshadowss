@@ -855,3 +855,12 @@ Nothing to run by hand — the database change applies when the site restarts. *
 - **Your existing sets:** when this update starts, each set where **everyone is paying the same price, and it isn't the item's current price**, remembers that price — so sets you fixed by hand at £10 stay at £10. A set where people pay different amounts is left alone (it follows the item, as before). Raffle wins, parts with their own price, TBC claims and cancelled claims aren't counted, and a share of an open part is taken off first.
 - **"To be confirmed" items:** if an item goes TBC after its sets were priced, those sets keep their price (an open part can still be split or filled); an item that *was* TBC and then gets a price never pins its sets at the hidden £0.
 - **A small accuracy fix:** when you change a price, the message now counts only the claims whose price **really moved** (before, it also counted claims that kept their own price).
+
+### The “In transit” card for joiners
+Nothing to run by hand. On a joiner's **dashboard (My orders)** there is now one card, **In transit**, that shows everything travelling in either direction:
+- **Parcels on their way to you** — the parcels you've shipped, exactly as before (with the **“It's arrived — mark as received”** button for the person it's posted to).
+- **Your items on their way to the GOM** — their items that are in a box you've marked **en route**, grouped by **group order**, **names only**, with a count when the same item appears more than once (*“Album (×2), Photocard”*). They disappear from the card when you mark the box as arrived. **Box tracking numbers are never shown** (they stay internal).
+- Each half appears **on its own**; when nothing is travelling there is **no card** at all. It sits above *What you owe*.
+- It **replaces the old “Parcels on their way” card on the dashboard only** — the **Ongoing orders** page keeps its own card as before.
+- **Several handles:** a person with more than one handle sees all their items together, each tagged with its handle. (While adding this I found that last update's **cancelled-orders card** only showed the *first* handle's notices for people with several handles, and “Got it” couldn't dismiss another handle's — both are fixed.)
+- **In “View as”** (People → look up) you see the same card — and **every button is dimmed and can't be clicked on purpose**, because that view is read-only. A dim “It's arrived” button there is not a fault.

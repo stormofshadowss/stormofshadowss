@@ -364,6 +364,21 @@ export function meRoutes(app, { pool }) {
     res.json({ ok: true, keptPlace, queuePosition: await queuePosition(pool, q) });
   }));
 
+  // THE JOINER'S ITEMS ON THEIR WAY TO THE GOM: confirmed claims whose box has been marked en route ('enroute to GOM'), grouped by group order, the same item twice shown as one with a count.
+  // Names only — a box's tracking number is internal and never shown to joiners. (Parcels the GOM has shipped TO them are in /api/my/parcels.)
+  app.get('/api/my/in-transit', auth, wrap(async (req, res) => {
+    const scope = await scopeOf(req), ids = scope.joiners.map((j) => j.id); if (!ids.length) return res.json({ toGom: [] });
+    const [rows] = await pool.query(`SELECT c.id, c.label, c.order_id AS orderId, go.title AS orderTitle, j.instagram_handle AS handle
+                                       FROM claims c JOIN joiners j ON j.id = c.joiner_id LEFT JOIN group_orders go ON go.id = c.order_id
+                                      WHERE c.joiner_id IN (?) AND c.status = 'confirmed' AND c.pipeline = 'enroute to GOM' ORDER BY go.title, c.order_id, c.id`, [ids]);
+    const groups = new Map();
+    for (const r of rows) {
+      if (!groups.has(r.orderId)) groups.set(r.orderId, { orderId: r.orderId, orderTitle: r.orderTitle || 'Group order', items: new Map() });
+      const g = groups.get(r.orderId), key = `${r.handle}|${r.label}`; const it = g.items.get(key) || { label: r.label, handle: r.handle, count: 0 }; it.count += 1; g.items.set(key, it);
+    }
+    res.json({ toGom: [...groups.values()].map((g) => ({ ...g, items: [...g.items.values()] })) });
+  }));
+
   // CANCELLED ORDERS AND ITEMS — the ones the GOM cancelled ("could not go ahead"): shown at the top of My orders for CANCEL_NOTICE_DAYS days, unless the person says "Got it". One notice per cancelled claim; grouped here by what was cancelled.
   app.get('/api/my/cancelled', auth, wrap(async (req, res) => {
     const scope = await scopeOf(req), ids = scope.joiners.map((j) => j.id); if (!ids.length) return res.json({ notices: [], days: CANCEL_NOTICE_DAYS });

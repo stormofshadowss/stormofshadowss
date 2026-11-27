@@ -56,3 +56,11 @@ test('THE EMAIL SETTINGS: the new kind is listed, UNTICKED by default (the other
   assert.deepEqual(pg.qa('input[data-event]').filter((b) => !b.checked).map((b) => b.dataset.event), ['orderCancelled'], 'every other kind is ticked'); await pg.click(pg.q('#notifyToggle')); await sleep(300); await pg.settle(); assert.equal(box().checked, false, 'turning order emails on does not tick it'); assert.equal(box().disabled, false);
   await pg.click(box()); await sleep(300); await pg.settle(); assert.equal((await api('GET', '/api/my/notifications', undefined, p.cookie)).json.events.find((e) => e.key === 'orderCancelled').enabled, true, 'ticking it saved'); await pg.click(box()); await sleep(300); await pg.settle(); assert.equal((await api('GET', '/api/my/notifications', undefined, p.cookie)).json.events.find((e) => e.key === 'orderCancelled').enabled, false, 'and unticking it too'); assert.deepEqual([pg.errors], [[]]); pg.close();
 });
+
+test('A PERSON WITH TWO HANDLES sees the cancelled notices of BOTH (tagged with the handle), and "Got it" dismisses another handle\'s notice too', async () => {
+  const p = await person(), h2 = u('cs'); assert.equal((await api('POST', '/api/me/handles', { handle: h2 }, p.cookie)).status, 200);
+  const go = await order('Two handle cancelled order'), a = await item(go, 'First handle item'), b = await item(go, 'Second handle item'); await claim(p, a); await claimAndSecure(app, admin, h2, b.id); await cancel('order', go);
+  const pg = await page(p); const text = pg.text(card(pg)); assert.match(text, new RegExp(`@${p.handle} · .*First handle item`)); assert.match(text, new RegExp(`@${h2} · .*Second handle item`), 'the second handle\'s notice is there too');
+  await pg.click(pg.q('[data-act="cancel-notice-ok"]', rows(pg)[0])); await sleep(400); await pg.settle(); assert.equal(card(pg), null, 'one Got it clears the whole cancellation, for both handles'); assert.equal((await app.q('SELECT COUNT(*) AS n FROM cancel_notices WHERE dismissed_at IS NULL AND item_title IN (?, ?)', ['First handle item', 'Second handle item']))[0].n, 0, 'both are dismissed in the record'); pg.close();
+});
+

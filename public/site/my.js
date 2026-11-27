@@ -11,7 +11,7 @@
   S.say = (el, text, ok) => { if (!el) return; el.textContent = text; el.className = 'msg' + (ok ? ' ok' : ''); el.hidden = !text; };
   // A person with several handles sees them ALL together by default (S.handle === 'all'). The read-only lists and the combined payment can answer for all of them; anything else belongs to
   // ONE handle — the one it is about (pass it), or the first one for things that are per-person anyway (email choices, shipping defaults).
-  const ASKS_ALL = (method, path) => (method === 'GET' && ['/api/my/summary', '/api/my/parcels', '/api/my/payments'].includes(path.split('?')[0])) || (method === 'POST' && path.split('?')[0] === '/api/my/payments');
+  const ASKS_ALL = (method, path) => (method === 'GET' && ['/api/my/summary', '/api/my/parcels', '/api/my/payments', '/api/my/in-transit', '/api/my/cancelled'].includes(path.split('?')[0])) || (method === 'POST' && ['/api/my/payments', '/api/my/cancelled/dismiss'].includes(path.split('?')[0]));
   S.multi = () => S.handle === 'all' && S.handles.length > 1;
   S.handleFor = (method, path, explicit) => explicit || (S.handle === 'all' ? (ASKS_ALL(method, path) ? 'all' : S.primary) : S.handle);
   S.q = (path, handle) => `${path}${path.includes('?') ? '&' : '?'}handle=${encodeURIComponent(handle)}`;
@@ -35,13 +35,14 @@
     if (SITE.viewAs) { const b = $('.viewas-banner'); if (b) b.textContent = `Read-only view of ${S.me.account.email}${handles.length ? ` (${handles.map((h) => `@${h}`).join(', ')})` : ''} — exactly what they see. Nothing here can be changed.`; }
     if (handles.length > 1) { if (!S.handle || (S.handle !== 'all' && !handles.includes(S.handle))) S.handle = 'all'; }      // several handles: all together, until they choose one
     else S.handle = handles[0] || null;
-    S.summary = S.address = null; S.parcels = []; S.invites = []; S.fixed = { fixed: [], requests: [] }; S.cancelled = []; S.cancelledDays = 30;
+    S.summary = S.address = null; S.parcels = []; S.invites = []; S.fixed = { fixed: [], requests: [] }; S.cancelled = []; S.cancelledDays = 30; S.inTransit = [];
     { const nr = await S.api('GET', '/api/my/notifications'); if (nr.ok) S.notify = nr.json; }
     if (S.handle) {
-      const [s, a, p, f, cn] = await Promise.all([S.api('GET', '/api/my/summary'), S.api('GET', '/api/my/address'), S.api('GET', '/api/my/parcels'), S.api('GET', '/api/my/fixed'), S.api('GET', '/api/my/cancelled')]);
+      const [s, a, p, f, cn, tr] = await Promise.all([S.api('GET', '/api/my/summary'), S.api('GET', '/api/my/address'), S.api('GET', '/api/my/parcels'), S.api('GET', '/api/my/fixed'), S.api('GET', '/api/my/cancelled'), S.api('GET', '/api/my/in-transit')]);
       S.summary = s.ok ? s.json : null; S.address = a.json?.address || null; S.parcels = p.json?.parcels || []; S.invites = p.json?.invites || [];
       if (f.ok) S.fixed = f.json;
       if (cn.ok) { S.cancelled = cn.json.notices; S.cancelledDays = cn.json.days; }
+      if (tr.ok) S.inTransit = tr.json.toGom;
       if (S.handle === 'all') {                                                                  // fixed claims belong to a handle: gather them from every handle, each tagged
         const fs = await Promise.all(handles.map((h) => api('GET', `/api/my/fixed?handle=${encodeURIComponent(h)}`)));
         S.fixed = { fixed: fs.flatMap((r, i) => (r.json?.fixed || []).map((x) => ({ ...x, handle: handles[i] }))), requests: fs.flatMap((r, i) => (r.json?.requests || []).map((x) => ({ ...x, handle: handles[i] }))) };
@@ -87,7 +88,7 @@
       ${handles.length > 1 ? `<div class="card"><label for="sw">Viewing</label><select id="sw" data-act="switch"><option value="all" ${S.handle === 'all' ? 'selected' : ''}>All my handles</option>${handles.map((h) => `<option value="${esc(h)}" ${h === S.handle ? 'selected' : ''}>@${esc(h)}</option>`).join('')}</select></div>` : ''}
       ${late.length ? `<div class="card overdue-notice" data-overdue-notice role="alert"><strong>You have overdue payments</strong><div>${money(lateTotal)} is overdue across ${late.length} item${late.length === 1 ? '' : 's'} (${lateGos.slice(0, 3).map(esc).join(', ')}${lateGos.length > 3 ? ` and ${lateGos.length - 3} more` : ''}).</div><div class="btn-row" style="margin-top:10px"><a class="pillbtn" href="#/pay">Pay now</a><a class="pillbtn alt" href="#/ongoing">See which items</a></div></div>` : ''}
       ${S.invites.length ? `<div class="card" data-invite-notice style="background:var(--paper)"><strong>${S.invites.length === 1 ? `@${esc(S.invites[0].fromHandle)} has asked` : `${S.invites.length} people have asked`} to ship a parcel together with yours</strong><div class="sub">One parcel, one address — you choose which of your items go in. Nothing happens unless you say yes.</div><a class="pillbtn" href="#/ship" style="margin-top:8px">Have a look</a></div>` : ''}
-      ${cancelledHtml()}${shippedBanner()}${nudgeHtml()}
+      ${cancelledHtml()}${inTransitHtml()}${nudgeHtml()}
       ${sum ? `<div class="card"><h2>What you owe</h2><div class="tiles">${CATS.map(([k, n]) => tile(n, o[k])).join('')}${tile('Total to pay', o.total, 'total')}</div>
         ${S.multi() && sum.handles ? `<table class="grid" data-by-handle style="margin-top:10px"><thead><tr><th>Handle</th><th>Owes</th><th>Credit</th></tr></thead><tbody>${sum.handles.map((h) => `<tr><td>@${esc(h.handle)}</td><td>${money(h.owed)}</td><td>${money(h.credit)}</td></tr>`).join('')}</tbody></table>` : ''}
         ${sum.credit > 0 ? `<p class="sub">${S.multi() ? `You have ${money(sum.credit)} credit across your handles — it's shared: it's used automatically against what you owe, on any of them.` : `You have ${money(sum.credit)} credit on your account — it's used automatically against what you owe.`}</p>` : ''}</div>
@@ -162,10 +163,20 @@
       ${byGo.size ? [...byGo.entries()].map(([title, cs]) => goCard(title, cs)).join('')
       : `<div class="card"><p class="muted">${done ? 'Nothing has been received yet.' : 'No ongoing orders. <a href="#/completed">See completed orders</a>'}</p></div>`}`;
   }
-  function shippedBanner() {
+  // The parcels the GOM has shipped TO the person: one row each, with the "It's arrived" button for whoever it is posted to.
+  const parcelRows = (on) => on.map((p) => `<div class="itemrow"><div class="grow">Parcel #${p.id} <span class="sub">${p.items.map((i) => esc(i.label)).join(', ')}</span>${p.shared?.active ? `<div class="sub" data-shared-note>${p.canConfirm ? `Shared with ${p.shared.people.filter((x) => x.status === 'accepted').map((x) => `@${esc(x.handle)}`).join(', ')} — pressing the button confirms it for everyone.` : `Posted to @${esc(p.shared.people[0].handle)}'s address together with theirs. @${esc(p.shared.people[0].handle)} will confirm when it arrives.`}</div>` : ''}</div>${p.canConfirm ? `<button data-act="received" data-id="${p.id}">It's arrived — mark as received</button>` : ''}</div>`).join('');
+  function shippedBanner() {                                                                       // the Ongoing orders page keeps this card
     const on = S.parcels.filter((p) => p.status === 'shipped');
-    return on.length ? `<div class="card" data-parcels-card style="border:2px solid var(--accent)"><h2>Parcels on their way</h2>${on.map((p) => `<div class="itemrow"><div class="grow">Parcel #${p.id} <span class="sub">${p.items.map((i) => esc(i.label)).join(', ')}</span>${p.shared?.active ? `<div class="sub" data-shared-note>${p.canConfirm ? `Shared with ${p.shared.people.filter((x) => x.status === 'accepted').map((x) => `@${esc(x.handle)}`).join(', ')} — pressing the button confirms it for everyone.` : `Posted to @${esc(p.shared.people[0].handle)}'s address together with theirs. @${esc(p.shared.people[0].handle)} will confirm when it arrives.`}</div>` : ''}</div>${p.canConfirm ? `<button data-act="received" data-id="${p.id}">It's arrived — mark as received</button>` : ''}</div>`).join('')}</div>` : '';
+    return on.length ? `<div class="card" data-parcels-card style="border:2px solid var(--accent)"><h2>Parcels on their way</h2>${parcelRows(on)}</div>` : '';
   }
+  // IN TRANSIT, on the dashboard: parcels shipped to them, and their items on the way to the GOM (names only, grouped by group order). Nothing is shown when nothing is travelling.
+  const inTransitHtml = () => {
+    const on = S.parcels.filter((p) => p.status === 'shipped'), toGom = S.inTransit || [];
+    if (!on.length && !toGom.length) return '';
+    return `<div class="card" data-in-transit style="border:2px solid var(--accent)"><h2>In transit</h2>
+      ${on.length ? `<h3 data-to-you style="margin:12px 0 2px">Parcels on their way to you</h3>${parcelRows(on)}` : ''}
+      ${toGom.length ? `<h3 data-to-gom style="margin:12px 0 2px">Your items on their way to the GOM</h3>${toGom.map((g) => `<div class="itemrow" data-transit-group="${g.orderId}"><div class="grow"><strong>${esc(g.orderTitle)}</strong> <span class="sub">${g.items.map((i) => `${S.handle === 'all' ? `@${esc(i.handle)} · ` : ''}${esc(i.label)}${i.count > 1 ? ` (×${i.count})` : ''}`).join(', ')}</span></div></div>`).join('')}` : ''}</div>`;
+  };
   SITE.views.ongoing = async () => ordersList('ongoing');
   SITE.views.completed = async () => ordersList('completed');
 

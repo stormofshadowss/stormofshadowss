@@ -74,25 +74,25 @@ test('PACKING LIST: a thumbnail beside items that have a picture; tap it to open
   assert.deepEqual(p.errors, []); p.close();
 });
 
-test('MY ORDERS: parcels on their way are a card at the TOP (home page and Ongoing page), with the "It\'s arrived" button — not buried at the bottom; no card when nothing is on its way', async () => {
+test('MY ORDERS: parcels on their way are a card at the TOP — the "In transit" card on the home page, the "Parcels on their way" card on the Ongoing page — with the "It\'s arrived" button, not buried at the bottom; no card when nothing is on its way', async () => {
   const h = u('par'); const cookie = await joinerSession(app, `${h}@x.com`, h);
   await api('PUT', '/api/my/address', { fullName: 'Par Cel', address: '1 Road, Leeds', email: `${h}@x.com`, phone: '0700123456' }, cookie);
   const go = await order('Parcel card GO'); const it = await item(go, 'Parcel thing');
   const open = await openPage(app, '/my.html', { cookies: [cookie] }); await sleep(60); await open.settle();
-  assert.equal(open.q('[data-parcels-card]'), null, 'nothing on its way: no card'); open.close();
+  assert.deepEqual([open.q('[data-parcels-card]'), open.q('[data-in-transit]')], [null, null], 'nothing on its way: no card'); open.close();
   const [id] = await claimAndSecure(app, admin, h, it); await api('PATCH', `/api/admin/claims/${id}`, { pipeline: 'ready to pack / on hand' });
   const par = (await api('POST', '/api/my/parcels', { claimIds: [id], method: 'UK Royal Mail Tracked 48', addressConfirmed: true }, cookie)).json.id;
   await app.q("UPDATE parcels SET status = 'shipped', shipped_date = CURDATE() WHERE id = ?", [par]);
   const p = await openPage(app, '/my.html', { cookies: [cookie] }); await sleep(80); await p.settle();
-  const card = p.q('[data-parcels-card]'); assert.ok(card, 'the card is on the home page');
-  assert.match(p.text(card), /Parcels on their way.*Parcel thing.*It's arrived/s);
+  const card = p.q('[data-in-transit]'); assert.ok(card, 'the In transit card is on the home page'); assert.equal(p.q('[data-parcels-card]'), null, '(the home page has the In transit card instead of the old one)');
+  assert.match(p.text(card), /In transit.*Parcels on their way to you.*Parcel thing.*It's arrived/s);
   assert.match(card.getAttribute('style'), /border:2px solid var\(--accent\)/, 'it stands out');
   const owe = p.qa('.card').find((c) => /What you owe/.test(p.text(c)));
   if (owe) assert.ok(card.compareDocumentPosition(owe) & p.window.Node.DOCUMENT_POSITION_FOLLOWING, 'above the money, not below it');
   p.window.location.hash = '#/ongoing'; await sleep(60); await p.settle();
   const cards = p.qa('#view > .card'); assert.ok(cards[0].matches('[data-parcels-card]'), 'first thing on the Ongoing page');
-  assert.equal(p.qa('[data-parcels-card]').length, 1);
-  p.window.location.hash = '#/completed'; await sleep(60); await p.settle(); assert.equal(p.q('[data-parcels-card]'), null, 'not on the completed page');
+  assert.equal(p.qa('[data-parcels-card]').length, 1); assert.equal(p.q('[data-in-transit]'), null, 'the Ongoing page keeps its own card, not the In transit one');
+  p.window.location.hash = '#/completed'; await sleep(60); await p.settle(); assert.deepEqual([p.q('[data-parcels-card]'), p.q('[data-in-transit]')], [null, null], 'not on the completed page');
   assert.deepEqual(p.errors, []); p.close();
 });
 
