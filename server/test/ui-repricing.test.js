@@ -18,7 +18,9 @@ async function editPrice(p, go, item, price) {
   await p.click(p.q(`[data-act="open-items"][data-id="${go}"]`));
   await p.click(p.q(`[data-act="edit-item"][data-id="${item}"]`));
   const f = p.q(`form[data-form="edit-item"][data-id="${item}"]`);
-  p.fill(f, { price: String(price) }); await p.submit(f);
+  p.fill(f, { price: String(price) });
+  const radio = f.querySelector('input[name="priceScope"][value="all"]'); if (radio) radio.checked = true;          // an item that already has sets asks where the new price applies: these tests are about "everything not yet secured"
+  await p.submit(f);
 }
 
 test('GOM: the item form says what changing the price does, and the saved message says how many unsecured claims moved', async () => {

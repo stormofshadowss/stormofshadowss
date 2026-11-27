@@ -13,7 +13,15 @@
     const t = e.target;
     if (t.name !== 'priceTbc' || !t.form) return;
     const price = t.form.elements.price; price.disabled = t.checked; price.required = !t.checked; if (t.checked) price.value = '';
+    scopeChoice(t.form);
   });
+  document.addEventListener('input', (e) => { if (e.target.name === 'price' && e.target.form?.dataset.form === 'edit-item') scopeChoice(e.target.form); });
+  // An item that already has sets: once the price has really changed, ask where the new price applies (a set is bought at one price)
+  const scopeChoice = (form) => {
+    const box = form.querySelector('[data-price-scope]'); if (!box) return;
+    const price = form.elements.price, now = form.elements.priceTbc.checked, was = price.dataset.orig === '';
+    box.hidden = !(now !== was || (!now && Math.round(Number(price.value) * 100) !== Math.round(Number(price.dataset.orig) * 100)));
+  };
   const priceBody = (form) => (form.elements.priceTbc.checked ? { priceTbc: true } : { price: Number(val(form, 'price')) });
   let showNew = false, editingId = null, itemsFor = null, editingItem = null, fixedFor = null, fixedList = [], addItemOpen = false;
 
@@ -96,7 +104,10 @@
     if (editingItem === it.id) {
       return `<tr><td colspan="10"><form data-form="edit-item" data-id="${it.id}"><div class="formgrid">
         <div class="span2"><label>Title</label><input name="title" value="${esc(it.title)}" maxlength="160" required></div>
-        <div><label>Price (£)</label><input name="price" type="number" step="0.01" min="0" value="${it.priceTbc ? '' : it.price}" ${it.priceTbc ? 'disabled' : 'required'}><label class="chk" style="display:flex; margin-top:6px"><input type="checkbox" name="priceTbc" ${it.priceTbc ? 'checked' : ''}> Price to be confirmed (TBC)</label><div class="sub" data-price-note>Claims that haven't been secured yet will switch to the new price. Anything already secured keeps the price it was secured at. Tick TBC if the price isn't final yet: people can still claim, but nothing can be secured until you set a price.</div></div>
+        <div><label>Price (£)</label><input name="price" type="number" step="0.01" min="0" value="${it.priceTbc ? '' : it.price}" data-orig="${it.priceTbc ? '' : it.price}" ${it.priceTbc ? 'disabled' : 'required'}><label class="chk" style="display:flex; margin-top:6px"><input type="checkbox" name="priceTbc" ${it.priceTbc ? 'checked' : ''}> Price to be confirmed (TBC)</label><div class="sub" data-price-note>Claims that haven't been secured yet will switch to the new price. Anything already secured keeps the price it was secured at. Tick TBC if the price isn't final yet: people can still claim, but nothing can be secured until you set a price.</div>
+          ${it.type === 'set' && it.setCount > 0 ? `<div data-price-scope hidden style="margin-top:8px"><strong>This item already has ${it.setCount} set${it.setCount === 1 ? '' : 's'}. Apply the new price to:</strong>
+            <label class="chk" style="display:flex; margin-top:4px"><input type="radio" name="priceScope" value="newSets" checked> Only new sets — the ${it.setCount} already started keep their price (recommended)</label>
+            <label class="chk" style="display:flex"><input type="radio" name="priceScope" value="all"> Everything that isn't secured yet, including the sets already started</label></div>` : ''}</div>
         <div class="full"><label>Description (optional)</label><textarea name="description" rows="3" maxlength="2000" style="width:100%; padding:10px 12px; border:1.5px solid var(--line); border-radius:8px; font:inherit" placeholder="Anything joiners should know…">${esc(it.description || '')}</textarea></div>
         ${['independent', 'set'].includes(it.type) && it.members.length ? `<div class="full" data-members-edit><label>Member names${it.type === 'independent' ? ', prices and limits' : ' and prices'}</label>
           <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:8px">${it.members.map((m) => `<div style="display:flex; gap:6px"><input data-member-id="${m.id}" data-orig="${esc(m.name)}" data-orig-price="${m.ownPrice ?? ''}" value="${esc(m.name)}" maxlength="80" aria-label="Member name" style="flex:1; min-width:0"><input data-member-price type="number" step="0.01" min="0" inputmode="decimal" value="${m.ownPrice ?? ''}" placeholder="${it.priceTbc ? 'TBC' : money(it.price).replace('£', '')}" aria-label="Price (blank = the item's price)" style="width:84px">${it.type === 'independent' ? `<input data-member-limit type="number" min="1" max="9999" inputmode="numeric" value="${m.ownLimit ?? ''}" data-orig-limit="${m.ownLimit ?? ''}" placeholder="limit" aria-label="Limit for this member (blank = no number of its own)" style="width:72px">` : ''}</div>`).join('')}</div>
@@ -427,6 +438,7 @@
       GOM.toast(`Copied ${r.json.added} regular${r.json.added === 1 ? '' : 's'}.`);
       if (r.json.skipped.length) await GOM.alert(`Some weren't copied:\n\n${r.json.skipped.join('\n')}`);
     } else if (kind === 'edit-item') {
+      scopeChoice(form);                                                                                   // is the price different from what it was? then the choice must be showing
       if (!form.elements.priceTbc.checked && val(form, 'price') === '') return showMsg(form, 'Enter a price, or tick "price to be confirmed".');
       const renames = [], prices = [], memberLimits = [], variantLimits = [];
       for (const inp of $$('input[data-member-id]', form)) {
@@ -443,17 +455,19 @@
       }
       const r = await api('PATCH', `/api/admin/items/${form.dataset.id}`, {
         ...(renames.length ? { renameMembers: renames } : {}), ...(prices.length ? { memberPrices: prices } : {}), ...(memberLimits.length ? { memberLimits } : {}), ...(variantLimits.length ? { variantLimits } : {}),
-        title: val(form, 'title'), ...priceBody(form), description: val(form, 'description'), weightG: val(form, 'weightG') === '' ? null : Number(val(form, 'weightG')),
+        title: val(form, 'title'), ...priceBody(form), ...(form.querySelector('[data-price-scope]') && !form.querySelector('[data-price-scope]').hidden ? { priceScope: form.elements.priceScope.value } : {}), description: val(form, 'description'), weightG: val(form, 'weightG') === '' ? null : Number(val(form, 'weightG')),
         paymentDeadline: val(form, 'paymentDeadline') || null, closeDate: val(form, 'closeDate') || null, proxy: val(form, 'proxy') || null,
         noEms: form.elements.noEms.checked, noCustoms: form.elements.noCustoms.checked, hidden: form.elements.hidden.checked, noProxy: form.elements.noProxy.checked, purchaseLimit: val(form, 'purchaseLimit') === '' ? null : Number(val(form, 'purchaseLimit')), ...(form.elements.limitScope ? { limitScope: val(form, 'limitScope') } : {}),
       });
       if (!r.ok) return showMsg(form, errText(r));
+      const keptSets = form.querySelector('[data-price-scope]') && !form.querySelector('[data-price-scope]').hidden && form.elements.priceScope.value === 'newSets', wasPrice = form.elements.price.dataset.orig;
       editingItem = null; await reload(true);
       const n = r.json.repriced, mr = r.json.memberRepriced || 0, ren = r.json.renamed || [], mp = r.json.memberPriced || [];
       const changes = [...ren.map((c) => `“${c.from}” is now “${c.to}”${c.claims ? ` (${c.claims} claim${c.claims === 1 ? '' : 's'} updated)` : ''}`), ...mp.map((c) => `“${c.name}” is now ${c.to === null ? "the item's price" : money(c.to)}`)];
       const memberNote = mp.length && mr ? ` ${mr} unsecured claim${mr === 1 ? '' : 's'} now use${mr === 1 ? 's' : ''} it; secured claims keep theirs.` : '';
       const itemNote = !n ? '' : form.elements.priceTbc.checked ? ` ${n} unsecured claim${n === 1 ? ' is' : 's are'} now marked price TBC. Secured claims keep theirs.` : ` ${n} unsecured claim${n === 1 ? ' now uses' : 's now use'} the new price. Secured claims keep theirs.`;
-      GOM.toast(!changes.length && !n ? 'Saved.' : `Saved —${changes.length ? ` ${changes.join('; ')}.` : ''}${memberNote}${itemNote}`);
+      const setNote = keptSets && wasPrice !== '' ? ` Sets already started stay at ${money(Number(wasPrice))}; new sets use the new price.` : '';
+      GOM.toast(!changes.length && !n && !setNote ? 'Saved.' : `Saved —${changes.length ? ` ${changes.join('; ')}.` : ''}${memberNote}${itemNote}${setNote}`);
     }
   }
 

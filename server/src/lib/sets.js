@@ -35,10 +35,12 @@ export function planSetPlacement(itemMembers, members, together, held) {
 export async function placeSetParts(conn, { joinerId, item, qtyByMember, together, status = 'requested', fixed = false }) {
   const [members] = await conn.query('SELECT name, price FROM item_members WHERE item_id = ? ORDER BY sort_order, id', [item.id]);
   const order = members.map((m) => m.name);
-  const priceOf = Object.fromEntries(members.map((m) => [m.name, m.price ?? (item.price_tbc ? null : item.price)]));   // null = price still TBC
+  const own = Object.fromEntries(members.map((m) => [m.name, m.price]));
+  // What a part costs: its own price (a size / member price), else the price of the SET it lands in (a set is bought at one price), else the item's price. null = still TBC.
+  const priceFor = (member, set) => own[member] ?? (set.part_price !== null && set.part_price !== undefined ? Number(set.part_price) : item.price_tbc ? null : item.price);
   const list = order.flatMap((n) => Array(qtyByMember[n] || 0).fill(n));
 
-  const [sets] = await conn.query("SELECT id, set_number FROM item_sets WHERE item_id = ? AND admin_decision IN ('none', 'secured') ORDER BY set_number FOR UPDATE", [item.id]);
+  const [sets] = await conn.query("SELECT id, set_number, part_price FROM item_sets WHERE item_id = ? AND admin_decision IN ('none', 'secured') ORDER BY set_number FOR UPDATE", [item.id]);
   const [taken] = sets.length ? await conn.query('SELECT set_id, member_name FROM set_slots WHERE set_id IN (?)', [sets.map((s) => s.id)]) : [[]];
   const held = sets.map((s) => taken.filter((t) => t.set_id === s.id).map((t) => t.member_name));
   const plan = planSetPlacement(order, list, together, held);
@@ -50,19 +52,19 @@ export async function placeSetParts(conn, { joinerId, item, qtyByMember, togethe
   while (rows.length < need) {
     next += 1;
     const [r] = await conn.query('INSERT INTO item_sets (item_id, set_number) VALUES (?, ?)', [item.id, next]);
-    rows.push({ id: r.insertId, set_number: next });
+    rows.push({ id: r.insertId, set_number: next, part_price: null });
   }
 
   const placed = [];
   for (const { member, setIdx } of plan) {
-    const set = rows[setIdx];
+    const set = rows[setIdx], price = priceFor(member, set);
     const [slot] = await conn.query("INSERT INTO set_slots (set_id, member_name, joiner_id, state, is_fixed) VALUES (?, ?, ?, 'held', ?)", [set.id, member, joinerId, fixed ? 1 : 0]);
     const label = `${item.title} — ${member} (Set ${set.set_number})`;
     const [c] = await conn.query(
       `INSERT INTO claims (joiner_id, order_id, item_id, set_id, slot_id, label, member_name, size_bucket, status, is_fixed, price_tbc, keep_together)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, [joinerId, item.order_id, item.id, set.id, slot.insertId, label, member, item.size_bucket, status, fixed ? 1 : 0, priceOf[member] === null ? 1 : 0, together && list.length > 1 ? 1 : 0]);        // they asked to keep their parts in one set: never moved to fill a gap
-    await addClaimCosts(conn, c.insertId, priceOf[member] ?? 0);
-    placed.push({ claimId: c.insertId, itemId: item.id, member, setId: set.id, setNumber: set.set_number, label, price: priceOf[member] });
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, [joinerId, item.order_id, item.id, set.id, slot.insertId, label, member, item.size_bucket, status, fixed ? 1 : 0, price === null ? 1 : 0, together && list.length > 1 ? 1 : 0]);        // they asked to keep their parts in one set: never moved to fill a gap
+    await addClaimCosts(conn, c.insertId, price ?? 0);
+    placed.push({ claimId: c.insertId, itemId: item.id, member, setId: set.id, setNumber: set.set_number, label, price });
   }
   return placed;
 }

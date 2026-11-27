@@ -14,7 +14,7 @@ const pub = async (id) => (await app.api('GET', '/api/orders')).json.orders.flat
 const claimsOf = async (h) => (await api('GET', `/api/admin/claims?handle=${h}`)).json.claims;
 const claim = (handle, itemId, ...parts) => app.api('POST', '/api/claims', { handle, lines: [parts.length ? { itemId, parts: parts.map((member) => ({ member, qty: 1 })) } : { itemId }] }, undefined);
 const setsOf = async (item) => (await api('GET', '/api/admin/sets')).json.sets.filter((s) => s.itemId === item);
-const patch = (id, body) => api('PATCH', `/api/admin/items/${id}`, body);
+const patch = (id, body) => api('PATCH', `/api/admin/items/${id}`, { priceScope: 'all', ...body });          // an item with sets must say where a new price applies: these tests are about 'everything not secured yet'
 async function tbcSet(members = ['A', 'B', { name: 'Diary', price: 2 }]) { const go = await order(); return { go, item: (await mkItem(go, { type: 'set', priceTbc: true, members })).id }; }
 
 test('creating an item with its price TBC: no price needed; joiners are told it is TBC (never £0); all five item types allow it', async () => {
@@ -142,7 +142,7 @@ test('SETTING THE PRICE: every waiting claim picks it up, the TBC marks clear, a
   const { item } = await tbcSet(['A', 'B', { name: 'Diary', price: 2 }]); const [a, b] = [fresh(), fresh()];
   await claim(a, item, 'A', 'Diary'); await claim(b, item, 'B');
   const r = await patch(item, { price: 12 });
-  assert.deepEqual([r.status, r.json.repriced], [200, 3]);
+  assert.deepEqual([r.status, r.json.repriced], [200, 2], 'the claims on A and B moved; the one on Diary (its own £2) did not, so it is not counted');
   const it = await pub(item);
   assert.deepEqual([it.price, it.priceTbc, it.members.map((m) => m.price), it.wholeSetPrice], [12, false, [12, 12, 2], 26]);
   const rows = Object.fromEntries([...await claimsOf(a), ...await claimsOf(b)].map((c) => [c.label.replace(/^.* — /, '').replace(/ \(.*$/, ''), [c.priceTbc, c.costs.initials.cost]]));
@@ -169,7 +169,7 @@ test('putting a price BACK to TBC: waiting claims go back to TBC, secured ones k
   const [s1] = await setsOf(item); await api('POST', `/api/admin/sets/${s1.id}/secure`, {});          // set 1 secured at £10
   await claim(waiting, item, 'A', 'Diary');                                                           // set 2, still a request
   const r = await patch(item, { priceTbc: true });
-  assert.equal(r.json.repriced, 2);
+  assert.equal(r.json.repriced, 1, 'only the waiting A went back to TBC; Diary keeps its own price, so it is not counted');
   const lockedRows = await claimsOf(locked), waitingRows = Object.fromEntries((await claimsOf(waiting)).map((c) => [c.label.replace(/^.* — /, '').replace(/ \(.*$/, ''), [c.priceTbc, c.costs.initials.cost]]));
   assert.deepEqual(lockedRows.map((c) => [c.status, c.priceTbc]).sort(), [['confirmed', false], ['confirmed', false]], 'secured claims are untouched');
   assert.equal(lockedRows.find((c) => /A \(Set/.test(c.label)).costs.initials.cost, 10);

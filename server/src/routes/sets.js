@@ -37,7 +37,7 @@ export function setRoutes(app, { pool, notifier }) {
     if (req.query.order) { where.push('go.id = ?'); params.push(Number(req.query.order)); }
     if (req.query.decision) { where.push('s.admin_decision = ?'); params.push(String(req.query.decision)); }
     const [sets] = await pool.query(
-      `SELECT s.id, s.set_number AS number, s.admin_decision AS decision, i.id AS itemId, i.title AS itemTitle, i.price, i.price_tbc AS itemTbc, i.requires_full_set AS requiresFullSet,
+      `SELECT s.id, s.set_number AS number, s.admin_decision AS decision, s.part_price AS partPrice, i.id AS itemId, i.title AS itemTitle, i.price, i.price_tbc AS itemTbc, i.requires_full_set AS requiresFullSet,
               go.id AS orderId, go.title AS orderTitle
          FROM item_sets s JOIN items i ON i.id = s.item_id JOIN group_orders go ON go.id = i.order_id
         WHERE ${where.join(' AND ')} AND i.cancelled_at IS NULL AND go.cancelled_at IS NULL ORDER BY go.id, i.id, s.set_number`, params);
@@ -51,10 +51,10 @@ export function setRoutes(app, { pool, notifier }) {
       sets: sets.map((s) => {
         const parts = members.filter((m) => m.item_id === s.itemId).map((m) => {
           const slot = slots.find((x) => x.set_id === s.id && x.member_name === m.name);
-          return { member: m.name, price: m.price ?? (s.itemTbc ? null : s.price), priceTbc: !!slot?.tbc, cancelAsked: !!slot?.asked, handle: slot?.handle ?? null, claimId: slot?.claimId ?? null, status: slot?.status ?? null, pipeline: slot?.pipeline ?? null, fixed: !!slot?.isFixed,
+          return { member: m.name, price: m.price ?? (s.partPrice !== null ? Number(s.partPrice) : s.itemTbc ? null : s.price), priceTbc: !!slot?.tbc, cancelAsked: !!slot?.asked, handle: slot?.handle ?? null, claimId: slot?.claimId ?? null, status: slot?.status ?? null, pipeline: slot?.pipeline ?? null, fixed: !!slot?.isFixed,
             raffle: slot && slot.raffleStatus !== 'none' ? { status: slot.raffleStatus, share: slot.raffleShare } : null };
         });
-        return { ...s, itemTbc: !!s.itemTbc, hasTbc: parts.some((p) => p.priceTbc), hasRequests: parts.some((p) => p.cancelAsked), requiresFullSet: !!s.requiresFullSet, ordered: s.decision === 'secured' && parts.length > 0 && parts.every((p) => p.handle && p.claimId && p.status === 'confirmed' && STAGES.indexOf(p.pipeline) >= STAGES.indexOf('ordered via proxy / warehouse')), parts, filled: parts.filter((p) => p.handle).length, total: parts.length };
+        return { ...s, partPrice: s.partPrice === null ? null : Number(s.partPrice), itemTbc: !!s.itemTbc, hasTbc: parts.some((p) => p.priceTbc), hasRequests: parts.some((p) => p.cancelAsked), requiresFullSet: !!s.requiresFullSet, ordered: s.decision === 'secured' && parts.length > 0 && parts.every((p) => p.handle && p.claimId && p.status === 'confirmed' && STAGES.indexOf(p.pipeline) >= STAGES.indexOf('ordered via proxy / warehouse')), parts, filled: parts.filter((p) => p.handle).length, total: parts.length };
       }),
     });
   }));
@@ -129,13 +129,13 @@ export function setRoutes(app, { pool, notifier }) {
       const [[j]] = await conn.query('SELECT id, is_blocked FROM joiners WHERE instagram_handle = ?', [handle]);
       if (j.is_blocked) throw new HttpError(403, 'That handle is blocked', 'handle_blocked');
       await lockJoiner(conn, j.id);
-      const [[s]] = await conn.query('SELECT s.admin_decision AS decision, i.id AS itemId, i.item_type, i.purchase_limit, i.limit_scope, i.title, i.price, i.price_tbc AS itemTbc, i.order_id AS orderId, i.size_bucket AS sizeBucket FROM item_sets s JOIN items i ON i.id = s.item_id WHERE s.id = ? FOR UPDATE', [id]);
+      const [[s]] = await conn.query('SELECT s.admin_decision AS decision, s.part_price AS setPrice, i.id AS itemId, i.item_type, i.purchase_limit, i.limit_scope, i.title, i.price, i.price_tbc AS itemTbc, i.order_id AS orderId, i.size_bucket AS sizeBucket FROM item_sets s JOIN items i ON i.id = s.item_id WHERE s.id = ? FOR UPDATE', [id]);
       if (s.decision === 'cancelled') throw conflict('That set is cancelled', 'bad_state');
       const [[m]] = await conn.query('SELECT price FROM item_members WHERE item_id = ? AND name = ?', [s.itemId, b.member]);
       if (!m) throw bad(`"${b.member}" isn't part of "${s.title}"`);
       // adding someone takes one of the item's limited places: refused unless you knowingly go past it (the same rule as adding a claim)
       await checkPurchaseLimit(conn, { id: s.itemId, title: s.title, item_type: s.item_type, purchase_limit: s.purchase_limit, limit_scope: s.limit_scope }, { [b.member]: 1 }, { asAdmin: true, overrideLimit: !!b.overrideLimit });
-      const tbc = m.price === null && s.itemTbc;
+      const tbc = m.price === null && s.setPrice === null && s.itemTbc;                       // a set that already has its own price isn't TBC
       if (tbc && s.decision === 'secured') throw conflict("That part's price is still TBC, so it can't be added to a secured set yet. Set the item's price first.", 'price_tbc');
       const [taken] = await conn.query('SELECT joiner_id FROM set_slots WHERE set_id = ? AND member_name = ?', [id, b.member]);
       if (taken.length) throw taken[0].joiner_id ? conflict('Somebody already has that part', 'slot_taken') : conflict('A raffle is under way for that part — pick its winner instead', 'raffle_pending');
@@ -145,7 +145,7 @@ export function setRoutes(app, { pool, notifier }) {
       const [c] = await conn.query(
         `INSERT INTO claims (joiner_id, order_id, item_id, set_id, slot_id, label, member_name, size_bucket, status, is_direct, price_tbc) VALUES (?,?,?,?,?,?,?,?,?,1,?)`,
         [j.id, s.orderId, s.itemId, id, slot.insertId, label, b.member, s.sizeBucket, status, tbc ? 1 : 0]);
-      await addClaimCosts(conn, c.insertId, tbc ? 0 : m.price ?? s.price);
+      await addClaimCosts(conn, c.insertId, tbc ? 0 : m.price ?? (s.setPrice === null ? s.price : Number(s.setPrice)));          // the part costs what the SET costs
       if (status === 'confirmed') await sweepCredit(conn, j.id);
       await audit(conn, req.account.id, 'set.assign', 'set', id, { handle, member: b.member });
       return { claimId: c.insertId, status };
@@ -165,16 +165,16 @@ export function setRoutes(app, { pool, notifier }) {
       if (!exists) throw notFound('No such set');
       const [who] = await conn.query("SELECT DISTINCT joiner_id FROM claims WHERE set_id = ? AND status <> 'cancelled' ORDER BY joiner_id", [id]);
       for (const { joiner_id } of who) await lockJoiner(conn, joiner_id);
-      const [[s]] = await conn.query('SELECT s.admin_decision AS decision, i.id AS itemId, i.price, i.price_tbc AS itemTbc FROM item_sets s JOIN items i ON i.id = s.item_id WHERE s.id = ? FOR UPDATE', [id]);
+      const [[s]] = await conn.query('SELECT s.admin_decision AS decision, s.part_price AS setPrice, i.id AS itemId, i.price, i.price_tbc AS itemTbc FROM item_sets s JOIN items i ON i.id = s.item_id WHERE s.id = ? FOR UPDATE', [id]);
       if (s.decision !== 'secured') throw conflict('Only a secured set can have an open part split', 'bad_state');
       const [[m]] = await conn.query('SELECT price FROM item_members WHERE item_id = ? AND name = ?', [s.itemId, member]);
       if (!m) throw bad(`"${member}" isn't part of this set`);
-      if (m.price === null && s.itemTbc) throw conflict("That part's price is TBC, so its cost can't be shared out yet. Set the item's price first.", 'price_tbc');
+      if (m.price === null && s.setPrice === null && s.itemTbc) throw conflict("That part's price is TBC, so its cost can't be shared out yet. Set the item's price first.", 'price_tbc');
       const [taken] = await conn.query('SELECT 1 FROM set_slots WHERE set_id = ? AND member_name = ?', [id, member]);
       if (taken.length) throw conflict('That part is already held, or a split is already under way for it', 'slot_taken');
       const [claims] = await conn.query("SELECT id, joiner_id FROM claims WHERE set_id = ? AND status <> 'cancelled' AND slot_id IS NOT NULL ORDER BY id FOR UPDATE", [id]);
       if (!claims.length) throw bad('Nobody is in this set to share the cost', 'set_empty');
-      const price = m.price ?? s.price;
+      const price = m.price ?? (s.setPrice === null ? s.price : Number(s.setPrice));                      // shared at the price of THIS set
       const shares = splitAmount(price, claims.map(() => 1));
       for (const [i, c] of claims.entries()) {
         await conn.query("UPDATE claim_costs SET cost = ROUND(cost + ?, 2) WHERE claim_id = ? AND category = 'initials'", [shares[i], c.id]);

@@ -8,7 +8,7 @@ after(async () => { await app.stop(); });
 
 const api = (m, p, b, c = admin) => app.api(m, p, b, c);
 const fresh = (p = 'rp') => `${p}${++N}`;
-const setPrice = (item, price) => api('PATCH', `/api/admin/items/${item}`, { price });
+const setPrice = (item, price, priceScope = 'all') => api('PATCH', `/api/admin/items/${item}`, { price, priceScope });          // 'all' = everything that isn't secured yet follows the new price (an item with sets must say which way; see set-prices.test.js for 'newSets')
 const costOf = async (h) => (await api('GET', `/api/admin/claims?handle=${h}`)).json.claims.map((c) => [c.label, c.status, c.costs.initials.cost]);
 const initials = async (h) => (await costOf(h)).map((r) => r[2]);
 const setsOf = async (item) => (await api('GET', '/api/admin/sets')).json.sets.filter((s) => s.itemId === item);
@@ -81,7 +81,7 @@ test('a part with its OWN price in a mixed-price set keeps it; only the parts th
   const h = fresh(); await claimSet(h, set, 'Han', 'Diary', 'Washi');
   assert.deepEqual((await costOf(h)).map((r) => r[2]).sort(), [1, 2, 3]);
   const r = await setPrice(set, 5);
-  assert.equal(r.json.repriced, 3);
+  assert.equal(r.json.repriced, 1, 'only Han moved: Diary and Washi keep their own prices, so they are not counted as re-priced');
   assert.deepEqual((await costOf(h)).map((x) => [x[0].replace(/^.* — /, '').replace(/ \(.*$/, ''), x[2]]).sort(), [['Diary', 2], ['Han', 5], ['Washi', 1]]);
 });
 

@@ -83,7 +83,7 @@ test('GOM Sets: TBC parts show as TBC, "Secure" is off with the reason; setting 
   assert.match(p.text(row('A')), /A.*TBC/); assert.match(p.text(row('Diary')), /Diary.*£2\.00/); assert.match(p.text(row('B')), /B.*TBC/);
   assert.equal(p.q('[data-act="secure"]', card()).disabled, true);
   assert.match(p.text(card()), /The price is still TBC — set it \(Group Orders → Items → Edit\) before this set can be secured\./);
-  await api('PATCH', `/api/admin/items/${set}`, { price: 6 });
+  assert.equal((await api('PATCH', `/api/admin/items/${set}`, { price: 6, priceScope: 'all' })).status, 200);          // the sets follow the item (an item with sets must say where a new price applies)
   await p.click(p.byText('#tabs button', 'Sets'));
   assert.equal(p.q('[data-act="secure"]', card()).disabled, false);
   assert.match(p.text(row('A')), /A.*£6\.00/);
@@ -95,7 +95,7 @@ test('GOM Sets: splitting an open part whose price is TBC says why instead of sh
   await claimSet('tbc_sp1', set, 'A'); await claimSet('tbc_sp2', set, 'B');
   const sid = (await api('GET', '/api/admin/sets')).json.sets.find((s) => s.itemId === set).id;
   await api('POST', `/api/admin/sets/${sid}/secure`, {});
-  await api('PATCH', `/api/admin/items/${set}`, { priceTbc: true });
+  assert.equal((await api('PATCH', `/api/admin/items/${set}`, { priceTbc: true, priceScope: 'all' })).status, 200);          // the set follows the item back to TBC (with 'newSets' it would keep its £6 — see set-prices.test.js)
   const p = await gomPage(app, admin); await p.click(p.byText('#tabs button', 'Sets'));
   await p.click(p.byText('#setChips .chip', 'Secured'));
   if (!p.q('table', p.q(`[data-set="${sid}"]`))) await p.click(p.q('[data-act="toggle-set"]', p.q(`[data-set="${sid}"]`)));

@@ -37,7 +37,7 @@ async function loadOrders(pool, whereSql, params, { admin }) {
   if (!orders.length) return [];
   const ids = orders.map((o) => o.id);
   const [items] = await pool.query(
-    `SELECT i.id, i.no_ems, i.no_customs, i.no_proxy, i.weight_g, i.order_id, i.item_type, i.title, i.cancelled_at, i.description, i.price, i.price_tbc, i.payment_deadline, i.close_date, i.closed_by_hand, i.requires_full_set, i.purchase_limit, i.limit_scope, i.hidden_from_public, p.name AS proxy_name, im.filename AS image_file, im.width AS image_w, im.height AS image_h
+    `SELECT i.id, i.no_ems, i.no_customs, i.no_proxy, (SELECT COUNT(*) FROM item_sets st WHERE st.item_id = i.id AND st.admin_decision <> 'cancelled') AS set_count, i.weight_g, i.order_id, i.item_type, i.title, i.cancelled_at, i.description, i.price, i.price_tbc, i.payment_deadline, i.close_date, i.closed_by_hand, i.requires_full_set, i.purchase_limit, i.limit_scope, i.hidden_from_public, p.name AS proxy_name, im.filename AS image_file, im.width AS image_w, im.height AS image_h
        FROM items i LEFT JOIN proxies p ON p.id = i.proxy_id LEFT JOIN images im ON im.id = i.image_id WHERE i.order_id IN (?) ${admin ? '' : 'AND i.cancelled_at IS NULL AND i.hidden_from_public = 0'} ORDER BY i.sort_order, i.id`, [ids]);          // hidden items are for the GOM only
   const itemIds = items.map((i) => i.id);
   const [members] = itemIds.length ? await pool.query('SELECT id, item_id, name, price, qty_limit FROM item_members WHERE item_id IN (?) ORDER BY sort_order, id', [itemIds]) : [[]];
@@ -76,7 +76,7 @@ async function loadOrders(pool, whereSql, params, { admin }) {
       // each part carries its effective price: its own if it has one, else the item's
       const parts = members.filter((m) => m.item_id === i.id).map((m) => ({ ...(admin ? { id: m.id, ownPrice: m.price === null || m.price === undefined ? null : Number(m.price), ownLimit: m.qty_limit ?? null } : {}), name: m.name, price: m.price ?? (i.price_tbc ? null : i.price) }));   // null = price still TBC
       return {
-      id: i.id, type: i.item_type, title: i.title, cancelled: !!i.cancelled_at, ...(admin ? { hidden: !!i.hidden_from_public, noEms: !!i.no_ems, noCustoms: !!i.no_customs, noProxy: !!i.no_proxy, weightG: i.weight_g ?? null } : {}), description: i.description || '', image: imageOut(i.image_file, i.image_w, i.image_h), price: i.price_tbc ? null : i.price, priceTbc: !!i.price_tbc,
+      id: i.id, type: i.item_type, title: i.title, cancelled: !!i.cancelled_at, ...(admin ? { hidden: !!i.hidden_from_public, noEms: !!i.no_ems, noCustoms: !!i.no_customs, noProxy: !!i.no_proxy, setCount: Number(i.set_count), weightG: i.weight_g ?? null } : {}), description: i.description || '', image: imageOut(i.image_file, i.image_w, i.image_h), price: i.price_tbc ? null : i.price, priceTbc: !!i.price_tbc,
       // an item's own pay-by date wins; otherwise the GO's applies
       payBy: i.payment_deadline || o.payment_deadline,
       // an item can close before the rest of its group order: on a date of its own, or when the GOM closes it by hand
@@ -336,7 +336,7 @@ export function catalogRoutes(app, { pool, cfg }) {
   app.patch('/api/admin/items/:id', requireAdmin, wrap(async (req, res) => {
     const id = Number(req.params.id);
     let repriced = 0, memberRepriced = 0, renamed = [], memberPriced = [];
-    const b = z.object({ paymentDeadline: date, closeDate: date, closed: z.boolean().optional(), proxy: z.string().trim().max(80).nullable().optional(), price: money.optional(), priceTbc: z.boolean().optional(), purchaseLimit: z.number().int().min(1).max(9999).nullable().optional(), memberLimits: z.array(z.object({ id: z.number().int().positive(), limit: z.number().int().min(1).max(9999).nullable() })).max(200).optional(), variantLimits: z.array(z.object({ id: z.number().int().positive(), limit: z.number().int().min(1).max(9999).nullable() })).max(200).optional(), limitScope: z.enum(['item', 'option']).optional(), hidden: z.boolean().optional(), noEms: z.boolean().optional(), noCustoms: z.boolean().optional(), weightG: z.number().int().min(1).max(100000).nullable().optional(), renameMembers: z.array(z.object({ id: z.number().int().positive(), name: z.string().trim().max(80) })).max(30).optional(), memberPrices: z.array(z.object({ id: z.number().int().positive(), price: money.nullable() })).max(30).optional(),  title: z.string().trim().min(1).max(160).optional(), description: z.string().trim().max(2000).nullable().optional(), noProxy: z.boolean().optional() }).parse(req.body);
+    const b = z.object({ paymentDeadline: date, closeDate: date, closed: z.boolean().optional(), proxy: z.string().trim().max(80).nullable().optional(), price: money.optional(), priceTbc: z.boolean().optional(), priceScope: z.enum(['newSets', 'all']).optional(), purchaseLimit: z.number().int().min(1).max(9999).nullable().optional(), memberLimits: z.array(z.object({ id: z.number().int().positive(), limit: z.number().int().min(1).max(9999).nullable() })).max(200).optional(), variantLimits: z.array(z.object({ id: z.number().int().positive(), limit: z.number().int().min(1).max(9999).nullable() })).max(200).optional(), limitScope: z.enum(['item', 'option']).optional(), hidden: z.boolean().optional(), noEms: z.boolean().optional(), noCustoms: z.boolean().optional(), weightG: z.number().int().min(1).max(100000).nullable().optional(), renameMembers: z.array(z.object({ id: z.number().int().positive(), name: z.string().trim().max(80) })).max(30).optional(), memberPrices: z.array(z.object({ id: z.number().int().positive(), price: money.nullable() })).max(30).optional(),  title: z.string().trim().min(1).max(160).optional(), description: z.string().trim().max(2000).nullable().optional(), noProxy: z.boolean().optional() }).parse(req.body);
     await withTx(pool, async (conn) => {
       const [[it]] = await conn.query('SELECT i.id, i.item_type, i.price, i.price_tbc, i.close_date, go.close_date AS go_close_date FROM items i JOIN group_orders go ON go.id = i.order_id WHERE i.id = ? FOR UPDATE', [id]);
       if (!it) throw notFound('No such item');
@@ -399,6 +399,16 @@ export function catalogRoutes(app, { pool, cfg }) {
       if (b.priceTbc !== undefined || b.price !== undefined) {
         const nextTbc = b.priceTbc === true, nextPrice = nextTbc ? 0 : b.price ?? it.price;
         const changed = nextTbc !== !!it.price_tbc || Math.round(nextPrice * 100) !== Math.round(it.price * 100);
+        // An item with SETS: a set is bought at one price, so a new price must say where it applies. 'newSets': the sets already started keep the price they have (each is pinned at the old price) and only new sets get the new one;
+        // 'all': every set follows the item again, and whatever isn't secured yet is re-priced. (Secured claims are never touched either way.)
+        if (changed && it.item_type === 'set') {
+          const [[sc]] = await conn.query("SELECT COUNT(*) AS n FROM item_sets WHERE item_id = ? AND admin_decision <> 'cancelled'", [id]);
+          if (Number(sc.n)) {
+            if (!b.priceScope) throw bad('This item already has sets. Choose whether the new price applies to new sets only (sets already started keep their price), or to everything that is not secured yet.', 'price_scope_needed');
+            if (b.priceScope === 'newSets') { if (!it.price_tbc) await conn.query("UPDATE item_sets SET part_price = ? WHERE item_id = ? AND part_price IS NULL AND admin_decision <> 'cancelled'", [it.price, id]); }
+            else await conn.query('UPDATE item_sets SET part_price = NULL WHERE item_id = ?', [id]);
+          }
+        }
         await conn.query('UPDATE items SET price = ?, price_tbc = ? WHERE id = ?', [nextPrice, nextTbc ? 1 : 0, id]);
         // The price is confirmed when a claim is SECURED. Until then a claim is only a request, so it follows the listing (or goes back to TBC);
         // once secured it keeps the price it was secured at. (A part with its own price in a mixed-price set keeps that.)
@@ -420,15 +430,20 @@ export function catalogRoutes(app, { pool, cfg }) {
 // Re-prices every claim on this item that is still only a request. Claims are locked first (lowest id first) — the same order securing uses —
 // so a price edit and a "secure" at the same moment can't tangle: whichever goes first wins cleanly, and a secured claim is never touched.
 async function repriceUnsecured(conn, itemId, itemPrice) {          // itemPrice null = the item is now "to be confirmed"
-  const [claims] = await conn.query("SELECT id, member_name FROM claims WHERE item_id = ? AND status = 'requested' ORDER BY id FOR UPDATE", [itemId]);
+  const [claims] = await conn.query("SELECT id, member_name, set_id, price_tbc FROM claims WHERE item_id = ? AND status = 'requested' ORDER BY id FOR UPDATE", [itemId]);
   if (!claims.length) return 0;
   const [parts] = await conn.query('SELECT name, price FROM item_members WHERE item_id = ?', [itemId]);
   const own = new Map(parts.filter((p) => p.price !== null).map((p) => [p.name, p.price]));
+  const [setRows] = await conn.query('SELECT id, part_price FROM item_sets WHERE item_id = ? AND part_price IS NOT NULL', [itemId]);
+  const ofSet = new Map(setRows.map((r) => [r.id, Number(r.part_price)]));                  // a set bought at its own price keeps it: a part costs its own price, else its SET's price, else the item's
+  const [was] = await conn.query("SELECT claim_id, cost FROM claim_costs WHERE category = 'initials' AND claim_id IN (?)", [claims.map((c) => c.id)]);
+  const before = new Map(was.map((r) => [r.claim_id, Math.round(Number(r.cost) * 100)]));
+  let moved = 0;                                                                               // only the claims whose price really changed are counted (a set kept at its old price isn't "re-priced")
   const byPrice = new Map();
-  for (const c of claims) { const price = own.get(c.member_name) ?? itemPrice; if (!byPrice.has(price)) byPrice.set(price, []); byPrice.get(price).push(c.id); }
+  for (const c of claims) { const price = own.get(c.member_name) ?? ofSet.get(c.set_id) ?? itemPrice; if (!byPrice.has(price)) byPrice.set(price, []); byPrice.get(price).push(c.id); if ((before.get(c.id) ?? 0) !== Math.round((price ?? 0) * 100) || !!c.price_tbc !== (price === null)) moved += 1; }
   for (const [price, ids] of byPrice) {
     await conn.query("UPDATE claim_costs SET cost = ? WHERE category = 'initials' AND claim_id IN (?)", [price ?? 0, ids]);
     await conn.query('UPDATE claims SET price_tbc = ? WHERE id IN (?)', [price === null ? 1 : 0, ids]);
   }
-  return claims.length;
+  return moved;
 }

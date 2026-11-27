@@ -58,7 +58,7 @@
     return `<div class="setrow ${isOpenNow ? 'open' : ''}" data-set="${s.id}">
       <div class="setline"><button class="ghost sm setbtn" data-act="toggle-set" data-id="${s.id}" aria-expanded="${isOpenNow}" aria-label="${isOpenNow ? 'Hide' : 'Show'} the parts of Set ${s.number}">${isOpenNow ? '▾' : '▸'} <strong>Set ${s.number}</strong></button>
         ${dots(s)}<span class="sub nowrap">${s.filled}/${s.total}</span>${s.decision === 'none' && missing.length ? `<span class="sub" data-missing>open: ${esc(missing.slice(0, 4).join(', '))}${missing.length > 4 ? ` +${missing.length - 4}` : ''}</span>` : ''}
-        <span class="grow"></span>${statusPill(s)}${s.requiresFullSet ? '<span class="pill warn">every part required</span>' : ''}<span class="btn-row" style="margin:0">${quick}</span></div>
+        <span class="grow"></span>${s.partPrice != null ? `<span class="pill" data-set-price title="Every part of this set costs this, whatever the item's price is now">${money(s.partPrice)} each</span>` : ''}${statusPill(s)}${s.requiresFullSet ? '<span class="pill warn">every part required</span>' : ''}<span class="btn-row" style="margin:0">${quick}</span></div>
       ${why ? `<div class="sub setwhy" style="margin:2px 0 0 28px">${why}</div>` : ''}
       ${isOpenNow ? `<div class="setbody"><div class="scroll"><table class="grid" style="margin-top:6px"><thead><tr><th>Part</th><th>Price</th><th>Held by</th><th></th></tr></thead><tbody>
       ${s.parts.map((p) => `<tr data-part="${esc(p.member)}"><td>${esc(p.member)}</td><td>${p.price == null ? '<span class="pill warn">TBC</span>' : money(p.price)}</td>
